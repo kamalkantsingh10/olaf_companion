@@ -15,6 +15,18 @@ schema_version = 1
 # (e.g. "BY Y02") fails for devices whose native rate isn't 16 kHz
 # because PyAudio doesn't resample.
 input_device_name = "^pipewire$"
+# Output via PipeWire too — gives us the same 16 kHz <-> device-native
+# rate resampling on the playback side. Direct ALSA pinning to the BY Y02
+# fails with paInvalidSampleRate (PortAudio doesn't auto-resample on
+# output any more than on input), so on this PC we stay on the PipeWire
+# alias even though it follows whatever the OS default sink is set to.
+# Bluetooth-resistance is deferred (Story 5.4 territory).
+#
+# v2 (Pi) note: on the Pi the BY Y02 conference unit will be the only
+# audio device, so a direct-device regex like `^BY Y02` should work out
+# of the box and is preferred for stable production routing. Re-test
+# `just play-test-tone` during the v2 port; if it plays cleanly with
+# the direct regex, ship that — no PipeWire dance needed on the Pi.
 output_device_name = "^pipewire$"
 
 # Picovoice Porcupine wake-word (Story 1.6). The .ppn file is trained at
