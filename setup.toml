@@ -1,0 +1,13 @@
+schema_version = 1
+
+# Sections populated by subsequent stories:
+# [stt]            -- Story 1.7 (backend, model, low_confidence_threshold, clarification_prompt)
+# [audio]          -- Story 1.5 (input_device_name) + Story 2.1 (output_device_name)
+# [talker]         -- Story 2.2 (model, max_tokens, system_prompt_path) + Story 4.1 (grounded_keys)
+# [tts]            -- Story 2.3 (voice_id, default_emotion, model)
+# [publisher]      -- Story 3.4 (transport, dds_domain_id, expression_channel, lifecycle_channel)
+# [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
+# [router]         -- Story 4.3 (slow_path_patterns, default)
+# [daemon]         -- Story 4.1/4.2 (url) + Story 5.3 (bearer_token_env, mtls)
+# [barge_in]       -- Story 5.1 (sustained_ms, energy_threshold)
+# [logging]        -- Story 5.3 (max_file_size_mb, retention_days, console_mirror)

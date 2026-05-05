@@ -1,0 +1,31 @@
+schema_version: 1
+
+# Story 3.1 populates the full mapping:
+#
+# emotions:
+#   neutral: { ... payload ... }
+#   content: { ... }
+#   excited: { ... }
+#   sad: { ... }
+#   angry: { ... }
+#   scared: { ... }
+#   happy: { ... }
+#   curious: { ... }
+#   sympathetic: { ... }
+#   surprised: { ... }
+#   frustrated: { ... }
+#   melancholic: { ... }
+#
+# bursts:
+#   laughter: { ... }
+#   sigh: { ... }
+#   gasp: { ... }
+#   clears_throat: { ... }
+#
+# fallback_families:
+#   high_energy_positive: { members: [...], maps_to: excited }
+#   low_energy_negative: { members: [...], maps_to: sad }
+#   ... (7 families total covering all 60+ Cartesia tags)
+#
+# unknown:
+#   maps_to: neutral

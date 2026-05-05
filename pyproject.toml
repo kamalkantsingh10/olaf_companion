@@ -1,0 +1,70 @@
+[project]
+name = "voice-agent-pipeline"
+version = "0.0.0"
+description = "Pipecat-based voice-agent service for the OLAF Companion project."
+readme = "README.md"
+authors = [
+    { name = "Kamal Singh", email = "kamalkantsingh10@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.98.1",
+    "cartesia>=3.0.2",
+    "faster-whisper>=1.2.1",
+    "httpx>=0.28.1",
+    "httpx-sse>=0.4.3",
+    "pipecat-ai[local]>=1.1.0",
+    "pvporcupine>=4.0.2",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
+    "structlog>=25.5.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.9,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.409",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.12",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "ASYNC", "S", "RUF"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # allow `assert` in tests
+
+[tool.ruff.lint.isort]
+known-first-party = ["voice_agent_pipeline"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportMissingTypeStubs = false
+reportUnusedImport = false
+reportUnusedFunction = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportMissingParameterType = false
+reportMissingTypeArgument = false
+reportPrivateUsage = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
