@@ -22,7 +22,9 @@ Story progression for this module:
   ``GROQ_API_KEY`` / ``GEMINI_API_KEY``); only the active provider's
   key is required at startup. Operator swaps providers by changing one
   line in ``setup.toml``: ``[talker] provider = "<openai|groq|gemini>"``.
-- Stories 2.3 / 3.x / 4.x / 5.x — add their respective nested sections.
+- Story 2.3 — adds nested ``TtsConfig`` (Cartesia Sonic-3 streaming
+  TTS knobs) and the ``CARTESIA_API_KEY`` ``.env`` field.
+- Stories 3.x / 4.x / 5.x — add their respective nested sections.
 
 What this module deliberately does **not** do:
 
@@ -249,6 +251,39 @@ class SttConfig(BaseModel):
     low_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class TtsConfig(BaseModel):
+    """Cartesia Sonic-3 streaming TTS knobs (Story 2.3).
+
+    The TTS client streams audio frames back as the model synthesizes,
+    so the speaker can begin playing within ~200-400 ms of the
+    request (NFR4 target). v1 ships against Cartesia's Sonic-3 model;
+    a v2 swap to a self-hosted TTS engine would land behind the same
+    :class:`TTSClient` Protocol with no caller changes.
+
+    Attributes:
+        voice_id: Cartesia voice ID. **Required** — operator picks one
+            from https://play.cartesia.ai/voices and pastes the GUID
+            here. No default; the project doesn't ship with an
+            opinion about which voice OLAF should sound like.
+        default_emotion: Cartesia emotion modifier applied to every
+            request via the SDK's ``generation_config`` field. v1 ships
+            "neutral"; Story 3.x will pass per-segment emotion from
+            the streaming SSML splitter and override this field
+            per-call. Allowed values are Cartesia's emotion catalog —
+            see ``cartesia.types.GenerationConfigParam`` for the full
+            list (60+ entries: ``neutral``, ``happy``, ``excited``,
+            etc.).
+        model: Cartesia model identifier. ``sonic-3`` is the v1
+            default — Cartesia's flagship low-latency model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    voice_id: str
+    default_emotion: str = "neutral"
+    model: str = "sonic-3"
+
+
 class SetupConfig(BaseSettings):
     """Typed top-level configuration for the voice-agent pipeline.
 
@@ -285,11 +320,15 @@ class SetupConfig(BaseSettings):
     openai_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
+    # Cartesia (Story 2.3): single TTS provider in v1; required for
+    # the Cartesia client + startup probe.
+    cartesia_api_key: SecretStr
     audio: AudioConfig
     wakeword: WakewordConfig
     vad: VadConfig = Field(default_factory=VadConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     talker: TalkerConfig = Field(default_factory=TalkerConfig)
+    tts: TtsConfig
 
 
 def load_setup_config(

@@ -1,6 +1,6 @@
 # Story 2.3: CartesiaClient — Sonic-3 streaming TTS behind the Protocol seam
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -48,23 +48,23 @@ so that Story 2.5 can connect Talker output to spoken output end-to-end.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Extend `SetupConfig` with `[tts]` + `CARTESIA_API_KEY`** (AC: #4, #6)
-  - [ ] In `src/voice_agent_pipeline/config/setup.py` add `TtsConfig(BaseModel, extra="forbid")` with `voice_id: str` (no default), `default_emotion: str = "neutral"`, `model: str = "sonic-3"`. Docstring per the existing nested-config style — call out that `voice_id` is operator-supplied (browse https://play.cartesia.ai/voices to pick one).
-  - [ ] Add `tts: TtsConfig` to `SetupConfig` (no default — `voice_id` is required).
-  - [ ] Add `cartesia_api_key: SecretStr` to `SetupConfig` (no default — pulled from `.env`).
-  - [ ] Update `setup.toml`'s `[tts]` placeholder block:
+- [x] **Task 1: Extend `SetupConfig` with `[tts]` + `CARTESIA_API_KEY`** (AC: #4, #6)
+  - [x] In `src/voice_agent_pipeline/config/setup.py` add `TtsConfig(BaseModel, extra="forbid")` with `voice_id: str` (no default), `default_emotion: str = "neutral"`, `model: str = "sonic-3"`. Docstring per the existing nested-config style — call out that `voice_id` is operator-supplied (browse https://play.cartesia.ai/voices to pick one).
+  - [x] Add `tts: TtsConfig` to `SetupConfig` (no default — `voice_id` is required).
+  - [x] Add `cartesia_api_key: SecretStr` to `SetupConfig` (no default — pulled from `.env`).
+  - [x] Update `setup.toml`'s `[tts]` placeholder block:
     ```toml
     [tts]
     voice_id = "..."           # pick from https://play.cartesia.ai/voices
     default_emotion = "neutral"
     model = "sonic-3"
     ```
-  - [ ] Update `.env.example` — uncomment `CARTESIA_API_KEY=`.
-  - [ ] Extend `tests/unit/config/test_setup.py`: `test_tts_block_with_voice_id_loads`, `test_tts_block_missing_voice_id_raises_config_error`, `test_cartesia_key_required` (missing env var → `ConfigError`).
+  - [x] Update `.env.example` — uncomment `CARTESIA_API_KEY=`.
+  - [x] Extend `tests/unit/config/test_setup.py`: `test_tts_block_with_voice_id_loads`, `test_tts_block_missing_voice_id_raises_config_error`, `test_cartesia_key_required` (missing env var → `ConfigError`).
 
-- [ ] **Task 2: Implement `CartesiaClient`** (AC: #1, #2, #5, #7, #10, #11)
-  - [ ] Create `src/voice_agent_pipeline/tts/cartesia.py` with module + class + method docstrings (per `feedback_code_comments.md`).
-  - [ ] Skeleton (verify exact SDK API against `cartesia` 3.0.2):
+- [x] **Task 2: Implement `CartesiaClient`** (AC: #1, #2, #5, #7, #10, #11)
+  - [x] Create `src/voice_agent_pipeline/tts/cartesia.py` with module + class + method docstrings (per `feedback_code_comments.md`).
+  - [x] Skeleton (verify exact SDK API against `cartesia` 3.0.2):
     ```python
     """CartesiaClient — Sonic-3 streaming TTS implementation of TTSClient Protocol.
 
@@ -160,7 +160,7 @@ so that Story 2.5 can connect Talker output to spoken output end-to-end.
             raise StartupValidationError(stage="cartesia", reason=str(e)) from e
     ```
 
-  - [ ] **Verify SDK shapes against the installed `cartesia==3.0.2`:**
+  - [x] **Verify SDK shapes against the installed `cartesia==3.0.2`:**
     - Streaming call (`client.tts.bytes` vs `.sse` vs `.websocket`). Pick the async-iterator-of-bytes form.
     - Voice argument (`voice={"id": ...}` vs `voice_id=...`).
     - Output format keys (`container` / `encoding` / `sample_rate`).
@@ -169,28 +169,28 @@ so that Story 2.5 can connect Talker output to spoken output end-to-end.
     - Base exception class (`cartesia.CartesiaError`? or generic `httpx.HTTPError`?).
     - Document the SDK version + chosen API path in a code comment so future bumps are auditable.
 
-- [ ] **Task 3: Cartesia startup probe in `__main__.py`** (AC: #8)
-  - [ ] Import `voice_agent_pipeline.tts.cartesia` at the top of `__main__.py` (don't re-import `cartesia` directly here — the boundary rule).
-  - [ ] Add the probe call after the Anthropic one:
+- [x] **Task 3: Cartesia startup probe in `__main__.py`** (AC: #8)
+  - [x] Import `voice_agent_pipeline.tts.cartesia` at the top of `__main__.py` (don't re-import `cartesia` directly here — the boundary rule).
+  - [x] Add the probe call after the Anthropic one:
     ```python
     await talker_module.validate_credentials(config)
     log.info("startup.validated.talker")
     await cartesia_module.validate_credentials(config)
     log.info("startup.validated.cartesia")
     ```
-  - [ ] Module-rename for clarity: import as `from voice_agent_pipeline.tts import cartesia as cartesia_module` to keep the call site readable.
+  - [x] Module-rename for clarity: import as `from voice_agent_pipeline.tts import cartesia as cartesia_module` to keep the call site readable.
 
-- [ ] **Task 4: Verify boundary-concentration rule** (AC: #1, #13)
-  - [ ] After implementing, run `grep -r "^import cartesia\|^from cartesia" src/` — expect exactly one file (`tts/cartesia.py`).
-  - [ ] Same applies to test files: `grep -r "^import cartesia\|^from cartesia" tests/` should match only `tests/unit/tts/test_cartesia.py` (which patches the import inside `tts/cartesia.py`'s namespace, NOT importing `cartesia` directly).
+- [x] **Task 4: Verify boundary-concentration rule** (AC: #1, #13)
+  - [x] After implementing, run `grep -r "^import cartesia\|^from cartesia" src/` — expect exactly one file (`tts/cartesia.py`).
+  - [x] Same applies to test files: `grep -r "^import cartesia\|^from cartesia" tests/` should match only `tests/unit/tts/test_cartesia.py` (which patches the import inside `tts/cartesia.py`'s namespace, NOT importing `cartesia` directly).
 
-- [ ] **Task 5: TLS posture documentation** (AC: #7)
-  - [ ] Add a top-of-file comment block in `tts/cartesia.py` explaining: TLS validation is on by default in `httpx`/`cartesia`; v1 exposes no config knob to disable it; this is a security invariant — additions to `TtsConfig` MUST preserve it.
-  - [ ] Add an explicit assertion/comment in the `__init__` showing that no `verify=False` is being passed to the SDK.
+- [x] **Task 5: TLS posture documentation** (AC: #7)
+  - [x] Add a top-of-file comment block in `tts/cartesia.py` explaining: TLS validation is on by default in `httpx`/`cartesia`; v1 exposes no config knob to disable it; this is a security invariant — additions to `TtsConfig` MUST preserve it.
+  - [x] Add an explicit assertion/comment in the `__init__` showing that no `verify=False` is being passed to the SDK.
 
-- [ ] **Task 6: Unit tests** (AC: #12)
-  - [ ] Mock `voice_agent_pipeline.tts.cartesia.cartesia` (the module reference inside the file, not the global `cartesia` package).
-  - [ ] Build stub async iterators for the streaming response. Pattern:
+- [x] **Task 6: Unit tests** (AC: #12)
+  - [x] Mock `voice_agent_pipeline.tts.cartesia.cartesia` (the module reference inside the file, not the global `cartesia` package).
+  - [x] Build stub async iterators for the streaming response. Pattern:
     ```python
     async def _stub_stream(chunks):
         for c in chunks:
@@ -208,11 +208,11 @@ so that Story 2.5 can connect Talker output to spoken output end-to-end.
         )
         return mock_client
     ```
-  - [ ] Use `caplog`-equivalent for structlog assertion (Story 1.3's logging tests have the working pattern; mirror that).
-  - [ ] No live API calls in `tests/unit/`. Live verification is a manual one-off (Task 7).
+  - [x] Use `caplog`-equivalent for structlog assertion (Story 1.3's logging tests have the working pattern; mirror that).
+  - [x] No live API calls in `tests/unit/`. Live verification is a manual one-off (Task 7).
 
-- [ ] **Task 7: Live test — verify Cartesia plays through speaker** (AC: #2, #5, #9)
-  - [ ] One-off Python script (NOT committed — `/tmp/test_cartesia.py` or similar; or a pytest mark gated behind `RUN_LIVE_TTS=true`):
+- [x] **Task 7: Live test — verify Cartesia plays through speaker** (AC: #2, #5, #9)
+  - [x] One-off Python script (NOT committed — `/tmp/test_cartesia.py` or similar; or a pytest mark gated behind `RUN_LIVE_TTS=true`):
     ```python
     import asyncio
     from voice_agent_pipeline.config.setup import load_setup_config
@@ -232,9 +232,9 @@ so that Story 2.5 can connect Talker output to spoken output end-to-end.
 
     asyncio.run(main())
     ```
-  - [ ] Document in Dev Agent Record: TTFB observed (NFR4 baseline), audible quality assessment, total bytes received vs. expected duration. Story 2.5 will measure NFR1 end-to-end; Story 5.5 calibrates.
+  - [x] Document in Dev Agent Record: TTFB observed (NFR4 baseline), audible quality assessment, total bytes received vs. expected duration. Story 2.5 will measure NFR1 end-to-end; Story 5.5 calibrates.
 
-- [ ] **Task 8: Commit + push** — single commit titled `Story 2.3: CartesiaClient — Sonic-3 streaming TTS behind the Protocol seam`, then `git push`.
+- [x] **Task 8: Commit + push** — single commit titled `Story 2.3: CartesiaClient — Sonic-3 streaming TTS behind the Protocol seam`, then `git push`.
 
 ## Dev Notes
 
@@ -381,10 +381,128 @@ It does NOT modify:
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (1M context) — invoked as bmad-agent-dev "Amelia".
 
 ### Debug Log References
 
+- **SDK exploration — three streaming-API candidates discovered.**
+  Cartesia 3.0.2 exposes `tts.bytes()` (deprecated wrapper),
+  `tts.generate()` (modern non-streaming), `tts.sse()` (deprecated
+  streaming wrapper), and `tts.generate_sse()` (modern streaming).
+  Started on `tts.generate()` per the deprecation hint; live test
+  showed it buffered the entire 5.39 s response into a single chunk
+  (172 KB) — defeating the streaming contract. Switched to
+  `tts.generate_sse()` (the non-deprecated streaming entry point);
+  live test now yields 7-10 chunks with TTFB ~982 ms on a fresh call.
+  Documented inline in `tts/cartesia.py` so a future contributor
+  doesn't try to "simplify" back to `.generate()`.
+- **Base64 gotcha on SSE chunks.** `event.data` on Cartesia's SSE
+  chunk events is a **base64-encoded string**, not raw bytes. First
+  live test attempted to write the data directly to a file and hit
+  `TypeError: a bytes-like object is required, not 'str'`. Fix:
+  `base64.b64decode(event.data)` before yielding. Stdlib `base64`
+  only — no new dep. Inline comment in `synthesize()` explains the
+  wire format so future readers don't mistake it for raw bytes.
+- **Pyright union-type quirk on SSE events.** Cartesia's SSE event
+  union has multiple subclasses; only chunk events have `.data`.
+  Pyright complains when accessing `event.data` directly even after
+  filtering on `event.type == "chunk"` (no type narrowing across
+  the discriminated union). Solved with `getattr(event, "data", "")`
+  — keeps the type checker happy without adding subclass isinstance
+  branches.
+- **Persona name iteration.** Original system prompt said "OLAF" —
+  female Tessa voice mispronounced it. Tried "Uppi" — Tessa
+  pronounced it "yoo-pee". Settled on **"Ooppi"** (pronounced
+  "Uppi") — the double-O fix gets the right vowel. Project name
+  stays `olaf_companion` (the overarching system); persona name
+  in the prompt is "Ooppi". Saved as a project memory for future
+  sessions (`project_bot_persona.md`).
+- **Live test result (Tessa voice, dev host network):**
+
+  | Test | Probe | First chunk | Total | Chunks | Audio | Notes |
+  |---|---|---|---|---|---|---|
+  | `tts.generate()` (initial) | 1217 ms | 1567 ms | 1567 ms | 1 | 5.39 s | Whole body in 1 chunk — not actually streaming |
+  | `tts.generate_sse()` (final) | — | 982 ms | 983 ms | 7 | 2.97 s | Real streaming; chunks delivered as synthesized |
+  | `aplay` playback through PipeWire→BY Y02 | — | — | — | — | — | Audible end-to-end; "Ooppi" pronunciation correct |
+
+  Steady-state TTFB ~700-1000 ms on this network. NFR4 target is
+  ≤400 ms p95 — Story 5.5 calibration territory; the SDK isn't the
+  bottleneck (network round-trip dominates). Logged here so 5.5
+  has the baseline.
+
+- **TLS posture verified.** Module docstring + ctor explicitly
+  document that no `verify=False` / cert override is exposed.
+  `cartesia.AsyncCartesia(api_key=...)` is the only construction
+  path; httpx defaults to certificate validation on. NFR24
+  satisfied.
+
 ### Completion Notes List
 
+- All 13 ACs satisfied. AC #11 (default-emotion in request payload,
+  tags-in-text NOT parsed) is wired via `generation_config={"emotion":
+  default_emotion}`; tag-in-text parsing is Story 3.x splitter work
+  as the spec says.
+- **Deviation 1 (streaming entry point).** AC #2 / spec said
+  "tts.bytes" or "tts.streaming" — actual SDK 3.0.2 modern path is
+  `tts.generate_sse()`. Same architectural intent; documented in
+  the implementation comment.
+- **Deviation 2 (base64 decode).** Not anticipated by the story
+  spec; Cartesia's SSE wire format requires it. Documented inline.
+- **Deviation 3 (persona rename).** OLAF → Ooppi in the system
+  prompt during the live audio test. Project name unchanged. Saved
+  as project memory `project_bot_persona.md`.
+- **NFR4 baseline observability.** `tts.first_frame` INFO log per
+  call carries `ttfb_ms`, `voice_id`, `model`. Operator-side
+  visibility into Cartesia TTFB without DEBUG.
+- **Privacy invariants honored.** `CARTESIA_API_KEY` lives in `.env`
+  (gitignored), wrapped as `SecretStr`. Probe + runtime paths don't
+  log the key, the transcript, or the audio bytes. The redaction
+  processor (Story 1.3) catches any accidental future leaks.
+- **Boundary-concentration verified.** `grep -rn "^import cartesia\|
+  ^from cartesia" src/` matches exactly one file
+  (`tts/cartesia.py`). `__main__.py`'s probe goes through
+  `validate_credentials` rather than re-importing the SDK.
+- **Comments.** All authored modules carry module + class +
+  function docstrings + key inline comments per
+  `feedback_code_comments.md`.
+
 ### File List
+
+**New files:**
+- `src/voice_agent_pipeline/tts/cartesia.py` — `CartesiaClient`
+  concrete impl + module-level `validate_credentials` probe
+- `tests/unit/tts/__init__.py`
+- `tests/unit/tts/test_cartesia.py` — 10 tests (chunk ordering,
+  call-shape, emotion override, error wrapping at open + mid-stream,
+  TTFB log, voices.list probe + failure wrapping, AsyncCartesia
+  construction, non-chunk-event filtering)
+
+**Modified files:**
+- `setup.toml` (added `[tts]` block: voice_id Tessa GUID
+  `6ccbfb76-…`, default_emotion="neutral", model="sonic-3")
+- `.env.example` (uncommented + populated `CARTESIA_API_KEY=`)
+- `src/voice_agent_pipeline/config/setup.py` (added `TtsConfig`
+  nested model with `voice_id` required, `default_emotion`,
+  `model`; added `cartesia_api_key: SecretStr` field;
+  module docstring updated through Story 2.3)
+- `src/voice_agent_pipeline/__main__.py` (imported
+  `validate_credentials` from `tts.cartesia`; calls it after the
+  Talker probe; logs `startup.validated.cartesia`)
+- `prompts/talker_system.md` (persona rename: OLAF → Ooppi)
+- `tests/unit/config/test_setup.py` (added `[tts]` block to the
+  `_VALID_TOML` template and to the inline TOMLs of three other
+  tests; added `CARTESIA_API_KEY` to `_VALID_ENV`; added
+  `test_tts_block_missing_voice_id_rejected`,
+  `test_tts_block_extra_key_rejected`,
+  `test_cartesia_api_key_required`; updated happy-path
+  assertions for the [tts] sub-block + cartesia_api_key)
+- `build_documents/implementation-artifacts/2-3-cartesia-client-tts.md`
+  (this file — tasks ticked; dev record populated; status → review)
+- `build_documents/implementation-artifacts/sprint-status.yaml`
+  (`2-3-cartesia-client-tts: ready-for-dev → in-progress → review`)
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-05 | Story 2.3 implemented. CartesiaClient streams S16LE PCM via Cartesia's modern `tts.generate_sse()` entry point (the non-deprecated path); event.data is base64-decoded before yield. TTFB metric `tts.first_frame` logged per call. Startup probe via `voices.list(limit=1)`. v1 fail-fast wrapping as CartesiaError. TLS validation hard-locked. 10 new unit tests; 146 unit tests pass via `just check`. **Live tests verified end-to-end** — Tessa voice (`6ccbfb76-…`) speaking "Ooppi" pronounced cleanly; PipeWire → BY Y02 playback confirmed. Persona name iterated OLAF → Uppi → Ooppi during live test (project memory saved). NFR4 TTFB baseline ~700-1000 ms on this network — Story 5.5 calibration territory. Status moved to `review`. |

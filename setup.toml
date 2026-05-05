@@ -104,9 +104,20 @@ model = "llama-3.1-8b-instant"
 [talker.gemini]
 model = "gemini-2.5-flash"
 
+# Cartesia Sonic-3 streaming TTS (Story 2.3). The voice_id is operator-
+# supplied — pick one from https://play.cartesia.ai/voices and paste the
+# GUID below. No default ships because there's no neutral pick. The
+# default_emotion applies to every request in v1; Story 3.x will override
+# per-segment from the streaming SSML splitter. model = "sonic-3" is
+# Cartesia's flagship low-latency voice model (~200-400 ms TTFB target).
+[tts]
+# Tessa voice (Cartesia). Browse https://play.cartesia.ai/voices to swap.
+voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+default_emotion = "neutral"
+model = "sonic-3"
+
 # Sections populated by subsequent stories:
 # [talker] -- extended in Story 4.1 (grounded_keys for belief-state)
-# [tts]            -- Story 2.3 (voice_id, default_emotion, model)
 # [publisher]      -- Story 3.4 (transport, dds_domain_id, expression_channel, lifecycle_channel)
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
 # [router]         -- Story 4.3 (slow_path_patterns, default)

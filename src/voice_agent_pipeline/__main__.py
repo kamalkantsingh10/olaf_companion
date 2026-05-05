@@ -36,6 +36,9 @@ from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
 from voice_agent_pipeline.pipeline import run_pipeline
+from voice_agent_pipeline.tts.cartesia import (
+    validate_credentials as validate_cartesia_credentials,
+)
 from voice_agent_pipeline.turn import validate_credentials as validate_talker_credentials
 
 
@@ -101,6 +104,10 @@ async def main() -> int:
         # surfaces here, not on the first turn.
         await validate_talker_credentials(config)
         log.info("startup.validated.talker", provider=config.talker.provider)
+        # Story 2.3: probe Cartesia. Bad key / service outage surfaces
+        # here rather than on the first synthesis call.
+        await validate_cartesia_credentials(config)
+        log.info("startup.validated.cartesia")
     except VoiceAgentError as e:
         log.critical(
             "startup.failed",

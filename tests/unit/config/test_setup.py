@@ -24,6 +24,10 @@ _VALID_TOML = (
     "[wakeword]\n"
     'model_path = "models/wakeword/hey_olaf.ppn"\n'
     "sensitivity = 0.5\n"
+    # Story 2.3: TtsConfig.voice_id is required (no default), so every
+    # test TOML needs a [tts] block; provider tests can override.
+    "[tts]\n"
+    'voice_id = "stub-voice-uuid"\n'
 )
 
 
@@ -34,6 +38,8 @@ _VALID_ENV = (
     # The default test provider is "openai", so most tests need
     # OPENAI_API_KEY present; provider-specific tests override env_body.
     "OPENAI_API_KEY=stub-openai\n"
+    # Story 2.3: Cartesia key is required (single TTS provider in v1).
+    "CARTESIA_API_KEY=stub-cartesia\n"
 )
 
 
@@ -98,6 +104,12 @@ def test_load_happy_path(tmp_path: Path) -> None:
     assert config.talker.openai.model == "gpt-5.4-nano"
     assert config.talker.groq.model == "llama-3.1-8b-instant"
     assert config.talker.gemini.model == "gemini-2.5-flash"
+    # Story 2.3: TtsConfig — voice_id required from TOML; emotion + model
+    # defaults from the architecture.
+    assert config.cartesia_api_key.get_secret_value() == "stub-cartesia"
+    assert config.tts.voice_id == "stub-voice-uuid"
+    assert config.tts.default_emotion == "neutral"
+    assert config.tts.model == "sonic-3"
     # Story 1.6: WakewordConfig nested model loads from the [wakeword] block.
     # model_path is parsed as pathlib.Path (TOML strings → Path coercion);
     # str() round-trip below is the cheap way to assert without depending
@@ -174,6 +186,9 @@ def test_wakeword_sensitivity_default(tmp_path: Path) -> None:
         "[wakeword]\n"
         # Note: NO sensitivity line — should pick up the default.
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        # Story 2.3: TtsConfig.voice_id required.
+        "[tts]\n"
+        'voice_id = "v"\n'
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_default)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
@@ -241,11 +256,14 @@ def test_talker_block_overrides_loaded(tmp_path: Path) -> None:
         'model = "gpt-5-mini"\n'
         "[talker.groq]\n"
         'model = "llama-3.3-70b-versatile"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
     )
     # Provider is "groq" so the test puts GROQ_API_KEY in env (and
     # OPENAI_API_KEY absent — proves the loader is happy with whichever
-    # subset of provider keys are present).
-    env_body = "PICOVOICE_ACCESS_KEY=stub\nGROQ_API_KEY=stub-groq\n"
+    # subset of provider keys are present). CARTESIA is required from
+    # Story 2.3 onward.
+    env_body = "PICOVOICE_ACCESS_KEY=stub\nGROQ_API_KEY=stub-groq\nCARTESIA_API_KEY=stub-cart\n"
     toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_talker, env_body=env_body)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.talker.provider == "groq"
@@ -302,6 +320,63 @@ def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
     assert "unknown_talker_field" in str(exc_info.value)
 
 
+def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
+    """Story 2.3: ``[tts] voice_id`` is required — operator must pick a Cartesia voice.
+
+    The project ships no default voice_id because there's no neutral
+    default to pick. ``just list-devices``-style discovery is offered
+    via Cartesia's web console (https://play.cartesia.ai/voices); the
+    operator pastes the GUID into setup.toml.
+    """
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        # Note: [tts] block missing entirely.
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "tts" in str(exc_info.value).lower()
+
+
+def test_tts_block_extra_key_rejected(tmp_path: Path) -> None:
+    """Story 2.3: ``extra='forbid'`` applies to TtsConfig too."""
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        'unknown_tts_field = "x"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "unknown_tts_field" in str(exc_info.value)
+
+
+def test_cartesia_api_key_required(tmp_path: Path) -> None:
+    """Story 2.3: missing ``CARTESIA_API_KEY`` raises ConfigError naming the field.
+
+    Cartesia is the only TTS provider in v1, so the key is required
+    from the start (unlike the optional Talker keys, where the factory
+    enforces "active provider's key must be present").
+    """
+    # PICOVOICE + OPENAI present; CARTESIA missing.
+    env_body = "PICOVOICE_ACCESS_KEY=stub\nOPENAI_API_KEY=stub-openai\n"
+    toml_path, env_path = _write_files(tmp_path, env_body=env_body)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "cartesia_api_key" in str(exc_info.value).lower()
+
+
 def test_all_talker_keys_optional_at_load_time(tmp_path: Path) -> None:
     """Story 2.2: SetupConfig accepts all-three-Talker-keys-missing.
 
@@ -310,8 +385,11 @@ def test_all_talker_keys_optional_at_load_time(tmp_path: Path) -> None:
     accepts any combination of the three keys, including none. Tests
     for the factory's missing-key handling live in tests/unit/turn/.
     """
-    # Only PICOVOICE present — no Talker keys at all.
-    toml_path, env_path = _write_files(tmp_path, env_body="PICOVOICE_ACCESS_KEY=stub\n")
+    # PICOVOICE + Cartesia present — no Talker keys. Cartesia is
+    # required (single TTS provider in v1) so include it; the test
+    # is specifically about Talker keys being independently optional.
+    env_body = "PICOVOICE_ACCESS_KEY=stub\nCARTESIA_API_KEY=stub-cart\n"
+    toml_path, env_path = _write_files(tmp_path, env_body=env_body)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.openai_api_key is None
     assert config.groq_api_key is None
@@ -420,6 +498,9 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
         'output_device_name = "USB.*Speaker.*"\n'
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        # Story 2.3: TtsConfig.voice_id is required too.
+        "[tts]\n"
+        'voice_id = "v"\n'
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
     with pytest.raises(SchemaVersionError) as exc_info:
