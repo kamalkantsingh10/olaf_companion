@@ -23,3 +23,9 @@ lint:
 
 format:
     uv run ruff format
+
+# Print every PyAudio device on this machine. Use this output to find the
+# right regex for `[audio] input_device_name` (and later, output_device_name)
+# in setup.toml. See README "Audio device setup" for the workflow.
+list-devices:
+    uv run python -m voice_agent_pipeline.audio.list_devices

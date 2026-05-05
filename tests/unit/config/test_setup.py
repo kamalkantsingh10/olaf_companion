@@ -16,10 +16,12 @@ import pytest
 from voice_agent_pipeline.config.setup import load_setup_config
 from voice_agent_pipeline.errors import ConfigError, SchemaVersionError
 
+_VALID_TOML = 'schema_version = 1\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+
 
 def _write_files(
     tmp_path: Path,
-    toml_body: str = "schema_version = 1\n",
+    toml_body: str = _VALID_TOML,
     env_body: str = "PICOVOICE_ACCESS_KEY=stub\n",
     env_mode: int = 0o600,
 ) -> tuple[Path, Path]:
@@ -51,6 +53,37 @@ def test_load_happy_path(tmp_path: Path) -> None:
     assert config.schema_version == 1
     # SecretStr requires explicit unwrap — that's the whole point of using it.
     assert config.picovoice_access_key.get_secret_value() == "stub"
+    # Story 1.5: AudioConfig nested model loads from the [audio] block.
+    assert config.audio.input_device_name == "USB.*Mic.*"
+    assert config.audio.output_device_name is None
+
+
+def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
+    """Story 1.5 AC #3: `extra='forbid'` applies to the nested AudioConfig too."""
+    bad_toml = (
+        'schema_version = 1\n[audio]\ninput_device_name = "USB.*Mic.*"\nunknown_audio_field = 42\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "unknown_audio_field" in str(exc_info.value)
+
+
+def test_audio_block_missing_input_name_rejected(tmp_path: Path) -> None:
+    """Story 1.5 AC #3: `input_device_name` is required."""
+    bad_toml = "schema_version = 1\n[audio]\n"
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "input_device_name" in str(exc_info.value)
+
+
+def test_missing_audio_block_rejected(tmp_path: Path) -> None:
+    """Omitting the `[audio]` block entirely raises ConfigError naming it."""
+    toml_path, env_path = _write_files(tmp_path, toml_body="schema_version = 1\n")
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "audio" in str(exc_info.value).lower()
 
 
 def test_missing_schema_version_raises(tmp_path: Path) -> None:
@@ -79,6 +112,7 @@ def test_missing_env_var_raises(tmp_path: Path) -> None:
     name via ``picovoice_access_key`` (the python attribute), not the env
     var name. Lowercasing makes the assertion robust to either rendering.
     """
+    # Use the full valid TOML so the missing env var is the only error.
     toml_path, env_path = _write_files(tmp_path, env_body="")
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
@@ -109,7 +143,11 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     The error message must surface both versions and the source name —
     this is the AC #8 contract.
     """
-    toml_path, env_path = _write_files(tmp_path, toml_body="schema_version = 2\n")
+    # Use a fully valid TOML (with [audio]) so schema_version is the only
+    # problem — otherwise pydantic surfaces the missing audio block first
+    # and SchemaVersionError never fires.
+    bad_toml = 'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
     with pytest.raises(SchemaVersionError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     msg = str(exc_info.value)

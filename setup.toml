@@ -1,8 +1,19 @@
 schema_version = 1
 
+# Mic input device — regex matched (case-insensitive) against PyAudio's
+# enumerated device names. Tune to your actual mic; Story 1.5's resolver
+# will print the available device names if no match is found.
+[audio]
+# Match PipeWire's virtual input — routes to whatever device PipeWire is
+# currently bridging (so an analog/jack mic, USB mic, or Bluetooth headset
+# all "just work" without changing this regex). Switch to a more specific
+# regex (e.g. `ALCS1200A.*Analog` or `USB.*Mic`) if you want to bypass
+# PipeWire and pin a specific hardware device.
+input_device_name = "^pipewire$"
+# output_device_name = "..."  # Story 2.1 wires speaker output
+
 # Sections populated by subsequent stories:
 # [stt]            -- Story 1.7 (backend, model, low_confidence_threshold, clarification_prompt)
-# [audio]          -- Story 1.5 (input_device_name) + Story 2.1 (output_device_name)
 # [talker]         -- Story 2.2 (model, max_tokens, system_prompt_path) + Story 4.1 (grounded_keys)
 # [tts]            -- Story 2.3 (voice_id, default_emotion, model)
 # [publisher]      -- Story 3.4 (transport, dds_domain_id, expression_channel, lifecycle_channel)
