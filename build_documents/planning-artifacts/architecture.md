@@ -70,7 +70,7 @@ The component is **consumer-agnostic**. The event schemas and channel names are 
 External dependencies are **hard-required** in v1. At startup the pipeline validates:
 
 - Cartesia API key configured + reachable
-- Anthropic API key configured + reachable
+- Active Talker provider's API key configured + reachable (one of OpenAI / Groq / Gemini per `setup.toml`)
 - Orchestrator daemon reachable
 - Broadcast bus connection established (publisher initialized for both expression and lifecycle channels)
 - Audio devices (mic, speaker) resolvable by their configured names
@@ -87,7 +87,7 @@ These FRs/NFRs remain in the spec but are explicitly out of v1 scope.
 
 | Dependency | Deferred FRs/NFRs | v2 behavior |
 |---|---|---|
-| Talker (Anthropic) | NFR22 | Reroute to orchestrator slow-path on Talker failure |
+| Talker (OpenAI) | NFR22 | Reroute to orchestrator slow-path on Talker failure |
 | Orchestrator stream | FR13, NFR20 | Stall heartbeat + filler response; reconnect on disconnect |
 | Cartesia | FR16, NFR19, NFR9 | Retry with exponential backoff; text-only degraded mode signaled by `<emotion value="sad"/>` event; 5s recovery target |
 
@@ -132,7 +132,7 @@ This workflow is the architectural test for any future internal change: **if a r
 | File | Role | Lifecycle |
 |---|---|---|
 | `setup.toml` | Service config: transport, STT/TTS providers, Talker model, daemon URL, audio device names, broadcast publisher implementation + channel names, DDS domain ID. (Renamed from `pipeline.toml` in PRD/distillate.) | Loaded at startup; restart required for changes |
-| `.env` | Credentials only: Cartesia, Anthropic API keys | Loaded once at startup; not re-read at runtime |
+| `.env` | Credentials only: Cartesia + active Talker provider key (one of `OPENAI_API_KEY` / `GROQ_API_KEY` / `GEMINI_API_KEY`) | Loaded once at startup; not re-read at runtime |
 | `expression_map.yaml` | Cartesia tag → expression-event mapping + fallback family table | Loaded at startup; SIGHUP-reloadable with atomic swap |
 
 All three files are **project-scoped**. No cross-project shared config; the orchestrator and embodiment project maintain their own.
@@ -153,7 +153,7 @@ All three files are **project-scoped**. No cross-project shared config; the orch
 - **Pipecat** — voice loop framework
 - **Cartesia Sonic-3** — cloud TTS, streaming
 - **Whisper** — on-device STT, running on host CPU/GPU as available in v1. STT inference is encapsulated behind an interface so a Hailo-8L-accelerated implementation can drop in for the v2 Pi port.
-- **claude-haiku-4-5** — Talker LLM
+- **Groq llama-3.1-8b-instant** — Talker LLM v1 default (Story 2.2 final revision: was claude-haiku-4-5 originally; brief intermediate landing on OpenAI gpt-5.4-nano; final pick is Groq Llama 8B Instant for NFR1 latency headroom — measured ~150–270 ms per turn vs OpenAI's ~1–1.7 s and Anthropic's ~600–900 ms TTFB on this hardware). The Talker is **provider-agnostic via factory**: OpenAI, Groq, and Gemini are all wired out of the box (each speaks the same `openai` SDK via openai-compatible endpoints) and the operator swaps providers by changing one line in setup.toml — `[talker] provider = "<openai|groq|gemini>"`.
 - **systemd** — process supervision and v1 recovery model
 - **HTTP / SSE / WebSocket** — orchestrator transport
 - **Broadcast publisher** — generic `ExpressionPublisher` interface; v1 implementation is **ROS 2 / DDS** (reliable QoS). The interface is the architecture; ROS 2 is the v1 implementation behind it. Channel names, DDS domain, and (eventually) implementation choice are configured in `setup.toml`.
@@ -228,7 +228,7 @@ There is no canonical `create-foo-app` generator that fits this exact shape. Two
 uv init voice-agent-pipeline --python 3.12
 cd voice-agent-pipeline
 uv add pipecat-ai
-uv add anthropic cartesia pydantic pydantic-settings structlog
+uv add openai cartesia pydantic pydantic-settings structlog
 uv add --dev ruff pyright pytest pytest-asyncio
 # rclpy is installed via ROS 2 distro (e.g., apt install ros-jazzy-rclpy)
 # and exposed to the venv via PYTHONPATH or system site-packages
@@ -275,7 +275,7 @@ uv add --dev ruff pyright pytest pytest-asyncio
 - **systemd integration** — only systemd's own lifecycle messages (start/stop/crash) hit journald; app logs stay in `./logs/`.
 
 **External SDKs:**
-- `anthropic` (official) — Talker LLM
+- `openai` (official) — Talker LLM (Story 2.2 revision)
 - `cartesia` (official) — Sonic-3 TTS streaming
 - `rclpy` — ROS 2 Python binding, **system-installed via ROS 2 distro** (not via uv). Documented in README.
 
@@ -314,8 +314,8 @@ uv add --dev ruff pyright pytest pytest-asyncio
 |---|---|---|
 | Streaming SSML parser | **Hand-rolled state machine**, ~50–100 LOC, zero-dep. | Distillate §8 specifies this. Cartesia tag grammar is small enough that library overhead is unjustified. |
 | Audio-frame metadata threading | **Extend Pipecat's `AudioRawFrame` with optional `expression_event` metadata**. Splitter attaches metadata; transport processor reads on frame send and calls `ExpressionPublisher.publish_expression(event)`. | Direct fit to constraint #3 (audio-frame anchored). PRD risk fallback: time-based correlation if Pipecat's frame model can't carry metadata cleanly. |
-| Talker placement in Pipecat | **Single `TurnRouter` processor** owning both Talker (anthropic async client) + orchestrator client. Reads transcript frames, decides fast vs. slow path, emits text-with-tags frames downstream to splitter. | Talker and orchestrator clients are TurnRouter dependencies (Protocols), not separate processors. Easier to mock and test. |
-| Async/concurrency model | **asyncio everywhere**; sync libraries (`faster-whisper`, `rclpy.publish`, `pvporcupine.process`) wrapped in `asyncio.to_thread(...)`. | Three async-native clients: `anthropic.AsyncAnthropic`, Cartesia SDK streaming, `httpx.AsyncClient`. Sync wrappers isolated to the boundary. |
+| Talker placement in Pipecat | **Single `TurnRouter` processor** owning both Talker (openai async client) + orchestrator client. Reads transcript frames, decides fast vs. slow path, emits text-with-tags frames downstream to splitter. | Talker and orchestrator clients are TurnRouter dependencies (Protocols), not separate processors. Easier to mock and test. |
+| Async/concurrency model | **asyncio everywhere**; sync libraries (`faster-whisper`, `rclpy.publish`, `pvporcupine.process`) wrapped in `asyncio.to_thread(...)`. | Three async-native clients: `openai.AsyncOpenAI`, Cartesia SDK streaming, `httpx.AsyncClient`. Sync wrappers isolated to the boundary. |
 | Segmentation strategy | **Boundary-based emission inside the streaming state machine**: emit on whichever comes first — sentence terminator (`.?!`), emotion tag boundary, or burst tag. State: `current_buffer`, `current_emotion`, `last_published_emotion` (FR24 dedup). | Direct implementation of FR19 + distillate §8.4. |
 | Routing rule (TurnRouter) | Config-driven keyword/regex list in `setup.toml` for v1. | Open question: hot-reloadable via SIGHUP like `expression_map.yaml`? Lean yes (config-only extensibility theme). |
 
@@ -368,7 +368,7 @@ uv add --dev ruff pyright pytest pytest-asyncio
 6. **STT inference interface + WhisperBackend** — async `transcribe`, `asyncio.to_thread` wrapping faster-whisper.
 7. **Wake-word + VAD + audio I/O** — Pipecat LocalAudioTransport, `pvporcupine` integration, audio device pinning.
 8. **Streaming SSML splitter** — state machine, segmentation, audio-frame metadata attachment, last-published cache.
-9. **External clients** — `OrchestratorClient` (httpx + SSE), `BeliefStateClient` (httpx), `TalkerClient` (anthropic SDK), `TTSClient` (cartesia SDK) — all behind Protocols.
+9. **External clients** — `OrchestratorClient` (httpx + SSE), `BeliefStateClient` (httpx), `TalkerClient` (openai SDK), `TTSClient` (cartesia SDK) — all behind Protocols.
 10. **`TurnRouter`** — routing rule from config, fast-path/slow-path dispatch, streaming SSE consumer.
 11. **Lifecycle state machine** — transitions on observable events, publishes `LifecycleEvent` via the publisher.
 12. **Wiring + entry point** — Pipecat pipeline assembly, async lifecycle, systemd unit, soak preparation.
@@ -581,7 +581,7 @@ voice-agent-pipeline/
 ├── .python-version                            # uv-managed Python version pin (3.12)
 ├── setup.toml                                 # service config (transport, models, channels, audio devices, log rotation)
 ├── expression_map.yaml                        # Cartesia tag → ExpressionEvent payload mapping + fallback families
-├── .env.example                               # template: CARTESIA_API_KEY, ANTHROPIC_API_KEY, PICOVOICE_ACCESS_KEY
+├── .env.example                               # template: CARTESIA_API_KEY, OPENAI_API_KEY/GROQ_API_KEY/GEMINI_API_KEY (one), PICOVOICE_ACCESS_KEY
 ├── .env                                       # gitignored — actual credentials, 0600
 ├── .gitignore                                 # .env, logs/, .venv/, __pycache__/, etc.
 ├── logs/                                      # gitignored — rotating log files (created at runtime)
@@ -614,7 +614,7 @@ voice-agent-pipeline/
 │       ├── turn/
 │       │   ├── __init__.py
 │       │   ├── router.py                      # TurnRouter (fast vs slow path, config-driven rule)
-│       │   ├── talker.py                      # TalkerClient (anthropic.AsyncAnthropic)
+│       │   ├── talker.py                      # TalkerClient + Talker (openai.AsyncOpenAI; provider-agnostic via base_url)
 │       │   ├── orchestrator.py                # OrchestratorClient (httpx + httpx-sse)
 │       │   └── beliefs.py                     # BeliefStateClient (httpx GET)
 │       ├── tts/
@@ -698,7 +698,7 @@ voice-agent-pipeline/
 | Wake-word (Porcupine) | `audio/wakeword.py` | Only file that imports `pvporcupine` |
 | VAD (Silero) | `audio/vad.py` | Only file with VAD bindings |
 | Whisper STT (faster-whisper) | `stt/whisper_cpu.py` | Only file that imports `faster_whisper` |
-| Anthropic API | `turn/talker.py` | Only file that imports `anthropic` |
+| OpenAI / Groq / Gemini API (Talker) | `turn/talker.py` | Only file that imports `openai`; all three providers reach this SDK via openai-compatible endpoints |
 | Orchestrator HTTP/SSE | `turn/orchestrator.py`, `turn/beliefs.py` | Only files that import `httpx`, `httpx-sse` |
 | Cartesia API | `tts/cartesia.py` | Only file that imports `cartesia` |
 | ROS 2 / DDS | `publisher/ros2.py` | Only file that imports `rclpy` |
@@ -785,7 +785,7 @@ Lifecycle state changes: lifecycle/machine ──▶ publisher/ros2 (publish_lif
 
 **Outbound (all configured in `setup.toml`, credentialed in `.env`):**
 
-- HTTPS to Anthropic API (Talker)
+- HTTPS to active Talker provider (OpenAI / Groq / Gemini — picked via `[talker] provider` in setup.toml)
 - HTTPS to Cartesia API (TTS streaming)
 - HTTP/SSE to orchestrator daemon (`POST /turn`, `DELETE /turn/{id}`, `GET /beliefs`, `GET /health`)
 - ROS 2 / DDS publish to two configured channels (expression + lifecycle)
@@ -829,7 +829,7 @@ Lifecycle state changes: lifecycle/machine ──▶ publisher/ros2 (publish_lif
 
 **Decision Compatibility:**
 
-- Pipecat (asyncio) ↔ `httpx` async ↔ `anthropic.AsyncAnthropic` ↔ Cartesia async streaming — single concurrency model end-to-end.
+- Pipecat (asyncio) ↔ `httpx` async ↔ `openai.AsyncOpenAI` ↔ Cartesia async streaming — single concurrency model end-to-end.
 - Sync libraries (`faster-whisper`, `rclpy.publish`, `pvporcupine.process`) cleanly wrapped at the boundary via `asyncio.to_thread`.
 - `pydantic` v2 frozen models → JSON → `std_msgs/String` for DDS — one serialization hop, simple wire.
 - `pydantic-settings` (TOML + `.env`) + structlog + RotatingFileHandler — boring, well-trodden combo.

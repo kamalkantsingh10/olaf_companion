@@ -58,7 +58,7 @@ development_status:
   # ───────────────── Epic 2: Speak — Talker + Cartesia ─────────────────
   epic-2: in-progress
   2-1-audio-playback-speaker-pinning: review
-  2-2-talker-client-anthropic: ready-for-dev
+  2-2-talker-client-anthropic: review
   2-3-cartesia-client-tts: ready-for-dev
   2-4-turn-router-and-clarification: ready-for-dev
   2-5-pipeline-assembly-simple-turn: ready-for-dev

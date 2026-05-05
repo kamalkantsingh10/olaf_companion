@@ -27,10 +27,20 @@ _VALID_TOML = (
 )
 
 
+_VALID_ENV = (
+    "PICOVOICE_ACCESS_KEY=stub\n"
+    # Story 2.2 added three Talker provider keys, all optional in the
+    # SetupConfig (the factory enforces "matching provider has a key").
+    # The default test provider is "openai", so most tests need
+    # OPENAI_API_KEY present; provider-specific tests override env_body.
+    "OPENAI_API_KEY=stub-openai\n"
+)
+
+
 def _write_files(
     tmp_path: Path,
     toml_body: str = _VALID_TOML,
-    env_body: str = "PICOVOICE_ACCESS_KEY=stub\n",
+    env_body: str = _VALID_ENV,
     env_mode: int = 0o600,
 ) -> tuple[Path, Path]:
     """Write a ``setup.toml`` + ``.env`` pair under ``tmp_path``.
@@ -73,6 +83,21 @@ def test_load_happy_path(tmp_path: Path) -> None:
     # Story 2.1: output_device_name is now required (speaker output landed).
     assert config.audio.input_device_name == "USB.*Mic.*"
     assert config.audio.output_device_name == "USB.*Speaker.*"
+    # Story 2.2: three optional provider keys. Default test env sets
+    # OPENAI_API_KEY only; the other two are None unless a test sets them.
+    assert config.openai_api_key is not None
+    assert config.openai_api_key.get_secret_value() == "stub-openai"
+    assert config.groq_api_key is None
+    assert config.gemini_api_key is None
+    # Story 2.2: TalkerConfig nested defaults — the [talker] block is
+    # optional (default_factory=TalkerConfig), so a TOML without it
+    # picks up the architecture defaults across all sub-blocks.
+    assert config.talker.provider == "openai"
+    assert config.talker.max_tokens == 512
+    assert str(config.talker.system_prompt_path) == "prompts/talker_system.md"
+    assert config.talker.openai.model == "gpt-5.4-nano"
+    assert config.talker.groq.model == "llama-3.1-8b-instant"
+    assert config.talker.gemini.model == "gemini-2.5-flash"
     # Story 1.6: WakewordConfig nested model loads from the [wakeword] block.
     # model_path is parsed as pathlib.Path (TOML strings → Path coercion);
     # str() round-trip below is the cheap way to assert without depending
@@ -192,6 +217,105 @@ def test_audio_block_missing_input_name_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "input_device_name" in str(exc_info.value)
+
+
+def test_talker_block_overrides_loaded(tmp_path: Path) -> None:
+    """Story 2.2: explicit [talker] + sub-blocks override the defaults.
+
+    The defaults are validated in :func:`test_load_happy_path`; this test
+    proves that operators can override them per-machine in setup.toml,
+    including the per-provider model sub-blocks.
+    """
+    toml_with_talker = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[talker]\n"
+        'provider = "groq"\n'
+        "max_tokens = 1024\n"
+        'system_prompt_path = "prompts/custom.md"\n'
+        "[talker.openai]\n"
+        'model = "gpt-5-mini"\n'
+        "[talker.groq]\n"
+        'model = "llama-3.3-70b-versatile"\n'
+    )
+    # Provider is "groq" so the test puts GROQ_API_KEY in env (and
+    # OPENAI_API_KEY absent — proves the loader is happy with whichever
+    # subset of provider keys are present).
+    env_body = "PICOVOICE_ACCESS_KEY=stub\nGROQ_API_KEY=stub-groq\n"
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_talker, env_body=env_body)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.talker.provider == "groq"
+    assert config.talker.max_tokens == 1024
+    assert str(config.talker.system_prompt_path) == "prompts/custom.md"
+    assert config.talker.openai.model == "gpt-5-mini"
+    assert config.talker.groq.model == "llama-3.3-70b-versatile"
+    # Gemini sub-block left at default.
+    assert config.talker.gemini.model == "gemini-2.5-flash"
+    assert config.openai_api_key is None
+    assert config.groq_api_key is not None
+    assert config.groq_api_key.get_secret_value() == "stub-groq"
+
+
+def test_talker_max_tokens_must_be_positive(tmp_path: Path) -> None:
+    """Story 2.2: ``max_tokens = 0`` (or negative) is rejected at parse time.
+
+    Pydantic enforces ``Field(gt=0)`` at validation time so misconfigured
+    Talker max_tokens fails startup rather than silently failing every
+    Anthropic call with a 400.
+    """
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[talker]\n"
+        # 0 is non-positive — pydantic should reject.
+        "max_tokens = 0\n"
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "max_tokens" in str(exc_info.value).lower()
+
+
+def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
+    """Story 2.2: ``extra='forbid'`` applies to the nested TalkerConfig too."""
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[talker]\n"
+        'unknown_talker_field = "x"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "unknown_talker_field" in str(exc_info.value)
+
+
+def test_all_talker_keys_optional_at_load_time(tmp_path: Path) -> None:
+    """Story 2.2: SetupConfig accepts all-three-Talker-keys-missing.
+
+    The factory ``build_talker`` (in turn/__init__.py) is what enforces
+    "the active provider's key must be present"; the loader itself
+    accepts any combination of the three keys, including none. Tests
+    for the factory's missing-key handling live in tests/unit/turn/.
+    """
+    # Only PICOVOICE present — no Talker keys at all.
+    toml_path, env_path = _write_files(tmp_path, env_body="PICOVOICE_ACCESS_KEY=stub\n")
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.openai_api_key is None
+    assert config.groq_api_key is None
+    assert config.gemini_api_key is None
 
 
 def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:

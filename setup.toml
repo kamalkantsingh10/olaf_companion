@@ -63,8 +63,49 @@ compute_type = "int8"
 device = "auto"
 low_confidence_threshold = 0.5
 
+# Talker (Story 2.2). Fast-path LLM for short conversational replies.
+# Three providers wired out of the box — all reach the same `openai`
+# SDK via their openai-compatible endpoints. To swap, change ONE LINE
+# (`provider = "..."`) and restart. Each provider's matching API key
+# must be present in `.env`:
+#
+#   provider = "openai"  -> needs OPENAI_API_KEY  (default)
+#   provider = "groq"    -> needs GROQ_API_KEY
+#   provider = "gemini"  -> needs GEMINI_API_KEY
+#
+# `max_tokens = 512` keeps replies to 1-2 sentences; raising it risks
+# verbose answers that blow NFR1. Edit `prompts/talker_system.md` (not
+# env vars) to change OLAF's voice / personality.
+[talker]
+provider = "groq"
+max_tokens = 512
+system_prompt_path = "prompts/talker_system.md"
+
+# Per-provider model identifiers. Only the active provider's sub-block
+# is consumed; the others stay declared so swapping is a single edit
+# above. To try a different model within a provider, edit the matching
+# line below.
+#
+# OpenAI gpt-5.4-nano: cheapest GPT-5 tier, ~250-400 ms TTFB, reliable
+# on structured output (matters for Epic 3 inline tags).
+[talker.openai]
+model = "gpt-5.4-nano"
+
+# Groq Llama 3.1 8B Instant: fastest TTFB available (~50-150 ms) on
+# Groq's custom inference hardware. Cheapest of the three. Quality is
+# adequate for short conversational replies; Epic 3 tag-emission
+# reliability is the main risk — bump to a 70B Llama if needed.
+[talker.groq]
+model = "llama-3.1-8b-instant"
+
+# Gemini 2.5 Flash: Google's mid-tier latency model, ~200-300 ms TTFB,
+# strong at structured output. Reached via Gemini's openai-compatible
+# endpoint at https://generativelanguage.googleapis.com/v1beta/openai/.
+[talker.gemini]
+model = "gemini-2.5-flash"
+
 # Sections populated by subsequent stories:
-# [talker]         -- Story 2.2 (model, max_tokens, system_prompt_path) + Story 4.1 (grounded_keys)
+# [talker] -- extended in Story 4.1 (grounded_keys for belief-state)
 # [tts]            -- Story 2.3 (voice_id, default_emotion, model)
 # [publisher]      -- Story 3.4 (transport, dds_domain_id, expression_channel, lifecycle_channel)
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)

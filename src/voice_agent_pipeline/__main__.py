@@ -36,6 +36,7 @@ from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
 from voice_agent_pipeline.pipeline import run_pipeline
+from voice_agent_pipeline.turn import validate_credentials as validate_talker_credentials
 
 
 async def _validate_wakeword_credentials(config: SetupConfig) -> None:
@@ -95,6 +96,11 @@ async def main() -> int:
     try:
         await _validate_wakeword_credentials(config)
         log.info("startup.validated.wakeword")
+        # Story 2.2: probe the active Talker provider (openai/groq/gemini)
+        # before opening audio. Bad key / removed model / wrong base_url
+        # surfaces here, not on the first turn.
+        await validate_talker_credentials(config)
+        log.info("startup.validated.talker", provider=config.talker.provider)
     except VoiceAgentError as e:
         log.critical(
             "startup.failed",

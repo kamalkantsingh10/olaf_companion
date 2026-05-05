@@ -14,7 +14,15 @@ Story progression for this module:
 - Story 1.6 — adds nested ``WakewordConfig`` for Porcupine model + sensitivity.
 - Story 1.7 — adds nested ``VadConfig`` (Silero VAD timing) and ``SttConfig``
   (faster-whisper backend selection + confidence threshold).
-- Stories 2.x / 3.x / 4.x / 5.x — add their respective nested sections.
+- Story 2.1 — promotes ``output_device_name`` to required (speaker output landed).
+- Story 2.2 — adds nested ``TalkerConfig`` (provider-agnostic Talker
+  with per-provider model sub-blocks for OpenAI / Groq / Gemini — all
+  three reach the same ``openai`` SDK via their openai-compatible
+  endpoints) and the corresponding ``.env`` keys (``OPENAI_API_KEY`` /
+  ``GROQ_API_KEY`` / ``GEMINI_API_KEY``); only the active provider's
+  key is required at startup. Operator swaps providers by changing one
+  line in ``setup.toml``: ``[talker] provider = "<openai|groq|gemini>"``.
+- Stories 2.3 / 3.x / 4.x / 5.x — add their respective nested sections.
 
 What this module deliberately does **not** do:
 
@@ -27,6 +35,7 @@ What this module deliberately does **not** do:
 import logging
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -121,6 +130,89 @@ class VadConfig(BaseModel):
     end_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
 
 
+class _OpenAITalkerSection(BaseModel):
+    """Per-provider sub-block: OpenAI model identifier (Story 2.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "gpt-5.4-nano"
+
+
+class _GroqTalkerSection(BaseModel):
+    """Per-provider sub-block: Groq model identifier (Story 2.2).
+
+    Groq hosts Llama 3.x family + others on their custom inference
+    hardware — TTFB ~50-150 ms typical for the 8B Instant variant.
+    Cost ~$0.05/M input, $0.08/M output: cheapest of the three majors.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "llama-3.1-8b-instant"
+
+
+class _GeminiTalkerSection(BaseModel):
+    """Per-provider sub-block: Gemini model identifier (Story 2.2).
+
+    Gemini exposes an openai-compatible endpoint at
+    ``https://generativelanguage.googleapis.com/v1beta/openai/`` so the
+    Talker reaches it via the same ``openai`` SDK Groq + OpenAI use —
+    no separate ``google-genai`` dependency needed. Flash 2.5 is the
+    latency / cost / reliability sweet spot in the Gemini family.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "gemini-2.5-flash"
+
+
+class TalkerConfig(BaseModel):
+    """Provider-agnostic Talker (fast-path LLM) tuning knobs (Story 2.2).
+
+    The Talker handles short conversational replies. Story 4.1 extends
+    this config with belief-state grounded keys; Story 3.5 will rewrite
+    the system prompt to instruct Cartesia SSML emission. v1 keeps the
+    prompt plain-text-only so the listening half-loop ships before the
+    splitter lands.
+
+    Provider design (Story 2.2): three providers — OpenAI, Groq, Gemini
+    — all reach the same ``openai`` Python SDK because each exposes an
+    openai-compatible endpoint. A single concrete class
+    (:class:`Talker`) parameterised by ``base_url`` + ``api_key`` +
+    model identifier handles all three; the factory ``build_talker``
+    dispatches on :attr:`provider` and supplies the matching values.
+
+    The operator picks a provider by changing :attr:`provider`; each
+    provider's model lives in its own sub-block so all three configs
+    stay declared in ``setup.toml`` and the swap is a one-line edit.
+
+    Attributes:
+        provider: Which provider's endpoint to talk to. The factory
+            ``build_talker`` indexes into the matching sub-block for
+            model name + reads the matching ``.env`` API key.
+        max_tokens: Generation length cap. 512 is enough for the "1-2
+            sentence" reply style the system prompt enforces. Higher
+            values risk verbose answers that blow NFR1.
+        system_prompt_path: Path (project-root relative by convention)
+            to the markdown file the Talker reads ONCE at construction.
+            v1 ships ``prompts/talker_system.md``; the file is committed
+            so the prompt evolves through git history rather than
+            env-var twiddling.
+        openai / groq / gemini: Per-provider model identifiers. Only
+            the active provider's sub-block is consumed; the others
+            stay around as ready-to-swap configurations.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["openai", "groq", "gemini"] = "openai"
+    max_tokens: int = Field(default=512, gt=0)
+    system_prompt_path: Path = Path("prompts/talker_system.md")
+    openai: _OpenAITalkerSection = Field(default_factory=_OpenAITalkerSection)
+    groq: _GroqTalkerSection = Field(default_factory=_GroqTalkerSection)
+    gemini: _GeminiTalkerSection = Field(default_factory=_GeminiTalkerSection)
+
+
 class SttConfig(BaseModel):
     """STT backend selection + tuning knobs (Story 1.7).
 
@@ -185,10 +277,19 @@ class SetupConfig(BaseSettings):
 
     schema_version: int
     picovoice_access_key: SecretStr
+    # Provider-agnostic Talker (Story 2.2): all three are optional in the
+    # SetupConfig. The factory ``build_talker`` enforces "the matching key
+    # is present for the active provider" at startup, so a misconfigured
+    # combo (e.g., provider="groq" but no GROQ_API_KEY in .env) fails fast
+    # with a clear ConfigError naming the missing field.
+    openai_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
     audio: AudioConfig
     wakeword: WakewordConfig
     vad: VadConfig = Field(default_factory=VadConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
+    talker: TalkerConfig = Field(default_factory=TalkerConfig)
 
 
 def load_setup_config(

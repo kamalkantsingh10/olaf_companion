@@ -201,7 +201,7 @@ Each phase produces a runnable artifact, not a sub-component — incremental val
 | Risk | Mitigation |
 |---|---|
 | **Cartesia API pricing or availability changes.** | Designed to be replaceable: TTS is a single processor in the Pipecat pipeline. Swapping providers is a config change + processor rewrite, not an architecture change. |
-| **Anthropic API for Talker.** | Same — Talker is one in-pipeline LLM call; the model is configurable in `pipeline.toml`. Switching to a different small model (e.g., a local Llama-3-8B on the Pi) is config + a different client lib. |
+| **Cloud LLM for Talker** *(Story 2.2 final design: provider-agnostic factory across OpenAI / Groq / Gemini.)* | Same — Talker is one in-pipeline LLM call. v1 ships with all three providers wired; operator picks via `[talker] provider` in setup.toml. Default is Groq Llama 8B Instant (cheapest, ~150–270 ms TTFB on the dev host — fits inside NFR1's budget with headroom). Switching providers is a one-line config change; switching to a self-hosted vLLM / Together / Fireworks is a one-line entry in `_PROVIDER_BASE_URLS` plus a sub-block on TalkerConfig. |
 | **Hailo-8L hardware availability / firmware EOL.** | Phase 0 validates that CPU Whisper is acceptable as a fallback. The pipeline must not hard-require Hailo-8L; it should degrade to CPU with a logged warning. |
 
 **Resource / execution risks**
@@ -381,7 +381,7 @@ The five journeys reveal these capability clusters that the functional requireme
 | **Audio playback** | ALSA / PulseAudio | Out | Local speaker device |
 | **Wake-word** | On-device, no network | — | — |
 | **STT** | On-device (Whisper + Hailo-8L) | — | — |
-| **Talker LLM** | HTTPS | Out | Anthropic API (Claude Haiku 4.5) |
+| **Talker LLM** | HTTPS | Out | Active provider per `setup.toml` — Groq (default, llama-3.1-8b-instant), OpenAI (gpt-5.4-nano), or Gemini (gemini-2.5-flash) |
 | **Belief-state read** | HTTP | Out | `http://localhost:8001/beliefs` (orchestrator daemon) |
 | **Orchestrator dispatch** | HTTP/WebSocket (SSE) | Out | `http://localhost:8001/turn` (orchestrator daemon) |
 | **TTS** | HTTPS / WebSocket | Out | Cartesia Sonic-3 API |
@@ -390,7 +390,7 @@ The five journeys reveal these capability clusters that the functional requireme
 
 **Network reachability requirements:**
 
-- **Outbound to internet:** Cartesia (TTS), Anthropic (Talker LLM)
+- **Outbound to internet:** Cartesia (TTS), active Talker provider (Groq / OpenAI / Gemini)
 - **Outbound on local network:** Orchestrator daemon (default: localhost; configurable to LAN-reachable, but must require shared secret/mTLS if so — bare HTTP exposure rejected at startup)
 - **Local DDS multicast:** ROS 2 traffic; pipeline must be on the same DDS domain as OLAF nodes
 - **Inbound:** None. The pipeline is purely an outbound client; nothing else dials in.
@@ -411,7 +411,7 @@ The Pi is **mains-powered** (plugged in continuously as a fixed-location device)
 **Credentials:**
 
 - **Cartesia API key** stored in a separate secrets file (path referenced from `pipeline.toml`, not inline). File permissions `0600`. Never logged. Rotation: manual.
-- **Anthropic API key** (for Talker) — same handling as Cartesia.
+- **Active Talker provider's API key** (one of `OPENAI_API_KEY` / `GROQ_API_KEY` / `GEMINI_API_KEY` — whichever matches `[talker] provider` in setup.toml) — same handling as Cartesia.
 - **No other outbound credentials.**
 
 **Network exposure:**
@@ -505,7 +505,7 @@ Personal-project scale, not a fleet:
 - **FR31**: The pipeline can load `expression_map.yaml` and `pipeline.toml` at startup, validating schema and refusing to start on validation failure.
 - **FR32**: The pipeline can hot-reload `expression_map.yaml` on `SIGHUP`, swapping the in-memory mapping atomically; if validation fails, it retains the prior mapping and logs the error.
 - **FR33**: The pipeline can defer `SIGHUP` reloads received mid-utterance, applying them after the current turn completes.
-- **FR34**: The pipeline can load credentials (Cartesia, Anthropic API keys) from a secrets file referenced by path in `pipeline.toml`, never inlined and never logged.
+- **FR34**: The pipeline can load credentials (Cartesia + active Talker provider's API key) from a secrets file referenced by path in `pipeline.toml`, never inlined and never logged. *(Story 2.2 revisions 2026-05-05: was "Anthropic" originally → "OpenAI" intermediate → finalised on a **provider-agnostic Talker factory** wired to OpenAI / Groq / Gemini, all reachable via the same `openai` SDK because each exposes an openai-compatible endpoint. Operator picks one provider in setup.toml; only the matching `.env` key is required at startup. v1 default is **Groq** for NFR1 latency headroom — measured ~150–270 ms per turn vs OpenAI's ~1–1.7 s on the dev host.)*
 - **FR35**: The pipeline can refuse to start when configured with a non-localhost orchestrator URL without a corresponding shared-secret or mTLS configuration.
 - **FR36**: The pipeline can run as a systemd service with restart-on-failure and structured logging to journald.
 
