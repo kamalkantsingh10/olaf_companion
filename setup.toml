@@ -4,13 +4,27 @@ schema_version = 1
 # enumerated device names. Tune to your actual mic; Story 1.5's resolver
 # will print the available device names if no match is found.
 [audio]
-# Match PipeWire's virtual input — routes to whatever device PipeWire is
-# currently bridging (so an analog/jack mic, USB mic, or Bluetooth headset
-# all "just work" without changing this regex). Switch to a more specific
-# regex (e.g. `ALCS1200A.*Analog` or `USB.*Mic`) if you want to bypass
-# PipeWire and pin a specific hardware device.
+# Match PipeWire's virtual input — PipeWire bridges to whichever physical
+# device is set as the OS-level default input (System Settings -> Sound ->
+# Input). Going through PipeWire gets us automatic resampling from the mic's
+# native rate (typically 44.1 kHz or 48 kHz) down to the 16 kHz Porcupine
+# expects. Direct ALSA pinning (e.g. "BY Y02") fails for mics whose native
+# rate isn't 16 kHz because PyAudio doesn't resample.
 input_device_name = "^pipewire$"
 # output_device_name = "..."  # Story 2.1 wires speaker output
+
+# Picovoice Porcupine wake-word (Story 1.6). The .ppn file is trained at
+# https://console.picovoice.ai/ for "Hey OLAF" and committed under
+# models/wakeword/. Sensitivity 0.5 is conservative — Story 5.5 tunes.
+[wakeword]
+model_path = "models/wakeword/hey_olaf.ppn"
+# Sensitivity 0.85 (above the architecture's conservative-default 0.5)
+# because 0.5 produced false-negatives during Story 1.6's live test on the
+# BY Y02 USB conference mic. Story 5.5 will calibrate the production value
+# from a real ambient soak; 0.85 just lets us close 1.6's "mechanism works
+# end-to-end" AC. If you swap in a different mic and see false-positives,
+# drop this back toward 0.5.
+sensitivity = 0.85
 
 # Sections populated by subsequent stories:
 # [stt]            -- Story 1.7 (backend, model, low_confidence_threshold, clarification_prompt)

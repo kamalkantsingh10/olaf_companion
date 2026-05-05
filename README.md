@@ -52,6 +52,75 @@ The match uses Python's `re.search` semantics, so partial matches work.
 If no device matches the regex at startup, the pipeline exits within ~1s
 and prints the available device names — no need to dig through stack traces.
 
+## Wake-word setup (per project)
+
+The pipeline uses **Picovoice Porcupine** for on-device wake-word detection.
+Two pieces are required:
+
+1. A **runtime access key** (per machine, kept in `.env`).
+2. A trained `.ppn` **wake-word model file** (committed under `models/wakeword/`).
+
+### 1. Get a Picovoice access key
+
+1. Sign up at https://console.picovoice.ai/ (free tier covers personal use).
+2. From the dashboard, copy your **AccessKey**.
+3. Add it to `.env` at the project root:
+
+   ```bash
+   PICOVOICE_ACCESS_KEY=<paste-the-key>
+   ```
+
+   Then `chmod 0600 .env` so the loose-perms WARN doesn't fire (NFR23).
+
+The key authenticates the runtime SDK; it is **not** the same thing as the
+`.ppn` file below. The `.env` is gitignored — never commit it.
+
+### 2. Train and download the `.ppn` wake-word file
+
+The committed wake-word phrase is "Hey OLAF". To regenerate or retrain:
+
+1. Open https://console.picovoice.ai/ → **Wake Word** → **Train Wake Word**.
+2. **Phrase:** `Hey OLAF` (or your preferred trigger).
+3. **Platform:** match your **target deployment host** (NOT necessarily the
+   machine you're running the console from):
+   - Linux x86_64 desktop → **Linux (x86_64)**
+   - macOS (Intel) → **macOS (x86_64)**
+   - macOS (Apple Silicon) → **macOS (arm64)**
+   - Windows → **Windows (x86_64)**
+   - Raspberry Pi 5 (v2 deployment) → **Raspberry Pi**
+4. **Language:** English.
+5. Click **Train** — wait ~30s for the build.
+6. **Download** the resulting `.ppn` file.
+7. Save it to `models/wakeword/hey_olaf.ppn` (replacing any existing file).
+8. Restart the pipeline (`Ctrl-C` + `just run`) — the new model is picked
+   up at startup. Story 5.4's systemd unit will swap to `systemctl restart
+   voice-agent-pipeline` once it lands.
+
+> **Free-tier limit.** Picovoice's free tier caps wake-word training at
+> **one model per month** (subject to change — check the console for your
+> current quota). Plan retraining iterations accordingly: nail the phrase
+> and accent samples in one sitting rather than burning the monthly
+> allowance on tweaks. For day-to-day false-positive/false-negative tuning,
+> prefer the `sensitivity` knob in `setup.toml` (no retrain required).
+
+> **Per-platform `.ppn` files.** A model file trained for Linux x86_64
+> will refuse to load on macOS / Windows / Pi. Each contributor running
+> the pipeline on a different OS needs to either (a) train their own
+> `.ppn` for their platform and swap it in locally, or (b) we eventually
+> commit one `.ppn` per supported platform and pick by host. v1 commits
+> the Linux x86_64 build only.
+
+If the wake-word model file is missing or the access key is invalid, the
+pipeline fails fast at startup with a `startup.failed` log line naming
+which check tripped — no silent fall-through.
+
+### Tuning
+
+`setup.toml` exposes one knob: `[wakeword] sensitivity` (range `0.0`–`1.0`,
+default `0.5`). Higher values are more sensitive (catch more wakes, more
+false positives). Final calibration lives in Story 5.5's soak; until then,
+default `0.5` is the conservative starting point.
+
 ## Documentation
 
 - Requirements & user journeys: `build_documents/planning-artifacts/prd.md`

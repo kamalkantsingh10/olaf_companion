@@ -64,6 +64,11 @@ reportUnknownParameterType = false
 reportMissingParameterType = false
 reportMissingTypeArgument = false
 reportPrivateUsage = false
+# Pipecat's frame classes don't come with type stubs, so pyright sees
+# AudioRawFrame as ambiguously-typed; the strict reportArgumentType check
+# then trips on otherwise-valid test code. Disable in tests/ only — src/
+# keeps the strict check.
+reportArgumentType = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

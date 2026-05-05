@@ -16,7 +16,14 @@ import pytest
 from voice_agent_pipeline.config.setup import load_setup_config
 from voice_agent_pipeline.errors import ConfigError, SchemaVersionError
 
-_VALID_TOML = 'schema_version = 1\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+_VALID_TOML = (
+    "schema_version = 1\n"
+    "[audio]\n"
+    'input_device_name = "USB.*Mic.*"\n'
+    "[wakeword]\n"
+    'model_path = "models/wakeword/hey_olaf.ppn"\n'
+    "sensitivity = 0.5\n"
+)
 
 
 def _write_files(
@@ -47,15 +54,122 @@ def _write_files(
 
 
 def test_load_happy_path(tmp_path: Path) -> None:
-    """A minimal valid pair loads into a SetupConfig with the expected values."""
+    """A minimal valid pair loads into a SetupConfig with the expected values.
+
+    This is the canary for the whole loader — covers TOML parsing, env-var
+    substitution, schema_version pass-through, and every nested-config
+    block landed so far. Each new story that adds a `[<block>]` to
+    SetupConfig should extend the asserts at the bottom of this test.
+    """
     toml_path, env_path = _write_files(tmp_path)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.schema_version == 1
     # SecretStr requires explicit unwrap — that's the whole point of using it.
+    # If you ever see a test asserting on `str(config.picovoice_access_key)`,
+    # that's a bug: SecretStr renders as `**********` in str/repr by design.
     assert config.picovoice_access_key.get_secret_value() == "stub"
     # Story 1.5: AudioConfig nested model loads from the [audio] block.
+    # input_device_name is required; output_device_name is optional until
+    # Story 2.1 wires speaker output (then it becomes required there).
     assert config.audio.input_device_name == "USB.*Mic.*"
     assert config.audio.output_device_name is None
+    # Story 1.6: WakewordConfig nested model loads from the [wakeword] block.
+    # model_path is parsed as pathlib.Path (TOML strings → Path coercion);
+    # str() round-trip below is the cheap way to assert without depending
+    # on platform-specific path normalization (we just want "did it land").
+    assert str(config.wakeword.model_path) == "models/wakeword/hey_olaf.ppn"
+    assert config.wakeword.sensitivity == 0.5
+
+
+def test_wakeword_block_extra_key_rejected(tmp_path: Path) -> None:
+    """Story 1.6 AC #4: extra='forbid' applies to the nested WakewordConfig too.
+
+    A typo in the TOML (e.g. `sensitivty = 0.5` for `sensitivity`) must
+    fail at startup, not silently fall through to the default and ship
+    a misconfigured wake-word. Pydantic raises ValidationError; our
+    loader wraps it as ConfigError per the project's error hierarchy.
+    """
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "sensitivity = 0.5\n"
+        # Deliberate unknown key — should make the loader bail rather than
+        # silently treating it as unrelated metadata.
+        'unknown_wakeword_field = "x"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Assert the operator-facing message names the offender so they can fix
+    # it without spelunking through a stack trace.
+    assert "unknown_wakeword_field" in str(exc_info.value)
+
+
+def test_wakeword_sensitivity_out_of_range_rejected(tmp_path: Path) -> None:
+    """Story 1.6: sensitivity must lie in [0.0, 1.0] per Porcupine's API contract.
+
+    pydantic's `Field(ge=0.0, le=1.0)` enforces the bounds at parse time,
+    which means we catch a bad sensitivity *before* opening the audio
+    pipeline — same fail-fast posture as the rest of the loader. If we
+    deferred validation to Porcupine itself, the operator would see a
+    cryptic native-code error message instead of a clean ConfigError.
+    """
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        # 2.5 is out of [0.0, 1.0] — pydantic should reject.
+        "sensitivity = 2.5\n"
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Lowercase to be robust against pydantic's preferred capitalization.
+    assert "sensitivity" in str(exc_info.value).lower()
+
+
+def test_wakeword_sensitivity_default(tmp_path: Path) -> None:
+    """Omitting `sensitivity` falls back to the documented default of 0.5.
+
+    The default lives in WakewordConfig as `Field(default=0.5, ge=..., le=...)`
+    — operators with a working setup don't have to memorize the threshold;
+    they only override when Story 5.5's soak says so.
+    """
+    toml_with_default = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        "[wakeword]\n"
+        # Note: NO sensitivity line — should pick up the default.
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_default)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.wakeword.sensitivity == 0.5
+
+
+def test_missing_wakeword_block_rejected(tmp_path: Path) -> None:
+    """Omitting `[wakeword]` entirely raises ConfigError naming the block.
+
+    `wakeword: WakewordConfig` is a required field on SetupConfig (no
+    default factory) — the wake-word gate is non-optional in v1. If/when
+    a future "headless" mode lands, this assertion needs to flip.
+    """
+    toml_no_wakeword = (
+        'schema_version = 1\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+        # No [wakeword] block at all.
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_no_wakeword)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    # pydantic surfaces missing required fields by name; case-insensitive
+    # check makes the assertion robust to phrasing changes.
+    assert "wakeword" in str(exc_info.value).lower()
 
 
 def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
@@ -143,14 +257,25 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     The error message must surface both versions and the source name —
     this is the AC #8 contract.
     """
-    # Use a fully valid TOML (with [audio]) so schema_version is the only
-    # problem — otherwise pydantic surfaces the missing audio block first
-    # and SchemaVersionError never fires.
-    bad_toml = 'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+    # Use a fully valid TOML (with [audio] AND [wakeword]) so schema_version
+    # is the only problem. Otherwise pydantic surfaces the missing nested
+    # blocks *first* and we never get to the schema_version policy check.
+    # Each new story that lands a required nested block must extend this
+    # TOML to keep the test focused on its contract (schema_version policy).
+    bad_toml = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+    )
     toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
     with pytest.raises(SchemaVersionError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     msg = str(exc_info.value)
+    # The error message must surface BOTH versions and the source name —
+    # this is the AC #8 contract from Story 1.2 and survives every later
+    # story that touches the loader.
     assert "2" in msg
     assert "1" in msg
     assert "setup.toml" in msg

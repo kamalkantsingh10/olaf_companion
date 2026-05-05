@@ -10,7 +10,8 @@ fail-fast posture (architecture.md §"V1 Posture: Hard Dependencies, Fail-Fast")
 Story progression for this module:
 
 - Story 1.2 — landed the model + ``schema_version`` + ``picovoice_access_key``.
-- Story 1.5 — adds nested ``AudioConfig`` for mic/speaker device names.
+- Story 1.5 — added nested ``AudioConfig`` for mic/speaker device names.
+- Story 1.6 — adds nested ``WakewordConfig`` for Porcupine model + sensitivity.
 - Stories 1.7 / 2.x / 3.x / 4.x / 5.x — add their respective nested sections.
 
 What this module deliberately does **not** do:
@@ -25,7 +26,7 @@ import logging
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_agent_pipeline.config.version import assert_schema_version
@@ -61,6 +62,29 @@ class AudioConfig(BaseModel):
     output_device_name: str | None = None
 
 
+class WakewordConfig(BaseModel):
+    """Picovoice Porcupine wake-word knobs (Story 1.6).
+
+    Attributes:
+        model_path: Path to the trained ``.ppn`` file (project-root relative).
+            The file is committed under ``models/wakeword/`` per
+            architecture.md §"Architectural Boundaries". The Picovoice
+            access key itself lives in ``.env`` as ``PICOVOICE_ACCESS_KEY``
+            and is loaded onto :attr:`SetupConfig.picovoice_access_key`.
+        sensitivity: Detection threshold in ``[0.0, 1.0]``. Higher = more
+            sensitive (more true positives, more false positives). Default
+            ``0.5`` is the conservative starting point per architecture's
+            "favor FN over FP" guidance; Story 5.5's soak finalizes the
+            value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: Path
+    # ge/le bounds match Porcupine's API; pydantic enforces at parse time.
+    sensitivity: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class SetupConfig(BaseSettings):
     """Typed top-level configuration for the voice-agent pipeline.
 
@@ -90,6 +114,7 @@ class SetupConfig(BaseSettings):
     schema_version: int
     picovoice_access_key: SecretStr
     audio: AudioConfig
+    wakeword: WakewordConfig
 
 
 def load_setup_config(
