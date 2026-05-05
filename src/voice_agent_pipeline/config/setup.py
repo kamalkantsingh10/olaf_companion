@@ -12,7 +12,9 @@ Story progression for this module:
 - Story 1.2 — landed the model + ``schema_version`` + ``picovoice_access_key``.
 - Story 1.5 — added nested ``AudioConfig`` for mic/speaker device names.
 - Story 1.6 — adds nested ``WakewordConfig`` for Porcupine model + sensitivity.
-- Stories 1.7 / 2.x / 3.x / 4.x / 5.x — add their respective nested sections.
+- Story 1.7 — adds nested ``VadConfig`` (Silero VAD timing) and ``SttConfig``
+  (faster-whisper backend selection + confidence threshold).
+- Stories 2.x / 3.x / 4.x / 5.x — add their respective nested sections.
 
 What this module deliberately does **not** do:
 
@@ -85,6 +87,75 @@ class WakewordConfig(BaseModel):
     sensitivity: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class VadConfig(BaseModel):
+    """Silero VAD timing knobs — bounds the captured utterance (Story 1.7).
+
+    The pipeline's :class:`VadProcessor` consumes pipecat's bundled Silero
+    VAD analyzer. The analyzer reports per-chunk voice probability; this
+    config controls how that probability is converted into "speech started"
+    and "speech stopped" decisions, plus the minimum utterance length we
+    accept (filters out short noises / cough / "uh").
+
+    Attributes:
+        silence_duration_ms: How long we wait in continuous silence after
+            speech ends before emitting the captured utterance. Tuned
+            empirically; 700ms covers natural between-word pauses without
+            cutting people off.
+        min_speech_duration_ms: Utterances shorter than this are silently
+            dropped. Filters cough, throat-clearing, and accidental key
+            presses on the mic.
+        start_threshold: Silero confidence value at which we consider
+            speech to have started. ``0.5`` is the model's neutral point.
+        end_threshold: Silero confidence below which we consider speech
+            to have stopped. Lower than ``start_threshold`` (0.35) gives
+            a hysteresis band that prevents flapping at the start/stop
+            boundary.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    silence_duration_ms: int = Field(default=700, gt=0)
+    min_speech_duration_ms: int = Field(default=250, gt=0)
+    start_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    end_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
+
+
+class SttConfig(BaseModel):
+    """STT backend selection + tuning knobs (Story 1.7).
+
+    The :func:`build_stt_backend` factory in
+    :mod:`voice_agent_pipeline.stt` reads :attr:`backend` and switches on it.
+    v1 supports only ``"whisper-cpu"``; v2 adds ``"hailo-whisper"`` for
+    Pi 5 + Hailo-8L deployments — the Protocol seam from Story 1.4 keeps
+    callers unchanged across that swap.
+
+    Attributes:
+        backend: Backend identifier. v1: ``"whisper-cpu"``.
+        model: faster-whisper model size — ``"tiny" / "base" / "small" /
+            "medium" / "large-v3"``. ``"small"`` is the dev-host default
+            (~500 MB, ~150ms inference per 1s audio on a modern CPU).
+        compute_type: faster-whisper compute precision. ``"int8"`` is the
+            CPU sweet-spot — ~3x faster than ``"float16"`` with negligible
+            accuracy loss for English transcription.
+        device: ``"cpu" / "cuda" / "auto"``. ``"auto"`` consults
+            ``torch.cuda.is_available()`` if torch is importable; falls
+            back to ``"cpu"`` otherwise. v2's Hailo backend ignores this
+            field.
+        low_confidence_threshold: Transcripts with confidence below this
+            value emit an additional ``stt.low_confidence`` WARN log,
+            and (in Story 2.4 onward) trigger a clarification prompt.
+            ``exp(avg_logprob)`` units; 0.5 is conservative.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = "whisper-cpu"
+    model: str = "small"
+    compute_type: str = "int8"
+    device: str = "auto"
+    low_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class SetupConfig(BaseSettings):
     """Typed top-level configuration for the voice-agent pipeline.
 
@@ -115,6 +186,8 @@ class SetupConfig(BaseSettings):
     picovoice_access_key: SecretStr
     audio: AudioConfig
     wakeword: WakewordConfig
+    vad: VadConfig = Field(default_factory=VadConfig)
+    stt: SttConfig = Field(default_factory=SttConfig)
 
 
 def load_setup_config(

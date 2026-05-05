@@ -50,7 +50,7 @@ development_status:
   1-4-event-schemas-error-hierarchy-protocol-seams: review
   1-5-audio-capture-mic-input-device-pinning: review
   1-6-wake-word-detection-porcupine: review
-  1-7-vad-bounded-capture-and-stt: ready-for-dev
+  1-7-vad-bounded-capture-and-stt: review
   epic-1-retrospective: optional
 
   # ───────────────── Epic 2: Speak — Talker + Cartesia ─────────────────

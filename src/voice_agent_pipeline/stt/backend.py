@@ -35,6 +35,16 @@ class TranscriptionResult:
 class STTBackend(Protocol):
     """Async STT inference behind a stable interface for v1/v2 backend swap."""
 
+    async def load(self) -> None:
+        """One-shot startup hook — load model weights / open native handles.
+
+        The pipeline calls this once during ``run_pipeline`` before opening
+        the audio loop. v1's Whisper backend downloads / mmaps the model
+        here; v2's Hailo backend opens the NPU device. Backends that need
+        no startup work can implement this as a no-op.
+        """
+        ...
+
     async def transcribe(self, audio: bytes) -> TranscriptionResult:
         """Transcribe a chunk of raw PCM audio bytes into text + confidence.
 

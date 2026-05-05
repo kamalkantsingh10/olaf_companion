@@ -26,8 +26,28 @@ model_path = "models/wakeword/hey_olaf.ppn"
 # drop this back toward 0.5.
 sensitivity = 0.85
 
+# Voice activity detection (Story 1.7). silence_duration_ms is how long we
+# wait in continuous silence after the user stops speaking before we cut
+# the utterance and run STT. Increase if folks pause a lot between words;
+# decrease if you want faster turn-around.
+[vad]
+silence_duration_ms = 700
+min_speech_duration_ms = 250
+start_threshold = 0.5
+end_threshold = 0.35
+
+# Speech-to-text (Story 1.7). On first run faster-whisper downloads the
+# model from HuggingFace (~500 MB for "small") to ~/.cache/huggingface/.
+# Subsequent runs load from cache. Set device="cuda" if you have a GPU
+# and torch installed; "auto" probes torch.cuda.is_available() at startup.
+[stt]
+backend = "whisper-cpu"
+model = "small"
+compute_type = "int8"
+device = "auto"
+low_confidence_threshold = 0.5
+
 # Sections populated by subsequent stories:
-# [stt]            -- Story 1.7 (backend, model, low_confidence_threshold, clarification_prompt)
 # [talker]         -- Story 2.2 (model, max_tokens, system_prompt_path) + Story 4.1 (grounded_keys)
 # [tts]            -- Story 2.3 (voice_id, default_emotion, model)
 # [publisher]      -- Story 3.4 (transport, dds_domain_id, expression_channel, lifecycle_channel)
