@@ -238,8 +238,15 @@ class SttConfig(BaseModel):
             field.
         low_confidence_threshold: Transcripts with confidence below this
             value emit an additional ``stt.low_confidence`` WARN log,
-            and (in Story 2.4 onward) trigger a clarification prompt.
+            and (Story 2.4 onward) trigger a clarification prompt.
             ``exp(avg_logprob)`` units; 0.5 is conservative.
+        clarification_prompt: What the Talker says back when STT
+            confidence is below ``low_confidence_threshold``. Story 2.4's
+            TurnRouter substitutes this string for the user's
+            (low-confidence) transcript when routing to Talker, so the
+            response is a clarifying question rather than the model
+            guessing at the noisy text. Stays in ``[stt]`` because the
+            threshold lives there too — they're a pair.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -249,6 +256,7 @@ class SttConfig(BaseModel):
     compute_type: str = "int8"
     device: str = "auto"
     low_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    clarification_prompt: str = "Sorry, I didn't catch that — could you say it again?"
 
 
 class TtsConfig(BaseModel):

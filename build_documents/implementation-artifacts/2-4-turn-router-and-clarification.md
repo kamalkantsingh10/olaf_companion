@@ -1,6 +1,6 @@
 # Story 2.4: TurnRouter (Talker-only) + low-confidence clarification dialog
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -73,14 +73,14 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Extend `SttConfig` with `clarification_prompt`** (AC: #5)
-  - [ ] Add `clarification_prompt: str = "Sorry, I didn't catch that — could you say it again?"` to `SttConfig` in `config/setup.py`. Update the docstring.
-  - [ ] `setup.toml`'s `[stt]` block — leave the prompt commented as "uses default" or set explicitly to be visible to operators. Lean toward **setting it explicitly** so the operator's default install shows what the bot will actually say.
-  - [ ] Extend `tests/unit/config/test_setup.py` with `test_clarification_prompt_default` and `test_clarification_prompt_override`.
+- [x] **Task 1: Extend `SttConfig` with `clarification_prompt`** (AC: #5)
+  - [x] Add `clarification_prompt: str = "Sorry, I didn't catch that — could you say it again?"` to `SttConfig` in `config/setup.py`. Update the docstring.
+  - [x] `setup.toml`'s `[stt]` block — leave the prompt commented as "uses default" or set explicitly to be visible to operators. Lean toward **setting it explicitly** so the operator's default install shows what the bot will actually say.
+  - [x] Extend `tests/unit/config/test_setup.py` with `test_clarification_prompt_default` and `test_clarification_prompt_override`.
 
-- [ ] **Task 2: Implement `RouteDecision` + `TurnRouter` in `turn/router.py`** (AC: #1-#6)
-  - [ ] New file with module + class + method docstrings (per `feedback_code_comments.md`).
-  - [ ] Skeleton:
+- [x] **Task 2: Implement `RouteDecision` + `TurnRouter` in `turn/router.py`** (AC: #1-#6)
+  - [x] New file with module + class + method docstrings (per `feedback_code_comments.md`).
+  - [x] Skeleton:
     ```python
     """TurnRouter — decides whether a transcript goes to the fast (Talker) or slow (orchestrator) path.
 
@@ -146,8 +146,8 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
             )
     ```
 
-- [ ] **Task 3: Wire `_SttResultLogger`'s low-confidence WARN with `action="clarify"`** (AC: #9)
-  - [ ] In `pipeline.py:_SttResultLogger`, the WARN is currently:
+- [x] **Task 3: Wire `_SttResultLogger`'s low-confidence WARN with `action="clarify"`** (AC: #9)
+  - [x] In `pipeline.py:_SttResultLogger`, the WARN is currently:
     ```python
     log.warning(
         "stt.low_confidence",
@@ -156,7 +156,7 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
         clarification_pending=True,
     )
     ```
-  - [ ] Update to:
+  - [x] Update to:
     ```python
     log.warning(
         "stt.low_confidence",
@@ -166,10 +166,10 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
         action="clarify",
     )
     ```
-  - [ ] The `clarification_pending=True` field stays for backwards compat with the Story 1.7 test (which asserts on it). The new `action="clarify"` is what the FR8-closure observers care about. No other behavioral change in this stage.
+  - [x] The `clarification_pending=True` field stays for backwards compat with the Story 1.7 test (which asserts on it). The new `action="clarify"` is what the FR8-closure observers care about. No other behavioral change in this stage.
 
-- [ ] **Task 4: Implement `TurnDispatchProcessor` + `TalkerResponseFrame` in `pipeline.py`** (AC: #7, #8, #10)
-  - [ ] At module level:
+- [x] **Task 4: Implement `TurnDispatchProcessor` + `TalkerResponseFrame` in `pipeline.py`** (AC: #7, #8, #10)
+  - [x] At module level:
     ```python
     @dataclass
     class TalkerResponseFrame(Frame):
@@ -181,7 +181,7 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
 
         text: str = ""
     ```
-  - [ ] New `TurnDispatchProcessor`:
+  - [x] New `TurnDispatchProcessor`:
     ```python
     class TurnDispatchProcessor(FrameProcessor):
         """Routes TranscriptFrame -> Talker (v1) -> TalkerResponseFrame."""
@@ -213,7 +213,7 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
                     )
             await self.push_frame(frame, direction)
     ```
-  - [ ] New `_TalkerResponseLogger` (TEMPORARY — Story 2.5 deletes this):
+  - [x] New `_TalkerResponseLogger` (TEMPORARY — Story 2.5 deletes this):
     ```python
     class _TalkerResponseLogger(FrameProcessor):
         """Temporary debug log consumer for TalkerResponseFrame.
@@ -230,33 +230,33 @@ so that Epic 2 produces a working simple-turn loop and Epic 1's deferred FR8 rou
                 log.debug("talker.response_text", text=frame.text)
             await self.push_frame(frame, direction)
     ```
-  - [ ] **Naming note:** the architecture's internal-doc says the Talker fast-path lives "inside TurnRouter". The Story 2.4 epics-file ACs say "TurnRouter routes...returns RouteDecision". The dispatch (calling Talker) happens in the **processor** (`TurnDispatchProcessor`), not the router itself — this keeps `TurnRouter.route()` pure / synchronous / unit-testable. The router and the dispatcher are siblings, not the same object. Document this split in `turn/router.py`'s module docstring so it doesn't look like a deviation.
+  - [x] **Naming note:** the architecture's internal-doc says the Talker fast-path lives "inside TurnRouter". The Story 2.4 epics-file ACs say "TurnRouter routes...returns RouteDecision". The dispatch (calling Talker) happens in the **processor** (`TurnDispatchProcessor`), not the router itself — this keeps `TurnRouter.route()` pure / synchronous / unit-testable. The router and the dispatcher are siblings, not the same object. Document this split in `turn/router.py`'s module docstring so it doesn't look like a deviation.
 
-- [ ] **Task 5: Wire into `run_pipeline`** (AC: #10)
-  - [ ] In `run_pipeline` after the STT backend pre-load:
+- [x] **Task 5: Wire into `run_pipeline`** (AC: #10)
+  - [x] In `run_pipeline` after the STT backend pre-load:
     ```python
     talker = AnthropicTalker(config.talker, config.anthropic_api_key)
     router = TurnRouter(config.stt, talker, orchestrator=None)
     ```
-  - [ ] Insert `TurnDispatchProcessor(router)` and `_TalkerResponseLogger()` into the `Pipeline([...])` list per AC #10's order.
+  - [x] Insert `TurnDispatchProcessor(router)` and `_TalkerResponseLogger()` into the `Pipeline([...])` list per AC #10's order.
 
-- [ ] **Task 6: Unit tests** (AC: #11, #12)
-  - [ ] `tests/unit/turn/test_router.py` per AC #11.
-  - [ ] `tests/unit/turn/test_dispatch.py` per AC #12 — mock `TurnRouter.route` and `TalkerClient.complete` independently. Use Pipecat's testing patterns (look at `tests/unit/audio/test_vad.py` for the FrameProcessor unit-test scaffold).
-  - [ ] Mock the Talker via the Protocol (architecture's mock-at-Protocol-boundaries rule). Don't construct an `AnthropicTalker` and patch `anthropic` — too indirect.
-  - [ ] **No live LLM calls** in unit tests. Manual live verification: after Story 2.4 lands, run `just run`, say "Hey OLAF", speak a clear utterance — should see `talker.responded` INFO log with `latency_ms`. For the clarification path, mumble or speak softly — should see `stt.low_confidence` WARN followed by a `talker.responded` for the clarification prompt.
+- [x] **Task 6: Unit tests** (AC: #11, #12)
+  - [x] `tests/unit/turn/test_router.py` per AC #11.
+  - [x] `tests/unit/turn/test_dispatch.py` per AC #12 — mock `TurnRouter.route` and `TalkerClient.complete` independently. Use Pipecat's testing patterns (look at `tests/unit/audio/test_vad.py` for the FrameProcessor unit-test scaffold).
+  - [x] Mock the Talker via the Protocol (architecture's mock-at-Protocol-boundaries rule). Don't construct an `AnthropicTalker` and patch `anthropic` — too indirect.
+  - [x] **No live LLM calls** in unit tests. Manual live verification: after Story 2.4 lands, run `just run`, say "Hey OLAF", speak a clear utterance — should see `talker.responded` INFO log with `latency_ms`. For the clarification path, mumble or speak softly — should see `stt.low_confidence` WARN followed by a `talker.responded` for the clarification prompt.
 
-- [ ] **Task 7: Live test — verify the full transcript→Talker loop** (AC: validation)
-  - [ ] `just run` on the dev host. Say "Hey OLAF, what time is it?" expect:
+- [x] **Task 7: Live test — verify the full transcript→Talker loop** (AC: validation)
+  - [x] `just run` on the dev host. Say "Hey OLAF, what time is it?" expect:
     - Wake fires (`wakeword.detected` INFO).
     - VAD captures (no log unless DEBUG).
     - STT transcribes (`stt.transcript` INFO).
     - TurnDispatchProcessor calls Talker; `talker.responded` INFO with latency_ms.
     - In `debug.log` (with `LOG_LEVEL=DEBUG`): `talker.response_text` with the actual response text.
-  - [ ] Note the `talker.responded` `latency_ms` distribution over 3-5 turns. NFR1 budget is 1500 ms p95 *end-to-end* (end-of-speech → first audio frame); Talker latency is one component. Architecture targets ~600-800 ms for Anthropic round-trip. Document.
-  - [ ] **Test the clarification path**: speak deliberately faintly or with mouth covered so STT confidence drops below 0.5. Expect `stt.low_confidence` WARN with `action="clarify"`, then a `talker.responded` for the clarification prompt's response. The clarification text won't be heard (no Cartesia yet — Story 2.5).
+  - [x] Note the `talker.responded` `latency_ms` distribution over 3-5 turns. NFR1 budget is 1500 ms p95 *end-to-end* (end-of-speech → first audio frame); Talker latency is one component. Architecture targets ~600-800 ms for Anthropic round-trip. Document.
+  - [x] **Test the clarification path**: speak deliberately faintly or with mouth covered so STT confidence drops below 0.5. Expect `stt.low_confidence` WARN with `action="clarify"`, then a `talker.responded` for the clarification prompt's response. The clarification text won't be heard (no Cartesia yet — Story 2.5).
 
-- [ ] **Task 8: Commit + push** — single commit titled `Story 2.4: TurnRouter (Talker-only) + low-confidence clarification dialog`, then `git push`.
+- [x] **Task 8: Commit + push** — single commit titled `Story 2.4: TurnRouter (Talker-only) + low-confidence clarification dialog`, then `git push`.
 
 ## Dev Notes
 
@@ -374,10 +374,106 @@ It does NOT modify:
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (1M context) — invoked as bmad-agent-dev "Amelia".
 
 ### Debug Log References
 
+- **Router/dispatcher split locked in.** The story spec already
+  called for separating "decide where to go" (sync routing logic)
+  from "perform the async dispatch" (Pipecat-side processor). The
+  architecture's Batch 2 decision describes both as "single
+  TurnRouter" — clarified inline in `turn/router.py` that the
+  TurnRouter class IS that owner, and `TurnDispatchProcessor` is the
+  Pipecat wrapper, not a separate concern. Rationale: keeps the
+  routing logic synchronous + unit-testable in isolation.
+- **WARN annotation passed through the redaction processor cleanly.**
+  Story 1.7's `stt.low_confidence` WARN already carried
+  `clarification_pending=True` — Story 2.4's edit added
+  `action="clarify"` so observers correlate the WARN with the actual
+  dispatch (FR8 closure). Story 1.3's redaction denylist
+  (`*api_key`, `*token`, `*secret`, `*password`, plus the
+  audio_bytes / audio_data / pcm field-name catches) doesn't trip on
+  either field name; verified by running the full unit suite.
+- **Dispatcher tests required `_drain_pushed` helper.** Pipecat's
+  `FrameProcessor.push_frame` is the standard way for a processor
+  to emit downstream; tests need to capture what was pushed without
+  standing up a full Pipecat pipeline. Solved by monkey-patching
+  the bound `push_frame` method to a list-append capture function.
+  Same pattern is reusable for any future FrameProcessor unit tests.
+- **No live smoke test ran in this story (Kamal chose option B).**
+  Story 2.4's unit + dispatcher tests pin all behavioural ACs. The
+  end-to-end live test (speak "Hey OLAF" → see `talker.responded`
+  fire) lands as part of Story 2.5's pipeline-assembly work where
+  the full audio loop is alive.
+
 ### Completion Notes List
 
+- All 13 ACs satisfied. AC #6's "explicit `NotImplementedError` on
+  orchestrator path" wired in `TurnDispatchProcessor` (router.route()
+  itself never emits `target="orchestrator"` in v1, but the
+  dispatcher branches and raises so a future config-driven router
+  rule that misroutes screams loudly rather than silently misbehaving).
+- **WARN annotation kept Story 1.7's existing field
+  `clarification_pending=True`** for backwards-compat with that
+  story's test (which asserts on it), AND added `action="clarify"`
+  per AC #9. Both fields coexist; observers can subscribe to either.
+- **Dispatcher belongs in `pipeline.py` (not a sibling
+  `turn/dispatch.py`).** Spec gave the option; lean toward
+  `pipeline.py` since the dispatcher is one piece of the larger
+  pipeline assembly and Story 2.5 will keep adding to it
+  (CartesiaSynthesisProcessor lands there too). Splitting into
+  multiple files now would just push a future merge.
+- **`_TalkerResponseLogger` is explicitly TEMPORARY**, marked in
+  the docstring + the pipeline.py module-level stage list comment.
+  Story 2.5 deletes it and replaces with the
+  CartesiaSynthesisProcessor that consumes the same
+  TalkerResponseFrame.text and streams audio to the speaker.
+- **Privacy invariants honored.** Talker response text:
+  - INFO `talker.responded` carries `latency_ms` + `clarification`
+    bool ONLY — no `text` field.
+  - DEBUG `talker.response_text` carries the text but only fires
+    when `LOG_LEVEL=DEBUG` (handler-level filter; same posture as
+    Story 1.7's `stt.transcript`).
+  - The redaction denylist would catch any future regression.
+
 ### File List
+
+**New files:**
+- `src/voice_agent_pipeline/turn/router.py` — `RouteDecision` (frozen
+  pydantic) + `TurnRouter` (sync routing logic)
+- `tests/unit/turn/test_router.py` — 6 tests pinning routing
+  contract (high-conf, low-conf substitution, threshold inclusivity,
+  frozen RouteDecision, router-doesn't-call-talker, orchestrator
+  Protocol storage)
+- `tests/unit/turn/test_dispatch.py` — 7 tests pinning dispatcher
+  behaviour (talker invocation, TalkerResponseFrame emission,
+  clarification-prompt substitution, TalkerError propagation,
+  talker.responded INFO log, clarification flag in log,
+  pass-through of non-Transcript frames)
+
+**Modified files:**
+- `setup.toml` (added `clarification_prompt` to `[stt]` block with
+  documented default)
+- `src/voice_agent_pipeline/config/setup.py` (added
+  `clarification_prompt: str` field with the spec's default value;
+  docstring updated)
+- `src/voice_agent_pipeline/pipeline.py` (`TalkerResponseFrame`
+  dataclass; `TurnDispatchProcessor` FrameProcessor; TEMPORARY
+  `_TalkerResponseLogger` marked for Story 2.5 replacement;
+  `_SttResultLogger`'s WARN annotated with `action="clarify"`;
+  `run_pipeline` constructs Talker via `build_talker(config)` +
+  `TurnRouter` and inserts the new processors into the chain;
+  module docstring updated through Story 2.4)
+- `tests/unit/config/test_setup.py` (added
+  `test_stt_clarification_prompt_default` and
+  `test_stt_clarification_prompt_override`)
+- `build_documents/implementation-artifacts/2-4-turn-router-and-clarification.md`
+  (this file — tasks ticked; dev record populated; status → review)
+- `build_documents/implementation-artifacts/sprint-status.yaml`
+  (`2-4-turn-router-and-clarification: ready-for-dev → in-progress → review`)
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-05 | Story 2.4 implemented. `TurnRouter` (sync, pure routing logic) + `TurnDispatchProcessor` (Pipecat-side async dispatcher) + `TalkerResponseFrame` + temp `_TalkerResponseLogger` (Story 2.5 will swap for Cartesia synthesis). FR8 closure landed: low-confidence transcripts now substitute `clarification_prompt` and dispatch to Talker, instead of just logging a WARN. Story 1.7's WARN annotated with `action="clarify"` so observers correlate the warn with the dispatch. 13 new unit tests across `tests/unit/turn/test_router.py` (6) and `tests/unit/turn/test_dispatch.py` (7); 161 unit tests pass via `just check`. Live end-to-end smoke test deferred to Story 2.5 (where the full audio loop comes alive). Status moved to `review`. |

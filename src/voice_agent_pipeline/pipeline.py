@@ -1,13 +1,14 @@
 """Pipecat pipeline assembly + lifecycle orchestration.
 
 Story 1.5 landed mic capture + a frame counter. Story 1.6 inserted
-:class:`WakewordProcessor`. Story 1.7 closed the listening half-loop:
-VAD bounds the captured utterance, STT transcribes it, a result logger
-surfaces ``stt.transcript`` events. Story 2.1 wired the speaker stage
-(``transport.output()``) so future stories can stream Cartesia audio
-through the same transport that already opens the mic.
+:class:`WakewordProcessor`. Story 1.7 closed the listening half-loop.
+Story 2.1 wired the speaker stage. Story 2.4 wires the Talker via the
+:class:`TurnDispatchProcessor` — every transcript routes through the
+:class:`TurnRouter` (Talker fast-path; orchestrator escalation deferred
+to Story 4.3) and the Talker reply lands in a
+:class:`TalkerResponseFrame` that Story 2.5 will feed into Cartesia.
 
-Stage list as of Story 2.1::
+Stage list as of Story 2.4::
 
     transport.input()
         -> WakewordProcessor          # gates the rest of the chain
@@ -15,12 +16,17 @@ Stage list as of Story 2.1::
         -> SttProcessor               # transcribes the utterance
         -> _SttResultLogger           # surfaces transcript + confidence
         -> _WakewordEventLogger       # logs wake events for ops
+        -> TurnDispatchProcessor      # Story 2.4: routes -> Talker
+        -> _TalkerResponseLogger      # Story 2.4 TEMP — Story 2.5 swaps for Cartesia
         -> _FrameCounter              # debug-only ticker
         -> transport.output()         # Story 2.1: speaker sink
 
-Stories 2.4 / 2.5 will insert a TurnRouter + Cartesia synthesis stage
-between the listener side and ``transport.output()`` so spoken responses
-play through the speaker.
+Story 2.5 will replace ``_TalkerResponseLogger`` with a
+``CartesiaSynthesisProcessor`` that consumes
+:class:`TalkerResponseFrame.text`, calls
+:meth:`TTSClient.synthesize`, and pushes ``OutputAudioRawFrame``
+chunks downstream so the Talker reply actually plays through the
+speaker.
 """
 
 import time
@@ -39,6 +45,8 @@ from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame, WakewordProcessor
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.stt import STTBackend, build_stt_backend
+from voice_agent_pipeline.turn import build_talker
+from voice_agent_pipeline.turn.router import TurnRouter
 
 log = structlog.get_logger(__name__)
 
@@ -137,16 +145,132 @@ class _SttResultLogger(FrameProcessor):
                 transcript=frame.text,
             )
             if frame.confidence < self._threshold:
-                # Story 2.4 will wire the actual clarification dialog.
-                # For now, the WARN is the placeholder; downstream code
-                # subscribes by listening for this event name.
+                # Story 2.4 wired the actual clarification dialog —
+                # the TurnRouter substitutes ``clarification_prompt``
+                # for the user's noisy text and routes to Talker. The
+                # ``action="clarify"`` field is the FR8 closure
+                # signal — observers correlate the WARN with the real
+                # dialog rather than treating it as a placeholder.
                 log.warning(
                     "stt.low_confidence",
                     confidence=frame.confidence,
                     end_to_transcript_ms=frame.end_to_transcript_ms,
                     clarification_pending=True,
+                    action="clarify",
                 )
 
+        await self.push_frame(frame, direction)
+
+
+@dataclass
+class TalkerResponseFrame(Frame):
+    """Pipecat frame carrying the Talker's plain-text reply (Story 2.4).
+
+    Emitted by :class:`TurnDispatchProcessor` after
+    :meth:`TalkerClient.complete` returns. Story 2.5's
+    ``CartesiaSynthesisProcessor`` consumes this frame's
+    :attr:`text` and streams it to the speaker.
+
+    Attributes:
+        text: The Talker's response — plain text per the v1 system
+            prompt (no SSML; Story 3.5 will rewrite the prompt for
+            Cartesia inline emotion tags). May be empty if the
+            Talker returned an empty completion (the dispatcher
+            still emits the frame so observers see the turn boundary).
+    """
+
+    text: str = ""
+
+
+class TurnDispatchProcessor(FrameProcessor):
+    """Pipecat FrameProcessor — TranscriptFrame -> Talker -> TalkerResponseFrame.
+
+    This is the **dispatcher** that pairs with the
+    :class:`TurnRouter`'s pure routing logic. The router decides where
+    a turn goes; this processor performs the async call and emits the
+    response frame downstream. Splitting the two means the router
+    stays synchronously unit-testable while the processor handles
+    Pipecat's async lifecycle.
+
+    v1 dispatch table:
+
+    - ``decision.target == "talker"`` -> ``await router.talker.complete(...)``
+      -> emit :class:`TalkerResponseFrame`.
+    - ``decision.target == "orchestrator"`` -> ``NotImplementedError``
+      (Story 4.3 wires the orchestrator path; the explicit raise is
+      the wall, not silent fall-through).
+
+    Errors from ``talker.complete`` propagate as
+    :class:`TalkerError` (CLAUDE.md rule #4 forbids catching
+    ExternalServiceError downstream — process crashes, systemd
+    restarts).
+    """
+
+    def __init__(self, router: TurnRouter) -> None:
+        super().__init__()  # pyright: ignore[reportUnknownMemberType]
+        self._router = router
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """On TranscriptFrame: route, dispatch, emit TalkerResponseFrame."""
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, TranscriptFrame):
+            decision = self._router.route(frame.text, frame.confidence)
+            if decision.target == "talker":
+                started_ns = time.time_ns()
+                response_text = await self._router.talker.complete(decision.text)
+                # ``talker.responded`` carries latency + the
+                # clarification flag so operators can see clarification
+                # turns vs normal turns in the same INFO feed. The
+                # response TEXT is intentionally NOT logged here —
+                # privacy posture (Story 1.3 redaction); the temporary
+                # ``_TalkerResponseLogger`` below logs the text at DEBUG
+                # only, which Story 2.5 will replace with Cartesia
+                # synthesis (and the text never lands in INFO+ logs).
+                latency_ms = (time.time_ns() - started_ns) // 1_000_000
+                log.info(
+                    "talker.responded",
+                    latency_ms=latency_ms,
+                    clarification=decision.clarification,
+                )
+                await self.push_frame(
+                    TalkerResponseFrame(text=response_text),
+                    direction,
+                )
+            else:
+                # Story 4.3 will wire this branch; raising explicitly
+                # makes a misconfiguration scream rather than fall through.
+                raise NotImplementedError(
+                    "orchestrator path is wired in Epic 4 (Story 4.3); "
+                    f"got target={decision.target!r}"
+                )
+
+        # Pass the original frame through so future stages can observe.
+        await self.push_frame(frame, direction)
+
+
+class _TalkerResponseLogger(FrameProcessor):
+    """TEMPORARY (Story 2.4 only) — Story 2.5 replaces with Cartesia synthesis.
+
+    Logs :attr:`TalkerResponseFrame.text` at DEBUG so operators
+    running with ``LOG_LEVEL=DEBUG`` can see the Talker's reply land
+    before Story 2.5 wires the actual speaker output. Privacy posture:
+    the response text is sensitive (same as transcripts); the
+    redaction processor (Story 1.3) strips it at INFO+, but using
+    DEBUG is the right level regardless.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()  # pyright: ignore[reportUnknownMemberType]
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Log TalkerResponseFrame.text at DEBUG; pass everything through."""
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TalkerResponseFrame):
+            # DEBUG only — surfaces in debug.log (handler-level
+            # filter) when the operator opts in via LOG_LEVEL=DEBUG.
+            # Default INFO log feed never sees the response text.
+            log.debug("talker.response_text", text=frame.text)
         await self.push_frame(frame, direction)
 
 
@@ -237,6 +361,13 @@ async def run_pipeline(config: SetupConfig) -> None:
     stt_backend = build_stt_backend(config.stt)
     await stt_backend.load()
 
+    # Story 2.4: build the Talker (provider-agnostic factory picks
+    # OpenAI / Groq / Gemini based on [talker] provider) and the
+    # TurnRouter that owns it. v1 always passes None for the
+    # orchestrator — Story 4.3 wires that path.
+    talker = build_talker(config)
+    router = TurnRouter(config.stt, talker, orchestrator=None)
+
     pipeline = Pipeline(
         [
             transport.input(),
@@ -245,6 +376,12 @@ async def run_pipeline(config: SetupConfig) -> None:
             SttProcessor(stt_backend),
             _SttResultLogger(config.stt.low_confidence_threshold),
             _WakewordEventLogger(),
+            # Story 2.4: TurnDispatchProcessor consumes TranscriptFrame,
+            # calls Talker, emits TalkerResponseFrame.
+            TurnDispatchProcessor(router),
+            # Story 2.4 TEMP — Story 2.5 swaps for CartesiaSynthesisProcessor
+            # so the Talker's reply actually streams to the speaker.
+            _TalkerResponseLogger(),
             _FrameCounter(),
             # Story 2.1 wires the speaker stage. Nothing upstream feeds it
             # AudioRawFrames yet — Story 2.5 will connect the Cartesia stage

@@ -320,6 +320,39 @@ def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
     assert "unknown_talker_field" in str(exc_info.value)
 
 
+def test_stt_clarification_prompt_default(tmp_path: Path) -> None:
+    """Story 2.4: ``[stt] clarification_prompt`` defaults to a sane sorry-please-repeat string.
+
+    Operators with no override should still get a useful clarification
+    dialog when STT confidence drops below threshold. The default is
+    documented so the operator's first install plays nicely.
+    """
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Default prompt should be conversational and brief — same vibe
+    # the v1 system prompt cultivates ("terse, conversational").
+    assert config.stt.clarification_prompt == "Sorry, I didn't catch that — could you say it again?"
+
+
+def test_stt_clarification_prompt_override(tmp_path: Path) -> None:
+    """Story 2.4: an explicit [stt] clarification_prompt overrides the default."""
+    toml_with_clarification = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[stt]\n"
+        'clarification_prompt = "Hmm, please repeat that?"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_clarification)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.stt.clarification_prompt == "Hmm, please repeat that?"
+
+
 def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
     """Story 2.3: ``[tts] voice_id`` is required — operator must pick a Cartesia voice.
 
