@@ -1,5 +1,7 @@
 # generated: 2026-05-05
 # last_updated: 2026-05-05
+# 2026-05-05: Epic 2 stories prepared (Amelia / bmad-agent-dev / bmad-create-story);
+#             epic-2 -> in-progress, all 5 stories -> ready-for-dev.
 # project: olaf_companion
 # project_key: NOKEY
 # tracking_system: file-system
@@ -54,12 +56,12 @@ development_status:
   epic-1-retrospective: optional
 
   # ───────────────── Epic 2: Speak — Talker + Cartesia ─────────────────
-  epic-2: backlog
-  2-1-audio-playback-speaker-pinning: backlog
-  2-2-talker-client-anthropic: backlog
-  2-3-cartesia-client-tts: backlog
-  2-4-turn-router-and-clarification: backlog
-  2-5-pipeline-assembly-simple-turn: backlog
+  epic-2: in-progress
+  2-1-audio-playback-speaker-pinning: ready-for-dev
+  2-2-talker-client-anthropic: ready-for-dev
+  2-3-cartesia-client-tts: ready-for-dev
+  2-4-turn-router-and-clarification: ready-for-dev
+  2-5-pipeline-assembly-simple-turn: ready-for-dev
   epic-2-retrospective: optional
 
   # ───────────────── Epic 3: Embodiment Channel — emotion in lockstep with voice ─────────────────
