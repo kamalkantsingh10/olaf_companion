@@ -47,7 +47,7 @@ development_status:
   1-1-project-bootstrap-toolchain: review
   1-2-config-loaders-and-schema-validation: review
   1-3-logging-structlog-redaction-rotation: review
-  1-4-event-schemas-error-hierarchy-protocol-seams: ready-for-dev
+  1-4-event-schemas-error-hierarchy-protocol-seams: review
   1-5-audio-capture-mic-input-device-pinning: ready-for-dev
   1-6-wake-word-detection-porcupine: ready-for-dev
   1-7-vad-bounded-capture-and-stt: ready-for-dev

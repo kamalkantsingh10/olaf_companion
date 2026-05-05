@@ -1,6 +1,6 @@
 # Story 1.4: Event schemas, error hierarchy, Protocol seams
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -38,62 +38,62 @@ so that subsequent stories implement against stable, typed interfaces with no re
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Expand `errors.py` to full hierarchy** (AC: #4, #9)
-  - [ ] Add `StartupValidationError(VoiceAgentError)`, `ExternalServiceError(VoiceAgentError)`, `CartesiaError(ExternalServiceError)`, `OrchestratorError(ExternalServiceError)`, `TalkerError(ExternalServiceError)`, `PublisherError(VoiceAgentError)`, `SplitterError(VoiceAgentError)`.
-  - [ ] Update `__all__`.
-  - [ ] Update module docstring (remove the "Story 1.4 will extend" note since this IS that story).
-  - [ ] See snippet in Dev Notes.
+- [x] **Task 1: Expand `errors.py` to full hierarchy** (AC: #4, #9)
+  - [x] Add `StartupValidationError(VoiceAgentError)`, `ExternalServiceError(VoiceAgentError)`, `CartesiaError(ExternalServiceError)`, `OrchestratorError(ExternalServiceError)`, `TalkerError(ExternalServiceError)`, `PublisherError(VoiceAgentError)`, `SplitterError(VoiceAgentError)`.
+  - [x] Update `__all__`.
+  - [x] Update module docstring (remove the "Story 1.4 will extend" note since this IS that story).
+  - [x] See snippet in Dev Notes.
 
-- [ ] **Task 2: Author event schemas** (AC: #1, #2)
-  - [ ] `src/voice_agent_pipeline/schemas/__init__.py` re-exports `ExpressionEvent`, `LifecycleEvent`, `OrchestratorStreamEvent`.
-  - [ ] `expression_event.py` per AC #1; snippet in Dev Notes.
-  - [ ] `lifecycle_event.py` per AC #2; snippet in Dev Notes.
+- [x] **Task 2: Author event schemas** (AC: #1, #2)
+  - [x] `src/voice_agent_pipeline/schemas/__init__.py` re-exports `ExpressionEvent`, `LifecycleEvent`, `OrchestratorStreamEvent`.
+  - [x] `expression_event.py` per AC #1; snippet in Dev Notes.
+  - [x] `lifecycle_event.py` per AC #2; snippet in Dev Notes.
 
-- [ ] **Task 3: Author orchestrator stream event union** (AC: #3)
-  - [ ] `stream.py` with the 6 placeholder event types + the `Annotated` discriminated union; snippet in Dev Notes.
-  - [ ] Add a module-level comment that Story 4.2 may refine field names/types as the orchestrator contract solidifies.
+- [x] **Task 3: Author orchestrator stream event union** (AC: #3)
+  - [x] `stream.py` with the 6 placeholder event types + the `Annotated` discriminated union; snippet in Dev Notes.
+  - [x] Add a module-level comment that Story 4.2 may refine field names/types as the orchestrator contract solidifies.
 
-- [ ] **Task 4: Author the 6 Protocol seam files** (AC: #5)
-  - [ ] `stt/backend.py` — `STTBackend` + `TranscriptionResult`.
-  - [ ] `turn/talker.py` — `TalkerClient`.
-  - [ ] `turn/orchestrator.py` — `OrchestratorClient` (uses `OrchestratorStreamEvent` from `schemas/stream.py`).
-  - [ ] `turn/beliefs.py` — `BeliefStateClient`.
-  - [ ] `tts/client.py` — `TTSClient`.
-  - [ ] `publisher/interface.py` — `ExpressionPublisher` (uses `ExpressionEvent`, `LifecycleEvent` from `schemas/`).
-  - [ ] Each file's `__init__.py` re-exports the Protocol(s).
-  - [ ] Each Protocol carries a one-line class docstring explaining the contract.
-  - [ ] See snippets in Dev Notes.
+- [x] **Task 4: Author the 6 Protocol seam files** (AC: #5)
+  - [x] `stt/backend.py` — `STTBackend` + `TranscriptionResult`.
+  - [x] `turn/talker.py` — `TalkerClient`.
+  - [x] `turn/orchestrator.py` — `OrchestratorClient` (uses `OrchestratorStreamEvent` from `schemas/stream.py`).
+  - [x] `turn/beliefs.py` — `BeliefStateClient`.
+  - [x] `tts/client.py` — `TTSClient`.
+  - [x] `publisher/interface.py` — `ExpressionPublisher` (uses `ExpressionEvent`, `LifecycleEvent` from `schemas/`).
+  - [x] Each file's `__init__.py` re-exports the Protocol(s).
+  - [x] Each Protocol carries a one-line class docstring explaining the contract.
+  - [x] See snippets in Dev Notes.
 
-- [ ] **Task 5: Contract tests** (AC: #6, #7, #8)
-  - [ ] `tests/contract/__init__.py` (empty if not already from Story 1.1).
-  - [ ] `tests/contract/test_expression_event_schema.py`:
+- [x] **Task 5: Contract tests** (AC: #6, #7, #8)
+  - [x] `tests/contract/__init__.py` (empty if not already from Story 1.1).
+  - [x] `tests/contract/test_expression_event_schema.py`:
     - `test_round_trip` — construct `ExpressionEvent`, call `model_dump_json()`, parse with `ExpressionEvent.model_validate_json(...)`, assert equality.
     - `test_extra_field_rejected`
     - `test_bad_event_type_literal_rejected`
     - `test_missing_required_field_rejected`
     - `test_payload_can_be_arbitrary_dict` — `payload={"led_intensity": 0.7, "custom_field": [1, 2, 3]}` survives round-trip.
-  - [ ] `tests/contract/test_lifecycle_event_schema.py`:
+  - [x] `tests/contract/test_lifecycle_event_schema.py`:
     - `test_round_trip`
     - `test_bad_state_literal_rejected`
     - `test_default_payload_empty_dict`
     - `test_all_5_states_accepted` — happy-path each of `SLEEPING`, `LISTENING`, `THINKING`, `SPEAKING`, `IDLE`.
-  - [ ] `tests/contract/test_schema_version_check.py`:
+  - [x] `tests/contract/test_schema_version_check.py`:
     - `test_assert_schema_version_passes_on_match` — already covered Story 1.2 but re-prove inside contract layer.
     - `test_parsing_unsupported_schema_version_can_be_rejected_via_helper` — load JSON with `schema_version=99`, parse to `ExpressionEvent`, then call `assert_schema_version(event.schema_version, source="ExpressionEvent")`, assert `SchemaVersionError` raised.
 
-- [ ] **Task 6: Unit tests for errors hierarchy** (AC: #9)
-  - [ ] `tests/unit/errors/__init__.py` (empty).
-  - [ ] `tests/unit/errors/test_hierarchy.py`:
+- [x] **Task 6: Unit tests for errors hierarchy** (AC: #9)
+  - [x] `tests/unit/errors/__init__.py` (empty).
+  - [x] `tests/unit/errors/test_hierarchy.py`:
     - `test_each_exception_constructs_with_kwargs` — parametrize over the 9 exception classes.
     - `test_kwargs_stored_on_context` — assert `e.context == {...}`.
     - `test_inheritance_chain` — `isinstance(SchemaVersionError(), ConfigError)`, `isinstance(CartesiaError(), ExternalServiceError)`, etc.
 
-- [ ] **Task 7: Verify pyright strict + just check** (AC: #10)
-  - [ ] Run `just check`; resolve any pyright complaints.
-  - [ ] Confirm `Any` only appears in the `payload` fields and the orchestrator stream's loosely-typed slots.
-  - [ ] No `# type: ignore` without an inline reason comment.
+- [x] **Task 7: Verify pyright strict + just check** (AC: #10)
+  - [x] Run `just check`; resolve any pyright complaints.
+  - [x] Confirm `Any` only appears in the `payload` fields and the orchestrator stream's loosely-typed slots.
+  - [x] No `# type: ignore` without an inline reason comment.
 
-- [ ] **Task 8: Commit** — single commit titled `Story 1.4: event schemas, error hierarchy, Protocol seams`.
+- [x] **Task 8: Commit** — single commit titled `Story 1.4: event schemas, error hierarchy, Protocol seams`.
 
 ## Dev Notes
 
@@ -450,10 +450,54 @@ It does NOT touch `__main__.py`, `setup.toml`, or `pipeline.py` — no behavior 
 
 ### Agent Model Used
 
-(to be filled by dev agent)
+claude-opus-4-7 (1M context) — invoked as bmad-agent-dev "Amelia".
 
 ### Debug Log References
 
+- All snippets in Dev Notes implemented as written, with the comment density expansion per `feedback_code_comments.md`.
+- ruff flagged 5 issues on first run: 2× S108 ("/tmp/x" insecure path) → swapped to "/some/path"; 2× N802 (UPPER in test name `_NOT_`) → renamed to `_not_`; 1× E501 (orchestrator Protocol docstring > 100 cols) → tightened wording.
+- pyright flagged `tuple[Literal[...], ...]` annotation in test_lifecycle_event_schema.py as invalid type-form. `Literal[...]` isn't a type at runtime, only inside `Annotated[..., ...]`. Replaced with `tuple[str, ...]` (matches `get_args` runtime shape).
+- 85 tests pass via `just test` (69 unit + 16 contract).
+
 ### Completion Notes List
 
+- All 10 ACs satisfied. `just check` green.
+- Contract tests now exercise the wire format end-to-end via `model_dump_json()` + `model_validate_json()` round-trips.
+- Errors hierarchy is now complete and tested: 10 classes, parametrized construct/context/repr tests, plus explicit `isinstance` chain assertions for the architecturally-load-bearing relationships (SchemaVersionError under ConfigError; Cartesia/Orchestrator/Talker under ExternalServiceError; PublisherError + SplitterError NOT under ExternalServiceError per CLAUDE.md rule #4 reasoning).
+- Protocol seams are signature-only — no implementations, exactly per spec. Each Protocol re-exported from its package's `__init__.py`.
+- No deviations from architecture or spec. Some `Any` types appear in payload slots and the BeliefStateClient return — all flagged in source comments as deliberate extensibility seams.
+- **Comments:** All authored modules carry module + class + function docstrings + key inline comments per the `feedback_code_comments.md` policy.
+
 ### File List
+
+**New files:**
+- `src/voice_agent_pipeline/schemas/expression_event.py`
+- `src/voice_agent_pipeline/schemas/lifecycle_event.py`
+- `src/voice_agent_pipeline/schemas/stream.py`
+- `src/voice_agent_pipeline/stt/backend.py`
+- `src/voice_agent_pipeline/turn/talker.py`
+- `src/voice_agent_pipeline/turn/orchestrator.py`
+- `src/voice_agent_pipeline/turn/beliefs.py`
+- `src/voice_agent_pipeline/tts/client.py`
+- `src/voice_agent_pipeline/publisher/interface.py`
+- `tests/contract/test_expression_event_schema.py`
+- `tests/contract/test_lifecycle_event_schema.py`
+- `tests/contract/test_schema_version_check.py`
+- `tests/unit/errors/__init__.py`
+- `tests/unit/errors/test_hierarchy.py`
+
+**Modified files:**
+- `src/voice_agent_pipeline/errors.py` (Story 1.2 subset → full hierarchy of 10 classes)
+- `src/voice_agent_pipeline/schemas/__init__.py` (re-exports the 3 event surfaces)
+- `src/voice_agent_pipeline/stt/__init__.py` (re-exports STTBackend, TranscriptionResult)
+- `src/voice_agent_pipeline/turn/__init__.py` (re-exports the 3 Protocols)
+- `src/voice_agent_pipeline/tts/__init__.py` (re-exports TTSClient)
+- `src/voice_agent_pipeline/publisher/__init__.py` (re-exports ExpressionPublisher)
+- `build_documents/implementation-artifacts/sprint-status.yaml` (1-4 status `ready-for-dev` → `review`)
+- `build_documents/implementation-artifacts/1-4-event-schemas-error-hierarchy-protocol-seams.md` (this file)
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-05 | Story 1.4 implemented. Full error hierarchy (10 classes), 3 frozen pydantic event schemas, 6 Protocol seams. 16 new tests across contract + unit. `just check` + `just test` both green; 85 tests pass total. Status moved to `review`. |

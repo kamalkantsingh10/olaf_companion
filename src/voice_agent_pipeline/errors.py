@@ -1,9 +1,22 @@
 """Custom exception hierarchy for the voice-agent-pipeline.
 
-Story 1.2 lands the **subset** required by config loading. Story 1.4 will
-extend the hierarchy with ``StartupValidationError``, ``ExternalServiceError``
-(plus subclasses for each external dep), ``PublisherError``, and
-``SplitterError``.
+Story 1.4 lands the **complete** hierarchy. Story 1.2 introduced a subset
+(``VoiceAgentError``, ``ConfigError``, ``SchemaVersionError``) for the
+config loader; this module now adds startup, external-service, publisher,
+and splitter branches on top of the same base.
+
+Hierarchy (read top-down, indentation marks subclass relationships)::
+
+    VoiceAgentError
+    ├── ConfigError
+    │   └── SchemaVersionError
+    ├── StartupValidationError
+    ├── ExternalServiceError      (CLAUDE.md rule #4: NEVER caught in v1)
+    │   ├── CartesiaError
+    │   ├── OrchestratorError
+    │   └── TalkerError
+    ├── PublisherError
+    └── SplitterError
 
 Design conventions (architecture.md §"Error Handling"):
 
@@ -11,9 +24,10 @@ Design conventions (architecture.md §"Error Handling"):
   as f-string-baked text. Callers can inspect ``err.context`` programmatically
   (handy in tests) and the ``str(err)`` rendering is uniform.
 - The hierarchy is shallow — one root, one tier of named subclasses, one
-  level of specialization where useful. Avoid deep inheritance chains.
-- Per ``CLAUDE.md`` rule #4: ``ExternalServiceError`` (lands Story 1.4) is
-  **never caught** in v1 code paths. Crash, let systemd restart.
+  level of specialization where useful.
+- Per ``CLAUDE.md`` rule #4: ``ExternalServiceError`` (and its subclasses)
+  is **never caught** in v1 code paths. Crash, let systemd restart. The
+  resilience layer that handles those errors gracefully is a v2 deferral.
 """
 
 from typing import Any
@@ -53,6 +67,11 @@ class VoiceAgentError(Exception):
         return f"{self.__class__.__name__}({parts})"
 
 
+# ---------------------------------------------------------------------------
+# Configuration branch
+# ---------------------------------------------------------------------------
+
+
 class ConfigError(VoiceAgentError):
     """Raised when ``setup.toml`` or ``.env`` is missing, malformed, or rejected by validation."""
 
@@ -66,5 +85,83 @@ class SchemaVersionError(ConfigError):
     """
 
 
-# Public API — kept alphabetical to satisfy ruff RUF022 and aid grep.
-__all__ = ["ConfigError", "SchemaVersionError", "VoiceAgentError"]
+# ---------------------------------------------------------------------------
+# Startup branch
+# ---------------------------------------------------------------------------
+
+
+class StartupValidationError(VoiceAgentError):
+    """A required external dependency failed validation at startup.
+
+    Distinct from :class:`ExternalServiceError` because the failure happens
+    during pre-flight probes (Stories 1.6/2.2/2.3/3.4/4.1/4.2) — not during
+    a turn. The pipeline never finished initializing, so there's no in-flight
+    work to roll back.
+    """
+
+
+# ---------------------------------------------------------------------------
+# External-service branch — NEVER caught in v1 (CLAUDE.md rule #4)
+# ---------------------------------------------------------------------------
+
+
+class ExternalServiceError(VoiceAgentError):
+    """Base class for failures of external services.
+
+    Per CLAUDE.md rule #4, no v1 code path may catch this exception or its
+    subclasses. Crash + systemd restart is the v1 resilience strategy. v2
+    will introduce a wrapper layer that translates these into recoverable
+    pipeline events (see architecture.md §"V2 Deferred Concerns").
+    """
+
+
+class CartesiaError(ExternalServiceError):
+    """Cartesia TTS API failure (Story 2.3 + downstream)."""
+
+
+class OrchestratorError(ExternalServiceError):
+    """Orchestrator daemon failure — HTTP 4xx/5xx, SSE stream broken, etc. (Stories 4.1, 4.2)."""
+
+
+class TalkerError(ExternalServiceError):
+    """Anthropic Talker API failure (Story 2.2 + downstream)."""
+
+
+# ---------------------------------------------------------------------------
+# Internal-component branch
+# ---------------------------------------------------------------------------
+
+
+class PublisherError(VoiceAgentError):
+    """Broadcast publisher (ROS 2 / DDS) failure — connect, healthcheck, or publish (Story 3.4).
+
+    NOT a subclass of :class:`ExternalServiceError` because the publisher is
+    an **internal** seam: we own the implementation, the transport library
+    runs in-process, and a publish failure is recoverable in principle (the
+    voice loop can keep running even if expression broadcasts are dropped).
+    """
+
+
+class SplitterError(VoiceAgentError):
+    """Streaming SSML splitter / state machine failure (Story 3.3).
+
+    Internal component — bugs here mean a malformed SSML token or an
+    unrecoverable state-machine transition. Not from an external service,
+    so it's not under :class:`ExternalServiceError`.
+    """
+
+
+# Public API — listed in hierarchy order rather than alphabetical so a
+# reader scanning the list can see the structure at a glance.
+__all__ = [
+    "CartesiaError",
+    "ConfigError",
+    "ExternalServiceError",
+    "OrchestratorError",
+    "PublisherError",
+    "SchemaVersionError",
+    "SplitterError",
+    "StartupValidationError",
+    "TalkerError",
+    "VoiceAgentError",
+]
