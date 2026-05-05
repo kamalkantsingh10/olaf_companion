@@ -20,6 +20,7 @@ _VALID_TOML = (
     "schema_version = 1\n"
     "[audio]\n"
     'input_device_name = "USB.*Mic.*"\n'
+    'output_device_name = "USB.*Speaker.*"\n'
     "[wakeword]\n"
     'model_path = "models/wakeword/hey_olaf.ppn"\n'
     "sensitivity = 0.5\n"
@@ -69,10 +70,9 @@ def test_load_happy_path(tmp_path: Path) -> None:
     # that's a bug: SecretStr renders as `**********` in str/repr by design.
     assert config.picovoice_access_key.get_secret_value() == "stub"
     # Story 1.5: AudioConfig nested model loads from the [audio] block.
-    # input_device_name is required; output_device_name is optional until
-    # Story 2.1 wires speaker output (then it becomes required there).
+    # Story 2.1: output_device_name is now required (speaker output landed).
     assert config.audio.input_device_name == "USB.*Mic.*"
-    assert config.audio.output_device_name is None
+    assert config.audio.output_device_name == "USB.*Speaker.*"
     # Story 1.6: WakewordConfig nested model loads from the [wakeword] block.
     # model_path is parsed as pathlib.Path (TOML strings → Path coercion);
     # str() round-trip below is the cheap way to assert without depending
@@ -144,6 +144,8 @@ def test_wakeword_sensitivity_default(tmp_path: Path) -> None:
         "schema_version = 1\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
+        # Story 2.1: output_device_name is now required.
+        'output_device_name = "USB.*Speaker.*"\n'
         "[wakeword]\n"
         # Note: NO sensitivity line — should pick up the default.
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
@@ -190,6 +192,28 @@ def test_audio_block_missing_input_name_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "input_device_name" in str(exc_info.value)
+
+
+def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:
+    """Story 2.1: `output_device_name` is required now that speaker output is wired.
+
+    Before Story 2.1, ``output_device_name`` was ``str | None`` because the
+    pipeline only opened the mic side. Story 2.1 wires ``transport.output()``
+    + the test-tone smoke check, so the field is required from this story
+    onward — a config without a speaker regex cannot start.
+    """
+    bad_toml = (
+        "schema_version = 1\n"
+        "[audio]\n"
+        # Note: input present, output deliberately missing.
+        'input_device_name = "USB.*Mic.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "output_device_name" in str(exc_info.value)
 
 
 def test_missing_audio_block_rejected(tmp_path: Path) -> None:
@@ -266,6 +290,10 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
         "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
+        # Story 2.1 made output_device_name required; include it so
+        # pydantic validation passes and the schema_version policy check
+        # is the only path that can fire.
+        'output_device_name = "USB.*Speaker.*"\n'
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
     )

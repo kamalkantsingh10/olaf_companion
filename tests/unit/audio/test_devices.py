@@ -124,6 +124,31 @@ def test_output_regex_matches(fake_pyaudio: None) -> None:
     assert indices.output_index == 1
 
 
+def test_output_no_match_raises_with_available_outputs_only(fake_pyaudio: None) -> None:
+    """Story 2.1: output-side miss raises StartupValidationError with the available list.
+
+    Symmetric to :func:`test_input_no_match_raises_with_available_list` —
+    when the operator's output regex doesn't match any output-capable
+    device, the error context lists every device with
+    ``maxOutputChannels > 0`` (so input-only mics are excluded), echoes
+    the regex back, and tags ``stage="audio.output"`` so log readers
+    can distinguish input vs output failures at a glance.
+    """
+    with pytest.raises(StartupValidationError) as exc_info:
+        resolve_audio_devices(input_pattern=None, output_pattern="NonExistent.*")
+    available = exc_info.value.context.get("available")
+    assert isinstance(available, list)
+    # Output-capable devices: the speaker (idx 1) + the duplex HDA Intel (idx 2).
+    assert "USB Audio Speaker" in available
+    assert "HDA Intel PCH (hw:0,0)" in available
+    # Input-only mics should NOT appear — the candidate filter is output-side.
+    assert "USB Audio Mic Array" not in available
+    assert "Other USB Microphone" not in available
+    # Stage tag identifies which side failed; pattern echoed back for debugging.
+    assert exc_info.value.context.get("stage") == "audio.output"
+    assert exc_info.value.context.get("pattern") == "NonExistent.*"
+
+
 def test_first_match_wins(fake_pyaudio: None) -> None:
     """When multiple input devices match, the first by enumeration order wins.
 

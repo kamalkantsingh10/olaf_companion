@@ -51,9 +51,10 @@ class AudioConfig(BaseModel):
     Attributes:
         input_device_name: Regex for the microphone. Required from Story 1.5
             onward — without it, the pipeline can't capture audio.
-        output_device_name: Regex for the speaker. Optional in Story 1.5
-            (output is not yet enabled). Story 2.1 makes it required when
-            speaker output lands.
+        output_device_name: Regex for the speaker. **Required from Story 2.1**
+            (when speaker output landed via ``transport.output()``). Operators
+            discover the right pattern with ``just list-devices`` and verify
+            it with ``just play-test-tone``.
     """
 
     # extra="forbid" so a typo like ``input_device_namee`` fails loudly at
@@ -61,7 +62,7 @@ class AudioConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_device_name: str
-    output_device_name: str | None = None
+    output_device_name: str
 
 
 class WakewordConfig(BaseModel):

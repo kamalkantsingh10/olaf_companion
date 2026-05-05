@@ -1,11 +1,13 @@
 """Pipecat pipeline assembly + lifecycle orchestration.
 
 Story 1.5 landed mic capture + a frame counter. Story 1.6 inserted
-:class:`WakewordProcessor`. Story 1.7 closes the listening half-loop:
+:class:`WakewordProcessor`. Story 1.7 closed the listening half-loop:
 VAD bounds the captured utterance, STT transcribes it, a result logger
-surfaces ``stt.transcript`` events.
+surfaces ``stt.transcript`` events. Story 2.1 wired the speaker stage
+(``transport.output()``) so future stories can stream Cartesia audio
+through the same transport that already opens the mic.
 
-Stage list as of Story 1.7::
+Stage list as of Story 2.1::
 
     transport.input()
         -> WakewordProcessor          # gates the rest of the chain
@@ -14,9 +16,11 @@ Stage list as of Story 1.7::
         -> _SttResultLogger           # surfaces transcript + confidence
         -> _WakewordEventLogger       # logs wake events for ops
         -> _FrameCounter              # debug-only ticker
+        -> transport.output()         # Story 2.1: speaker sink
 
-Story 2.5 will replace ``_SttResultLogger`` with a turn router that
-dispatches to the Talker / orchestrator.
+Stories 2.4 / 2.5 will insert a TurnRouter + Cartesia synthesis stage
+between the listener side and ``transport.output()`` so spoken responses
+play through the speaker.
 """
 
 import time
@@ -30,7 +34,7 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
-from voice_agent_pipeline.audio.transport import build_input_transport
+from voice_agent_pipeline.audio.transport import build_audio_transport
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame, WakewordProcessor
 from voice_agent_pipeline.config.setup import SetupConfig
@@ -218,7 +222,7 @@ async def run_pipeline(config: SetupConfig) -> None:
         input_pattern=config.audio.input_device_name,
         output_pattern=config.audio.output_device_name,
     )
-    transport = build_input_transport(config, indices)
+    transport = build_audio_transport(config, indices)
 
     wakeword = WakewordProcessor(
         keyword_paths=[config.wakeword.model_path],
@@ -242,6 +246,12 @@ async def run_pipeline(config: SetupConfig) -> None:
             _SttResultLogger(config.stt.low_confidence_threshold),
             _WakewordEventLogger(),
             _FrameCounter(),
+            # Story 2.1 wires the speaker stage. Nothing upstream feeds it
+            # AudioRawFrames yet — Story 2.5 will connect the Cartesia stage
+            # so the synthesised audio from Talker plays here. Until then,
+            # ``just play-test-tone`` is the only path that exercises this
+            # transport end.
+            transport.output(),
         ]
     )
     task = PipelineTask(pipeline)

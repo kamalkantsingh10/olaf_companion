@@ -29,7 +29,14 @@ format:
     uv run ruff format
 
 # Print every PyAudio device on this machine. Use this output to find the
-# right regex for `[audio] input_device_name` (and later, output_device_name)
-# in setup.toml. See README "Audio device setup" for the workflow.
+# right regex for `[audio] input_device_name` and `output_device_name` in
+# setup.toml. See README "Audio device setup" for the workflow.
 list-devices:
     uv run python -m voice_agent_pipeline.audio.list_devices
+
+# Play a 1-second 440Hz beep through the speaker resolved from setup.toml's
+# `[audio] output_device_name` regex. Use after `list-devices` to confirm
+# your speaker regex matches a working output device — sanity-checks the
+# Story 2.1 playback path independent of Cartesia.
+play-test-tone:
+    uv run python -m voice_agent_pipeline.audio.play_test_tone
