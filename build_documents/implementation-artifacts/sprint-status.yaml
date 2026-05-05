@@ -61,7 +61,7 @@ development_status:
   2-2-talker-client-anthropic: review
   2-3-cartesia-client-tts: review
   2-4-turn-router-and-clarification: review
-  2-5-pipeline-assembly-simple-turn: ready-for-dev
+  2-5-pipeline-assembly-simple-turn: review
   epic-2-retrospective: optional
 
   # ───────────────── Epic 3: Embodiment Channel — emotion in lockstep with voice ─────────────────

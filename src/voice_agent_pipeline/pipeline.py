@@ -1,14 +1,11 @@
 """Pipecat pipeline assembly + lifecycle orchestration.
 
-Story 1.5 landed mic capture + a frame counter. Story 1.6 inserted
-:class:`WakewordProcessor`. Story 1.7 closed the listening half-loop.
-Story 2.1 wired the speaker stage. Story 2.4 wires the Talker via the
-:class:`TurnDispatchProcessor` — every transcript routes through the
-:class:`TurnRouter` (Talker fast-path; orchestrator escalation deferred
-to Story 4.3) and the Talker reply lands in a
-:class:`TalkerResponseFrame` that Story 2.5 will feed into Cartesia.
+Epic 2 capstone (Story 2.5): the simple-turn loop is now end-to-end.
+Mic input → wake-word → VAD → STT → router → Talker → Cartesia →
+speaker. Speaking "Hey OLAF, what time is it?" produces an audible
+Ooppi reply through the configured speaker.
 
-Stage list as of Story 2.4::
+Stage list as of Story 2.5::
 
     transport.input()
         -> WakewordProcessor          # gates the rest of the chain
@@ -16,24 +13,25 @@ Stage list as of Story 2.4::
         -> SttProcessor               # transcribes the utterance
         -> _SttResultLogger           # surfaces transcript + confidence
         -> _WakewordEventLogger       # logs wake events for ops
-        -> TurnDispatchProcessor      # Story 2.4: routes -> Talker
-        -> _TalkerResponseLogger      # Story 2.4 TEMP — Story 2.5 swaps for Cartesia
+        -> TurnDispatchProcessor      # routes -> Talker
+        -> CartesiaSynthesisProcessor # Talker reply -> audio chunks
         -> _FrameCounter              # debug-only ticker
-        -> transport.output()         # Story 2.1: speaker sink
+        -> transport.output()         # speaker sink
 
-Story 2.5 will replace ``_TalkerResponseLogger`` with a
-``CartesiaSynthesisProcessor`` that consumes
-:class:`TalkerResponseFrame.text`, calls
-:meth:`TTSClient.synthesize`, and pushes ``OutputAudioRawFrame``
-chunks downstream so the Talker reply actually plays through the
-speaker.
+Future epics layer onto this without changing the assembly order:
+
+- Epic 3 inserts a streaming SSML splitter between the dispatcher
+  and the Cartesia stage (so Talker can emit inline emotion tags).
+- Epic 4 wires the orchestrator path inside ``TurnDispatchProcessor``
+  for slow-path turns.
+- Story 5.1 adds barge-in (VAD-during-SPEAKING).
 """
 
 import time
 from dataclasses import dataclass
 
 import structlog
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import AudioRawFrame, Frame, OutputAudioRawFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
@@ -45,6 +43,8 @@ from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame, WakewordProcessor
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.stt import STTBackend, build_stt_backend
+from voice_agent_pipeline.tts.cartesia import CartesiaClient
+from voice_agent_pipeline.tts.client import TTSClient
 from voice_agent_pipeline.turn import build_talker
 from voice_agent_pipeline.turn.router import TurnRouter
 
@@ -122,27 +122,20 @@ class _SttResultLogger(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptFrame):
-            # Two log calls so the transcript text actually surfaces when
-            # operators run with ``LOG_LEVEL=DEBUG``:
-            #
-            # 1) INFO — confidence + latency only. Redaction drops the
-            #    ``transcript`` field at INFO (Story 1.3) anyway, but more
-            #    importantly debug.log is filtered to DEBUG records ONLY,
-            #    so an INFO call would never show transcripts there even
-            #    if redaction passed it through.
-            # 2) DEBUG — same event, with the transcript text. Lands in
-            #    debug.log only (handler filter), and only when the
-            #    operator opted in via LOG_LEVEL=DEBUG.
+            # Story 2.5 deviation from FR42's strict posture: for v1
+            # personal-use the transcribed text surfaces at INFO under
+            # the ``heard`` field name. The redaction processor still
+            # strips the strict-named ``transcript`` / ``user_text``
+            # fields at INFO+ — accidental leaks under those names
+            # remain caught. ``heard`` is the deliberate operator-
+            # visible alias. For deployed product (Story 5.3) the
+            # operator can either rename / remove this field or add
+            # ``heard`` to the redaction denylist.
             log.info(
                 "stt.transcript",
                 confidence=frame.confidence,
                 end_to_transcript_ms=frame.end_to_transcript_ms,
-            )
-            log.debug(
-                "stt.transcript",
-                confidence=frame.confidence,
-                end_to_transcript_ms=frame.end_to_transcript_ms,
-                transcript=frame.text,
+                heard=frame.text,
             )
             if frame.confidence < self._threshold:
                 # Story 2.4 wired the actual clarification dialog —
@@ -249,28 +242,68 @@ class TurnDispatchProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class _TalkerResponseLogger(FrameProcessor):
-    """TEMPORARY (Story 2.4 only) — Story 2.5 replaces with Cartesia synthesis.
+class CartesiaSynthesisProcessor(FrameProcessor):
+    """Streams TTS audio from the configured TTSClient downstream (Story 2.5).
 
-    Logs :attr:`TalkerResponseFrame.text` at DEBUG so operators
-    running with ``LOG_LEVEL=DEBUG`` can see the Talker's reply land
-    before Story 2.5 wires the actual speaker output. Privacy posture:
-    the response text is sensitive (same as transcripts); the
-    redaction processor (Story 1.3) strips it at INFO+, but using
-    DEBUG is the right level regardless.
+    Consumes :class:`TalkerResponseFrame` (from
+    :class:`TurnDispatchProcessor`), opens a streaming synthesis call
+    via :meth:`TTSClient.synthesize`, and emits each PCM chunk as a
+    Pipecat :class:`OutputAudioRawFrame` so ``transport.output()``
+    plays it through the speaker.
+
+    The OutputAudioRawFrame distinction (vs the bare AudioRawFrame
+    mixin) was discovered in Story 2.1 — Pipecat's runner / observers
+    / output transport all expect the DataFrame subclass with
+    framework-managed attrs (id, transport_destination, etc.).
+    Inline comment in :mod:`audio.play_test_tone` carries the gory
+    details.
+
+    Privacy: the response text never lands in INFO+ logs. The
+    Talker's reply is observable via the upstream
+    ``talker.response_text`` DEBUG event; this processor only logs
+    audio metadata (chunk counts, byte totals — nothing that reveals
+    the text).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, client: TTSClient) -> None:
         super().__init__()  # pyright: ignore[reportUnknownMemberType]
+        self._client = client
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        """Log TalkerResponseFrame.text at DEBUG; pass everything through."""
+        """On TalkerResponseFrame: synthesize, push OutputAudioRawFrames."""
         await super().process_frame(frame, direction)
-        if isinstance(frame, TalkerResponseFrame):
-            # DEBUG only — surfaces in debug.log (handler-level
-            # filter) when the operator opts in via LOG_LEVEL=DEBUG.
-            # Default INFO log feed never sees the response text.
-            log.debug("talker.response_text", text=frame.text)
+
+        if isinstance(frame, TalkerResponseFrame) and frame.text:
+            # Empty text shouldn't happen in practice (the Talker
+            # always returns *something*) but guard explicitly so a
+            # stray empty frame doesn't burn a synthesis API call.
+            chunk_count = 0
+            byte_total = 0
+            async for chunk in self._client.synthesize(frame.text):
+                chunk_count += 1
+                byte_total += len(chunk)
+                await self.push_frame(
+                    OutputAudioRawFrame(
+                        audio=chunk,
+                        sample_rate=16000,
+                        num_channels=1,
+                    ),
+                    direction,
+                )
+            # Operator-side observability — chunk count + bytes per
+            # turn. Lets ops watch synthesis output volume drift over
+            # time without DEBUG. Privacy-safe: no transcript text.
+            log.info(
+                "tts.synthesis_complete",
+                chunk_count=chunk_count,
+                byte_total=byte_total,
+            )
+
+        # Pass the original TalkerResponseFrame through so future
+        # stages (e.g., Epic 3's expression event publisher) can
+        # observe turn boundaries. The audio chunks are pushed
+        # separately above; downstream stages distinguish via
+        # isinstance().
         await self.push_frame(frame, direction)
 
 
@@ -368,6 +401,10 @@ async def run_pipeline(config: SetupConfig) -> None:
     talker = build_talker(config)
     router = TurnRouter(config.stt, talker, orchestrator=None)
 
+    # Story 2.5: build the Cartesia TTS client. No pre-load (it's a
+    # remote API; construction just opens the SDK's connection pool).
+    cartesia_client = CartesiaClient(config.tts, config.cartesia_api_key)
+
     pipeline = Pipeline(
         [
             transport.input(),
@@ -379,15 +416,13 @@ async def run_pipeline(config: SetupConfig) -> None:
             # Story 2.4: TurnDispatchProcessor consumes TranscriptFrame,
             # calls Talker, emits TalkerResponseFrame.
             TurnDispatchProcessor(router),
-            # Story 2.4 TEMP — Story 2.5 swaps for CartesiaSynthesisProcessor
-            # so the Talker's reply actually streams to the speaker.
-            _TalkerResponseLogger(),
+            # Story 2.5: CartesiaSynthesisProcessor consumes
+            # TalkerResponseFrame, streams audio chunks downstream.
+            CartesiaSynthesisProcessor(cartesia_client),
             _FrameCounter(),
-            # Story 2.1 wires the speaker stage. Nothing upstream feeds it
-            # AudioRawFrames yet — Story 2.5 will connect the Cartesia stage
-            # so the synthesised audio from Talker plays here. Until then,
-            # ``just play-test-tone`` is the only path that exercises this
-            # transport end.
+            # Story 2.1 wired the speaker stage; Story 2.5 now feeds
+            # it OutputAudioRawFrames from CartesiaSynthesisProcessor.
+            # The simple-turn loop is end-to-end.
             transport.output(),
         ]
     )

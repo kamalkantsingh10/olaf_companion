@@ -116,7 +116,10 @@ class CartesiaClient:
                 transcript=text,
                 voice={"id": self._config.voice_id, "mode": "id"},
                 output_format=_OUTPUT_FORMAT,  # type: ignore[arg-type]
-                generation_config={"emotion": self._config.default_emotion},  # type: ignore[arg-type]
+                generation_config={  # type: ignore[arg-type]
+                    "emotion": self._config.default_emotion,
+                    "speed": self._config.speed,
+                },
             )
             async for event in stream:
                 # SSE events come in multiple types; we only care about
@@ -159,16 +162,25 @@ class CartesiaClient:
 
 
 async def validate_credentials(config: SetupConfig) -> None:
-    """Startup probe — confirm the Cartesia key + service health.
+    """Startup probe — confirm the Cartesia key + the configured voice exists.
 
     Called by ``__main__.py`` before pipeline assembly. Uses
-    :meth:`AsyncCartesia.voices.list` because:
+    :meth:`AsyncCartesia.voices.get` (single GET for the configured
+    voice ID) because:
 
     1. It validates the API key (401/403 on bad key) without burning
-       any synthesis tokens (voices catalog read is free).
-    2. It exercises the same network path Cartesia synthesis uses,
-       so a transient outage at startup surfaces here rather than on
-       the first turn.
+       any synthesis tokens.
+    2. It validates that the configured ``voice_id`` is actually
+       reachable (404 if the operator pasted a wrong/deleted GUID),
+       which is more useful than just "any voice catalog read works".
+    3. The response is tiny (one Voice record) — no pagination, no
+       large catalog dump. The earlier ``voices.list(limit=1)`` probe
+       observed a 60 s read timeout on the catalog endpoint;
+       :meth:`voices.get` returns in ~hundreds of ms.
+
+    A 10 s timeout caps the wait — operator gets a clean
+    StartupValidationError if Cartesia is unreachable, rather than a
+    minute-long hang at startup.
 
     Raises:
         StartupValidationError: On any ``cartesia.APIError`` — the
@@ -177,9 +189,6 @@ async def validate_credentials(config: SetupConfig) -> None:
     """
     client = cartesia.AsyncCartesia(api_key=config.cartesia_api_key.get_secret_value())
     try:
-        # limit=1 because we only care that the call succeeds, not
-        # what voices are available — that's the operator's job to
-        # pick from https://play.cartesia.ai/voices.
-        await client.voices.list(limit=1)
+        await client.voices.get(config.tts.voice_id, timeout=10.0)
     except cartesia.APIError as e:
         raise StartupValidationError(stage="cartesia", reason=str(e)) from e

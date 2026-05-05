@@ -10,9 +10,20 @@ from typing import Protocol
 
 
 class TTSClient(Protocol):
-    """Streaming TTS. v1 impl is CartesiaClient (Story 2.3)."""
+    """Streaming TTS. v1 impl is CartesiaClient (Story 2.3).
 
-    async def synthesize(self, text: str) -> AsyncIterator[bytes]:
+    Note the unusual signature: ``synthesize`` is declared as a normal
+    ``def`` returning ``AsyncIterator[bytes]``, NOT ``async def`` —
+    even though the concrete implementation uses ``async def ... yield``.
+    Python distinguishes async generator functions (with ``yield``)
+    from coroutine functions (without); calling an async generator
+    function returns an ``AsyncIterator[bytes]`` synchronously, so the
+    Protocol's signature must match that calling convention. Marking
+    it ``async def`` here would describe a coroutine returning an
+    iterator (i.e., needs ``await``) — wrong shape for our consumers.
+    """
+
+    def synthesize(self, text: str) -> AsyncIterator[bytes]:
         """Stream audio frames for the given text.
 
         Args:

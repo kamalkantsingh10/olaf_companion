@@ -47,8 +47,9 @@ def _make_fake_cartesia(
     raise_on_generate: Exception | None = None,
     raise_mid_stream: Exception | None = None,
     capture_kwargs: dict[str, Any] | None = None,
-    capture_voices_list_kwargs: dict[str, Any] | None = None,
-    raise_on_voices_list: Exception | None = None,
+    capture_voices_get_args: list | None = None,
+    capture_voices_get_kwargs: dict[str, Any] | None = None,
+    raise_on_voices_get: Exception | None = None,
 ) -> MagicMock:
     """Build a fake replacement for the ``cartesia`` module.
 
@@ -111,14 +112,16 @@ def _make_fake_cartesia(
 
     fake_client.tts.generate_sse = _generate_sse
 
-    async def _voices_list(**kwargs: Any) -> Any:
-        if capture_voices_list_kwargs is not None:
-            capture_voices_list_kwargs.update(kwargs)
-        if raise_on_voices_list is not None:
-            raise raise_on_voices_list
+    async def _voices_get(*args: Any, **kwargs: Any) -> Any:
+        if capture_voices_get_args is not None:
+            capture_voices_get_args.extend(args)
+        if capture_voices_get_kwargs is not None:
+            capture_voices_get_kwargs.update(kwargs)
+        if raise_on_voices_get is not None:
+            raise raise_on_voices_get
         return MagicMock()
 
-    fake_client.voices.list = _voices_list
+    fake_client.voices.get = _voices_get
 
     fake_module = MagicMock()
     fake_module.AsyncCartesia = MagicMock(return_value=fake_client)
@@ -180,8 +183,8 @@ def test_synthesize_passes_model_voice_and_format(
         "encoding": "pcm_s16le",
         "sample_rate": 16000,
     }
-    # Default emotion threaded through generation_config.
-    assert captured["generation_config"] == {"emotion": "neutral"}
+    # Default emotion + speed threaded through generation_config.
+    assert captured["generation_config"] == {"emotion": "neutral", "speed": 0.9}
 
 
 def test_synthesize_filters_non_chunk_events(
@@ -222,6 +225,7 @@ def test_synthesize_passes_configured_emotion(
         voice_id="v",
         default_emotion="excited",
         model="sonic-3",
+        speed=1.1,
     )
     captured: dict[str, Any] = {}
     fake = _make_fake_cartesia(chunks=[b"x"], capture_kwargs=captured)
@@ -230,7 +234,8 @@ def test_synthesize_passes_configured_emotion(
     client = CartesiaClient(config, SecretStr("stub-key"))
     _collect(client.synthesize("hello"))
 
-    assert captured["generation_config"] == {"emotion": "excited"}
+    # Both knobs flow through.
+    assert captured["generation_config"] == {"emotion": "excited", "speed": 1.1}
 
 
 def test_synthesize_open_error_wraps_as_cartesia_error(
@@ -328,29 +333,44 @@ def setup_config(tmp_path: Path, tts_config: TtsConfig) -> SetupConfig:
     )
 
 
-def test_validate_credentials_calls_voices_list(
+def test_validate_credentials_calls_voices_get_with_configured_voice_id(
     setup_config: SetupConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Probe issues ``voices.list(limit=1)`` to validate the API key without burning tokens."""
-    captured: dict[str, Any] = {}
-    fake = _make_fake_cartesia(capture_voices_list_kwargs=captured)
+    """Probe issues ``voices.get(voice_id, timeout=10)`` for fast auth + voice validation.
+
+    Switched from ``voices.list(limit=1)`` after observing 60s read
+    timeouts on the catalog endpoint. ``voices.get(voice_id)`` is a
+    single small GET that validates BOTH the API key AND the
+    configured voice exists (404 if the operator pasted a wrong/
+    deleted GUID).
+    """
+    args: list = []
+    kwargs: dict[str, Any] = {}
+    fake = _make_fake_cartesia(
+        capture_voices_get_args=args,
+        capture_voices_get_kwargs=kwargs,
+    )
     monkeypatch.setattr(cartesia_module, "cartesia", fake)
 
     asyncio.run(validate_credentials(setup_config))
 
-    # limit=1 is the architectural decision — minimal payload, just
-    # enough to confirm auth + service health.
-    assert captured.get("limit") == 1
+    # Voice ID passed positionally (matches the SDK's ``voices.get(id, ...)``
+    # signature) — proves the probe validates the CONFIGURED voice, not
+    # an arbitrary one.
+    assert args == ["stub-voice-uuid"]
+    # 10s timeout cap — operator gets a clean StartupValidationError
+    # if Cartesia's unreachable, not a minute-long hang.
+    assert kwargs.get("timeout") == 10.0
 
 
 def test_validate_credentials_wraps_failure_as_startup_validation_error(
     setup_config: SetupConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bad key surfaces as StartupValidationError, not a raw SDK error."""
+    """A bad key / missing voice surfaces as StartupValidationError, not a raw SDK error."""
     boom = _FakeAPIError("401 unauthorized")
-    fake = _make_fake_cartesia(raise_on_voices_list=boom)
+    fake = _make_fake_cartesia(raise_on_voices_get=boom)
     monkeypatch.setattr(cartesia_module, "cartesia", fake)
 
     with pytest.raises(StartupValidationError) as exc_info:

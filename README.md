@@ -13,10 +13,77 @@ uv sync
 ## Run
 
 ```bash
-just run    # starts the pipeline (mic capture from Story 1.5 onward)
-just check  # lint + type-check + unit tests (must pass before commit)
-just test   # full test suite
+just run             # starts the pipeline; full simple-turn loop is alive (Story 2.5)
+just check           # lint + type-check + unit tests (must pass before commit)
+just test            # full test suite (including the integration test)
+just list-devices    # print PyAudio devices for setup.toml regex tuning
+just play-test-tone  # 1-second 440Hz beep through the configured speaker
 ```
+
+After `just run`, say **"Hey OLAF, what time is it?"** — within ~1.5s
+Ooppi's voice (Cartesia Tessa) responds through the configured
+speaker. Expected log flow per turn (in `./logs/voice-agent.log`):
+
+```
+wakeword.detected  keyword="hey olaf"
+stt.transcript     confidence=0.85 end_to_transcript_ms=...
+talker.responded   latency_ms=... clarification=false
+talker.completion  provider=groq prompt_tokens=... completion_tokens=...
+tts.first_frame    ttfb_ms=... voice_id=...
+tts.synthesis_complete  chunk_count=... byte_total=...
+```
+
+Low-confidence transcripts (mumbled, distant, masked) trigger the
+clarification dialog instead — see the `stt.low_confidence` WARN with
+`action="clarify"`.
+
+## Required secrets (`.env`)
+
+Three external services power the v1 simple-turn loop. Keys live in
+`.env` (gitignored, `chmod 0600`):
+
+| Variable | Service | Purpose |
+|---|---|---|
+| `PICOVOICE_ACCESS_KEY` | Picovoice | Wake-word ("Hey OLAF") detection |
+| `OPENAI_API_KEY` / `GROQ_API_KEY` / `GEMINI_API_KEY` | OpenAI / Groq / Gemini | Talker fast-path LLM (active provider only) |
+| `CARTESIA_API_KEY` | Cartesia | Streaming TTS (Sonic-3 + Tessa voice) |
+
+`setup.toml` `[talker] provider = "<openai|groq|gemini>"` picks which
+Talker key is active. v1 default is **Groq** (fastest TTFB on this
+hardware: ~150 ms vs OpenAI's ~1 s). See `.env.example` for the
+template.
+
+## NFR1 baseline (mocked integration)
+
+Story 2.5's integration test (`tests/integration/test_simple_turn.py`)
+drives 30 simulated turns through the post-STT chain
+(`SttProcessor` → `TurnDispatchProcessor` →
+`CartesiaSynthesisProcessor`) with the three external Protocols
+mocked, measuring end-of-speech → first audio frame:
+
+```
+NFR1 mocked baseline (30 turns): p50=0ms p95=0ms max=0ms
+```
+
+Sub-millisecond integration overhead, exactly as expected with all
+I/O mocked — confirms no hidden sleeps / real-I/O leaks in the
+pipeline assembly. Real-world latency is dominated by STT (~1.5s
+today; Story 5.5 calibration territory) + Talker round-trip (~150 ms
+on Groq) + Cartesia TTFB (~700 ms). Story 5.5 owns the calibration
+sprint where the real-world p95 gets nailed against NFR1's 1500 ms
+target.
+
+## What's deferred
+
+- **Epic 3 (embodiment):** Cartesia inline emotion tags + streaming
+  SSML splitter + ROS 2 `ExpressionEvent` publisher. The Talker's
+  reply currently has no emotion modulation beyond Cartesia's
+  default-emotion config knob.
+- **Epic 4 (complex questions + lifecycle):** orchestrator slow-path
+  for grounded queries; `LifecycleEvent` publisher; belief-state
+  client. v1 routes everything to Talker.
+- **Epic 5 (production hardening):** barge-in, SIGHUP atomic config
+  swap, systemd unit, 7-day soak, NFR1 calibration.
 
 ## Audio device setup (per machine)
 

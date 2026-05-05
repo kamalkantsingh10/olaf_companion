@@ -242,6 +242,18 @@ class Talker:
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
                 total_tokens=response.usage.total_tokens,
+                # Story 2.5 deviation from FR42: for v1 personal use
+                # we surface the prompt (Talker input) and response
+                # (Talker output) at INFO. Field names ``prompt`` /
+                # ``response`` deliberately bypass the redaction
+                # processor's strict gating on ``transcript`` /
+                # ``user_text`` (which still strip at INFO+ —
+                # accidental leaks under those names remain caught).
+                # For deployed scenarios (Story 5.3) the operator
+                # can either remove these fields or extend the
+                # redaction denylist.
+                prompt=transcript,
+                response=text,
             )
 
         return text

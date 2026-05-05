@@ -120,6 +120,10 @@ model = "gemini-2.5-flash"
 voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
 default_emotion = "neutral"
 model = "sonic-3"
+# Speech rate multiplier. 1.0 = the voice's natural rate; <1.0 slows
+# down (better intelligibility for fast-talking voices like Tessa),
+# >1.0 speeds up. Adjust to taste.
+speed = 0.9
 
 # Sections populated by subsequent stories:
 # [talker] -- extended in Story 4.1 (grounded_keys for belief-state)

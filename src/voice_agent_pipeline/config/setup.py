@@ -283,6 +283,12 @@ class TtsConfig(BaseModel):
             etc.).
         model: Cartesia model identifier. ``sonic-3`` is the v1
             default — Cartesia's flagship low-latency model.
+        speed: Speech rate multiplier passed to Cartesia via
+            ``generation_config.speed``. ``1.0`` is the model's
+            natural rate; ``<1.0`` slows it down (better
+            intelligibility), ``>1.0`` speeds up. Tessa voice
+            specifically reads slightly fast at 1.0; ``0.9`` is a
+            comfortable default.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -290,6 +296,7 @@ class TtsConfig(BaseModel):
     voice_id: str
     default_emotion: str = "neutral"
     model: str = "sonic-3"
+    speed: float = 0.9
 
 
 class SetupConfig(BaseSettings):
