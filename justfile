@@ -6,8 +6,12 @@ default: check
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD := "1"
 PYTEST_PLUGINS := "-p pytest_asyncio.plugin"
 
+# Mirror logs to stdout via structlog's ConsoleRenderer (human-readable,
+# not JSON). Files still get strict JSON for grep tooling. Set
+# LOG_CONSOLE=false explicitly if you want production-silent stdout
+# (e.g. when running under systemd in Story 5.4).
 run:
-    uv run python -m voice_agent_pipeline
+    LOG_CONSOLE=true uv run python -m voice_agent_pipeline
 
 check:
     uv run ruff check

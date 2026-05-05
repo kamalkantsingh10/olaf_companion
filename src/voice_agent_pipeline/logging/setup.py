@@ -13,9 +13,20 @@ The split is deliberate: errors.log stays uncluttered; debug.log captures the
 full DEBUG-only stream including transcripts (FR39, gated by the redaction
 processor); voice-agent.log is the developer's ``tail -f`` target.
 
+When ``LOG_CONSOLE=true`` is set, the same records are *also* mirrored to
+stdout — but rendered with structlog's :class:`ConsoleRenderer` instead of
+JSON, so an operator running ``just run`` sees something readable like::
+
+    2026-05-05T18:15:43Z [info     ] wakeword.detected     keyword=hey_olaf
+
+Files keep strict JSON for grep / post-mortem tooling. The split formatters
+ride on :class:`structlog.stdlib.ProcessorFormatter` — structlog's
+production-grade pattern for "different output styles for different sinks."
+
 Story 5.3 makes the rotation/retention/console knobs read from
-``setup.toml``. This story hard-codes the defaults — see
-:data:`_MAX_BYTES` / :data:`_BACKUP_COUNT`.
+``setup.toml``. This story (1.3, with a 1.7-era console-formatter
+enhancement) hard-codes the defaults — see :data:`_MAX_BYTES` /
+:data:`_BACKUP_COUNT`.
 """
 
 import json
@@ -84,6 +95,46 @@ def configure_logging(config: SetupConfig, *, base_path: Path = Path("logs")) ->
     # someone passes ``tmp_path / "deeper/logs"``.
     base_path.mkdir(parents=True, exist_ok=True)
 
+    # ---- Build the formatters -------------------------------------------------
+    # Both formatters share the same "pre-chain" — these processors run on
+    # records that originate from foreign loggers (i.e. stdlib calls that
+    # didn't go through structlog), so they get enriched the same way as
+    # structlog-originated records before the renderer runs.
+    foreign_pre_chain: list[Any] = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+    ]
+
+    # JSON formatter for file handlers — strict JSON lines for grep tooling.
+    # ``remove_processors_meta`` strips structlog's internal bookkeeping that
+    # would otherwise leak into the rendered output.
+    json_formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=foreign_pre_chain,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            redact_sensitive_fields,
+            structlog.processors.JSONRenderer(serializer=json.dumps),
+        ],
+    )
+
+    # Console formatter for stdout — human-readable. Colors auto-enable when
+    # stdout is a TTY (manual ``just run``) and auto-disable when it isn't
+    # (pytest's capsys, systemd capture). ``plain_traceback`` keeps stack
+    # traces readable without ANSI codes when colors are off.
+    console_formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=foreign_pre_chain,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            redact_sensitive_fields,
+            structlog.dev.ConsoleRenderer(
+                colors=sys.stdout.isatty(),
+                exception_formatter=structlog.dev.plain_traceback,
+            ),
+        ],
+    )
+
+    # ---- Configure structlog --------------------------------------------------
     root = _stdlib_logging.getLogger()
     # Wipe any inherited handlers so test fixtures get a clean slate. This is
     # safe in production too — configure_logging is called exactly once
@@ -91,7 +142,6 @@ def configure_logging(config: SetupConfig, *, base_path: Path = Path("logs")) ->
     root.handlers.clear()
     # Set the root level to DEBUG so all records reach our handlers; the
     # per-handler level filters then decide which file each line lands in.
-    # If we set the root to INFO instead, debug.log would never see anything.
     root.setLevel(_stdlib_logging.DEBUG)
 
     info_handler = _file_handler(base_path / "voice-agent.log", _stdlib_logging.INFO)
@@ -101,25 +151,23 @@ def configure_logging(config: SetupConfig, *, base_path: Path = Path("logs")) ->
     # would also land here (RotatingFileHandler's level filter is "≥ level").
     debug_handler.addFilter(_only_debug)
 
-    root.addHandler(info_handler)
-    root.addHandler(error_handler)
-    root.addHandler(debug_handler)
+    # Apply the JSON formatter to every file handler.
+    for h in (info_handler, error_handler, debug_handler):
+        h.setFormatter(json_formatter)
+        root.addHandler(h)
 
     if log_console:
-        # Mirror to stdout *in addition to* the files. Production stays silent
-        # by default — systemd captures stderr lifecycle messages directly.
+        # Mirror to stdout *in addition to* the files. The console renderer
+        # produces a one-line, human-friendly format — no JSON noise.
         stream = _stdlib_logging.StreamHandler(sys.stdout)
         stream.setLevel(log_level)
+        stream.setFormatter(console_formatter)
         root.addHandler(stream)
 
-    # structlog processor pipeline. Order matters:
-    #
-    #  1. add_log_level         → puts ``level`` in event_dict (used by redaction).
-    #  2. add_logger_name       → puts ``logger`` in event_dict (JSON convenience).
-    #  3. TimeStamper           → ISO-8601 UTC ``timestamp`` for grep-friendly sort.
-    #  4. _require_event_field  → enforces every call carries ``event=...``.
-    #  5. redact_sensitive_fields → drops secrets / audio / gated transcripts.
-    #  6. JSONRenderer          → final string handed to stdlib logging.
+    # structlog's processor pipeline (applies to log calls made via
+    # ``structlog.get_logger(...)``). Pre-formatter stages enrich the
+    # event_dict; ``wrap_for_formatter`` is the bridge to stdlib's logging
+    # — the per-handler ProcessorFormatter takes over from there.
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -127,7 +175,7 @@ def configure_logging(config: SetupConfig, *, base_path: Path = Path("logs")) ->
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             _require_event_field,
             redact_sensitive_fields,
-            structlog.processors.JSONRenderer(serializer=json.dumps),
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.stdlib.LoggerFactory(),
