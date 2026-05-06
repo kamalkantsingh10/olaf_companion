@@ -14,6 +14,9 @@ stepsCompleted:
   - step-10-nonfunctional
   - step-11-polish
   - step-12-complete
+  - step-e-01-discovery
+  - step-e-02-review
+  - step-e-03-edit
 releaseMode: phased
 deferredToNFRs:
   - Privacy: wake-word-gated mic capture, on-device STT transcripts not persisted, no telemetry
@@ -38,6 +41,19 @@ classification:
   complexity: medium
   projectContext: greenfield
   notes: Single-user personal voice agent on Raspberry Pi with Hailo-8L. Real-time audio + ROS 2 + LLM orchestration. No regulatory burden.
+lastEdited: '2026-05-06'
+editHistory:
+  - date: '2026-05-06'
+    summary: |
+      Direction shift — continuous-conversation while AWAKE (no per-turn wake-word),
+      sleep via Talker LLM tool-call (intent-based), mood-tinted 2–8 word wake greeting,
+      4-topic ROS 2 event model (mood / activity / speech_emotion / vocalization)
+      replacing single /olaf/expression channel, common event envelope
+      (timestamp, schema_version, source, correlation_id), Talker becomes tool-using
+      (go_to_sleep, set_mood). Removed idle auto-sleep (FR28). Deferred barge-in
+      (FR5, FR29, FR30, Journey 3) to v1.5. Stale "Anthropic" references replaced
+      with "active Talker provider" per Story 2.2 provider-agnostic factory.
+      Event schema_version bumped to 2 (breaking change to publish topology).
 ---
 
 # Product Requirements Document — voice-agent-pipeline
@@ -59,18 +75,22 @@ The PRD does **not** duplicate the contracts in the distillate (stream event typ
 
 ## Executive Summary
 
-`voice-agent-pipeline` is the Pipecat-based service that owns OLAF Companion's voice loop and embodiment surface — the layer that makes OLAF feel like a companion rather than a remote API call. It captures user speech, dispatches turns to a separate orchestrator (a Claude Code session) for reasoning, generates spoken responses with Cartesia Sonic-3, and drives OLAF's physical expression in sync with that voice. It is the **only** component touching audio hardware and the **only** publisher to OLAF's expression channel; it deliberately does not reason, call MCP tools, or write belief state.
+`voice-agent-pipeline` is the Pipecat-based service that owns OLAF Companion's voice loop and embodiment surface — the layer that makes OLAF feel like a companion rather than a remote API call. It captures user speech, dispatches turns to a separate orchestrator (a Claude Code session) for reasoning, generates spoken responses with Cartesia Sonic-3, and drives OLAF's expressive surface in sync with that voice. It is the **only** component touching audio hardware and the **only** publisher to OLAF's four event topics (`mood`, `activity`, `speech_emotion`, `vocalization`); it deliberately does not reason, call MCP tools, or write belief state.
+
+The component is conversation-shaped, not turn-shaped: the wake word transitions OLAF from `SLEEPING` to `AWAKE`, after which user speech flows continuously without re-arming. Sleep is intent-driven — the Talker LLM decides when the user has signalled "we're done" and fires a `go_to_sleep()` tool-call to return the pipeline to `SLEEPING`. There is no idle auto-sleep.
 
 The PRD covers v1 of this component — Phases 0 through 3 — targeting a single user (Kamal) on a Raspberry Pi with Hailo-8L NPU, integrated with OLAF's physical embodiment over ROS 2.
 
 ### What Makes This Special
 
-Four architectural decisions shape the v1 commitment and must survive any future rewrite:
+Six architectural decisions shape the v1 commitment and must survive any future rewrite:
 
 1. **Talker fast-path inside Pipecat.** Simple turns are answered from belief state in-pipeline without waiting for the orchestrator's deeper reasoning. This eliminates the dead air that single-LLM voice agents force on every multi-step turn.
-2. **Single fan-out point at the splitter.** Voice (to Cartesia TTS) and embodiment (to ROS 2 expression) are emitted from the same parsed segment, anchored to the same audio frames. Drift between voice and expression is prevented by construction — no parallel channels. Target alignment: ~30-80ms anticipatory.
+2. **Single fan-out for audio-anchored events.** Voice (to Cartesia TTS), `speech_emotion`, and `vocalization` events are emitted from the same parsed segment, anchored to the same audio frames. Drift between voice and these expression events is prevented by construction — no parallel channels. Target alignment: ~30–80ms anticipatory. (`mood` and `activity` events are FSM-driven and publish on transition; they are not audio-anchored.)
 3. **On-device STT (Whisper + Hailo-8L).** Speech transcription runs locally on the Pi. Both privacy and latency benefit from the same decision; cloud STT is explicitly excluded for v1.
-4. **Mapping is data, not code.** The Cartesia tag → OLAF expression mapping lives in `expression_map.yaml`, reloadable on `SIGHUP`. Adding emotions, bursts, or fallback families is a config change, not a deploy.
+4. **Mapping is data, not code.** The Cartesia tag → OLAF expression mapping lives in `expression_map.yaml`, reloadable on `SIGHUP`. Adding emotions, bursts, or fallback families is a config change, not a deploy. The `speech_emotion` event payload carries both the raw tag and the resolved fallback so consumers can use either.
+5. **Continuous conversation; intent-based sleep.** Wake-word fires only on the `SLEEPING → AWAKE` transition. While `AWAKE`, the mic stays open and turns flow without re-prompting. The Talker LLM detects sleep intent in natural language and fires a `go_to_sleep()` tool — no exact-phrase match, no idle timer.
+6. **Multi-topic event publish with a common envelope.** Pipeline publishes on four typed ROS 2 topics — `mood` (latched, slow-changing disposition), `activity` (FSM transitions including `working` sub-modes), `speech_emotion` (per-segment Cartesia tags, open-set), `vocalization` (punctual non-verbals: `[laugh]`, `[sigh]`, …). Every event carries a common envelope: `timestamp`, `schema_version`, `source`, `correlation_id`. The publisher is Protocol-based; ROS 2 is the v1 implementation.
 
 The core insight: splitting the voice surface from the reasoning brain is the only way to make a voice agent feel alive while the brain does real, multi-step work. The Talker + single-fan-out splitter together let v1 ship a feeling-alive companion without depending on the orchestrator being fast.
 
@@ -88,41 +108,52 @@ The core insight: splitting the voice surface from the reasoning brain is the on
 
 ### User Success (Kamal's experience)
 
-A turn feels alive when:
+A conversation feels alive when:
 
+- He says the wake word once and OLAF wakes with a 2–8 word greeting that sounds like a friend ("hey, what's up?") — not a scripted "Hello, I am OLAF"
+- After waking, he can ask follow-up questions without re-saying the wake word — the conversation just flows until he signals he's done
 - He can ask "what's on my calendar today?" and hear OLAF start responding without an awkward pause
 - OLAF's pose, eyes, and LEDs visibly match the emotional tone of the response — no smiling on a sad sentence
+- OLAF's mood is coherent across the conversation — it doesn't flicker between happy and gloomy turn-by-turn
 - The wake word triggers reliably from across the room and doesn't false-trigger during phone calls or background TV
+- When he says something like "okay, that's all for now," OLAF understands it as a goodbye and goes back to sleep without a literal command
 - He doesn't think "I'm talking to software" — he just talks to OLAF
 
 ### Project Success (build outcomes)
 
-- All four hard architectural constraints (single fan-out, single-writer, audio-anchored, mapping-as-data) are upheld in the implementation; violations are bugs, not tradeoffs
-- The component is **replaceable**: the `POST /turn` contract with the orchestrator and the `OlafAction` event shape on ROS 2 survive any future rewrite of internals
+- All six hard architectural decisions (Talker fast-path, single fan-out for audio-anchored events, on-device STT, mapping-as-data, continuous-conversation/intent-sleep, multi-topic publish with common envelope) are upheld in the implementation; violations are bugs, not tradeoffs
+- The component is **replaceable**: the `POST /turn` contract with the orchestrator and the four typed event schemas on ROS 2 (with versioned envelope) survive any future rewrite of internals
 - Configuration is data-driven: adding a new emotion mapping requires editing `expression_map.yaml`, not code
+- The `EventPublisher` is Protocol-based: ROS 2 is the v1 channel, but a fake/log adapter exists for tests and future channel adapters (Zenoh, NATS) require no consumer changes
 
 ### Technical Success (measurable performance)
 
-Starting targets — validated against measured baseline during Phase 0/1, then locked. Each row below is formalized as a testable NFR (NFR1–NFR7, NFR12, NFR13) with p95 measurement context.
+Starting targets — validated against measured baseline during Phase 0/1, then locked. Each row below is formalized as a testable NFR (NFR1–NFR7, NFR12, NFR13, NFR30–NFR32) with p95 measurement context.
 
 | Metric | Target | Maps to | Rationale |
 |---|---|---|---|
 | **Simple turn** (Talker fast-path): end-of-speech → first audio frame | **≤ 1500ms** | NFR1 | Voice agents over ~2s feel dead; under 1.5s feels live |
 | **Complex turn** (orchestrator narration): end-of-speech → first audio frame | **≤ 1000ms** | NFR2 | Narration ("let me check…") must arrive before the user wonders if anything is happening |
+| **Wake-greeting latency**: wake-word detected → first greeting audio frame | **≤ 1500ms** | NFR30 | First impression on wake; longer than this and the greeting feels delayed and robotic |
 | **On-device STT latency**: end-of-speech → transcript ready | **≤ 500ms** | NFR3 | Whisper-small + Hailo-8L on Pi should hit this |
-| **Voice/expression alignment** | **30–80ms anticipatory** | NFR5 | Embodiment slightly ahead of voice; outside this window is a perceivable bug |
+| **Voice/`speech_emotion` alignment** | **30–80ms anticipatory** | NFR5 | Audio-anchored expression slightly ahead of voice; outside this window is a perceivable bug. (`mood` and `activity` are FSM-driven, no audio-alignment requirement.) |
+| **`mood` event cadence** | **≤ 4 publishes per hour** sustained | NFR31 | Mood is a slow-changing disposition; flickering is a defect |
 | **Wake-word false positives** | **≤ 1 per hour** of normal ambient background | NFR12 | Higher rates make the system feel paranoid |
 | **Wake-word false negatives** | **≤ 5%** in normal speaking conditions | NFR13 | Higher rates frustrate the user into shouting |
 | **Cartesia TTS latency**: text-with-tags → first audio frame | **≤ 400ms** | NFR4 | Mostly Cartesia's responsibility; splitter must not add buffering |
+| **Talker tool-call decision overhead** | **≤ 100ms** added to simple-turn budget | NFR32 | `go_to_sleep` / `set_mood` detection cannot push simple turn past NFR1 budget |
 | **Unmapped Cartesia tag handling** | **100% fallback coverage** | FR21, FR38 | Truly unknown tags log warning and render neutral. No silent gaps. |
 
 ### Measurable Outcomes (how we know v1 is done)
 
 A 30-minute live conversation session completes without any of:
 
-- Drift between voice and OLAF expression noticeable to the user
+- Drift between voice and `speech_emotion` / `vocalization` events noticeable to the user
+- A `mood` flicker (mood publish more than once every ~10 minutes for no narrative reason)
+- A missed `go_to_sleep` intent (Kamal says a clear goodbye, OLAF stays awake) or a false-fire (Talker decides to sleep mid-conversation when user did not signal)
 - An unhandled Cartesia tag causing OLAF to freeze or default visibly
 - A missed wake-word or a false-fire
+- A failed wake-greeting (silence on wake, scripted "Hello", or wrong-mood greeting)
 - Audio cutout, stutter, or buffering pause longer than 100ms
 - A latency target above being missed by more than 20%
 
@@ -132,23 +163,31 @@ Plus: all Phase 0–3 validation goals pass (per phase table in `voice-agent-pip
 
 ### MVP — Minimum Viable Product (Phase 3 complete)
 
-The component is "useful" when it can serve a 5-minute live conversation with OLAF: wake-word triggers, on-device STT works, the orchestrator responds, voice and embodiment are in sync, and the conversation gracefully ends and returns to idle. Specifically:
+The component is "useful" when it can serve a multi-turn live conversation with OLAF: wake-word triggers a mood-tinted greeting, the conversation flows continuously without re-prompting, voice and audio-anchored expression are in sync, and the Talker LLM detects the user's goodbye and returns OLAF to sleep. Specifically:
 
 - All six primary emotions (neutral, content, excited, sad, angry, scared) render correctly on OLAF
 - Secondary emotions (happy, curious, sympathetic, surprised, frustrated, melancholic) map to their primary equivalents and render
-- Fallback table covers Cartesia's full 60+ emotion vocabulary
-- Lifecycle states publish at correct conversation milestones (LISTENING, THINKING, SPEAKING, IDLE, SLEEPING)
-- Wake-word + on-device STT + Cartesia TTS + ROS 2 expression all integrated end-to-end
+- Fallback table covers Cartesia's full 60+ emotion vocabulary; `speech_emotion` event payload carries both `raw_tag` and `resolved_fallback`
+- **Continuous conversation while AWAKE.** Wake-word fires on `SLEEPING → AWAKE`; subsequent turns flow without re-arming the wake word.
+- **Intent-based sleep.** Talker LLM detects "we're done" semantically and fires a `go_to_sleep()` tool-call; no exact-phrase match, no idle timer.
+- **Mood-tinted wake greeting.** On every wake, Talker generates a 2–8 word greeting in a "cool friend" register, tinted by current mood (e.g. "what's up?", "hey, you again", "hmm, hi").
+- **Mood model.** Six to eight discrete mood states (`happy, playful, calm, curious, gloomy, grumpy, sleepy, excited`); slow-changing (~15–20 min cadence). Talker fires `set_mood(mood)` tool when conversation context warrants a shift.
+- **Activity FSM publishes on transition** to the `activity` topic: `starting, sleeping, waking, listening, working, speaking, going_to_sleep`. The `working` state has v1 sub-modes `thinking` (Talker generating in-pipeline) and `delegating` (orchestrator dispatched, awaiting response).
+- **Four-topic event publish** on ROS 2: `mood`, `activity`, `speech_emotion`, `vocalization`. Every event carries common envelope `{timestamp, schema_version, source, correlation_id, payload}`. Vocalizations (`[laugh]`, `[sigh]`, …) come from LLM-emitted inline tags parsed pre-TTS.
+- **Talker is tool-using.** v1 tools: `go_to_sleep()`, `set_mood(mood)`. Tool registry hardcoded in v1.
+- Wake-word + on-device STT + Cartesia TTS + 4-topic ROS 2 publish all integrated end-to-end
 - Talker fast-path serves simple turns; orchestrator dispatch serves complex turns
-- All technical-success latency targets hit (within 20% margin)
+- All technical-success latency targets hit (within 20% margin), including wake-greeting latency (NFR30) and Talker tool-call overhead (NFR32)
 
 ### Growth Features (Post-MVP, v1.1)
 
+- **Barge-in handling.** Mid-utterance interruption support (FR5/FR29/FR30 cluster previously in v1, deferred — adds VAD-during-TTS, splitter flush on interrupt, lifecycle SPEAKING → LISTENING short-circuit)
+- **Expanded `working` sub-modes.** Add `searching` (RAG / web tool in flight), `tooling` (other function/tool calls), `composing` (long-form streaming) to enable richer Olaf animations
 - Tertiary emotion mappings (flirtatious, mysterious, sarcastic) — full custom OLAF behaviors instead of fallback
 - Polished secondary-emotion poses — lift from "maps to primary" to first-class distinct expressions
-- Barge-in handling validated and tuned (currently flagged as empirical)
-- Bursts beyond `[laughter]` once Cartesia ships them (`[sigh]`, `[gasp]`, `[clears_throat]`)
+- Bursts beyond `[laughter]` once Cartesia ships them (`[gasp]`, `[clears_throat]`) wired through the `vocalization` topic
 - Latency budget tightening based on measured Phase 0–3 baselines
+- Configurable idle auto-sleep (currently disabled) for contexts where strict-intent sleep is undesirable
 
 ### Vision (v2+)
 
@@ -181,7 +220,7 @@ Each phase produces a runnable artifact, not a sub-component — incremental val
 
 > **Refer to the `Product Scope` section above for the in-scope MVP feature list, Growth (v1.1) features, and Vision (v2+) items.** Not duplicated here.
 
-**No requirements from the brief/distillate are de-scoped or deferred** in this PRD. All Phase 0-3 items in the source documents are MVP for this component.
+**Deferred from v1 (this edit, 2026-05-06):** the barge-in cluster (FR5, FR29, FR30, Journey 6) is moved to v1.5. **Removed (this edit):** idle auto-sleep (formerly FR28) — sleep is now intent-driven only via Talker tool-call (FR45/FR46). All other Phase 0-3 items in the brief/distillate remain MVP for this component. The brief and distillate must be updated in the same change-set (NFR26) to reflect this direction shift.
 
 ### Risk Mitigation Strategy
 
@@ -194,7 +233,10 @@ Each phase produces a runnable artifact, not a sub-component — incremental val
 | **Audio-frame anchoring complexity** in Pipecat. Threading expression-event metadata through the frame pipeline correctly is the technically hardest piece. | Phase 2 validates this with measurable end-to-end timing tests. If Pipecat's processor model can't cleanly carry the metadata, fall back to time-based correlation (publish OLAF event N ms after audio frame play time). Document the deviation if used. |
 | **ROS 2 multicast on home network** can be fragile. | Mitigation: colocate the pipeline and OLAF nodes on the same machine, or wired LAN with explicit DDS domain ID. WiFi multicast is not supported for v1. |
 | **Wake-word false positives** during phone calls, music, TV. | Tunable threshold in `pipeline.toml`. Phase 3 includes soak testing in real ambient conditions to set a sane default. If a single wake-word model can't hit the false-positive target, consider dual-stage: low-power detector + small confirmation model. |
-| **Cartesia emotion vocabulary drift.** Cartesia ships ~60 tags now; future tags will land outside our mapping. | The fallback family table covers the principle; `unmapped emotion` warnings make drift visible. Out-of-band: quarterly check for new Cartesia emotions and mapping table updates. |
+| **Cartesia emotion vocabulary drift.** Cartesia ships ~60 tags now; future tags will land outside our mapping. | The fallback family table covers the principle; `speech_emotion` events publish both `raw_tag` and `resolved_fallback` so consumers (Olaf, dashboard) can use either; `unmapped emotion` warnings make drift visible. Out-of-band: quarterly check for new Cartesia emotions and mapping table updates. |
+| **Talker tool-call reliability.** The `go_to_sleep` / `set_mood` tools depend on the LLM detecting intent correctly. False-positive `go_to_sleep` ends a real conversation; false-negative leaves OLAF stuck awake when user has signalled they're done. | (1) Tool inputs validated against typed Pydantic schemas before execution; invalid calls log WARN and are dropped. (2) Wake-word remains the recovery path if false-positive sleep fires — user re-wakes immediately. (3) No idle auto-sleep means false-negatives are recoverable: user just says it again. (4) Soak-test prompt tuning during Phase 3; track FP/FN rate as part of the 30-min session pass criteria. |
+| **Four-topic schema drift across consumers.** Olaf, dashboards, future channels each consume `mood`/`activity`/`speech_emotion`/`vocalization` independently; uncoordinated schema changes break consumers silently. | (1) Common envelope carries `schema_version` (FR52) — breaking changes bump it, additive changes don't. (2) `EventPublisher` Protocol decouples wire format from publishing logic; ROS 2 `.msg` definitions live alongside the Pydantic models in this repo. (3) Schema contracts pinned in `voice-agent-pipeline.md` distillate; updates require simultaneous PRD/distillate edits per NFR26. |
+| **Mood publish-rate enforcement vs LLM cooperation.** Talker prompt asks for restraint, but LLMs sometimes fire `set_mood` aggressively. | Cooldown is enforced at the publisher (FR49 / NFR31), not trusted of the LLM. Over-rate calls are dropped with WARN; in-memory mood state is not updated until a publish succeeds. |
 
 **External dependency risks** (the equivalent of "market risk" for a personal project)
 
@@ -216,104 +258,172 @@ Each phase produces a runnable artifact, not a sub-component — incremental val
 
 > **Audience note:** voice-agent-pipeline is a single-user component. "Journeys" here are concrete interaction scenarios the implementation must support, written from Kamal's perspective. Each one names the capabilities it exercises — that feeds the functional requirements section directly.
 
-### Journey 1: Simple turn (Talker fast-path)
+### Journey 1: Wake from sleep (mood-tinted greeting)
 
-**Scenario.** Kamal is making coffee and asks OLAF the time.
-
-**Sequence:**
-
-1. Kamal: "Hey OLAF, what time is it?"
-2. Wake-word detector fires on "hey OLAF" — pipeline transitions IDLE → LISTENING
-3. VAD captures the rest of the utterance; on-device STT transcribes
-4. Splitter routes the transcript: short, factual question — Talker fast-path takes it
-5. Talker reads belief state via daemon API (`GET /beliefs?keys=time`) and generates a natural reply: `<emotion value="content"/> It's 8:47 in the morning.`
-6. Lifecycle transitions LISTENING → THINKING (briefly) → SPEAKING
-7. Cartesia streams audio frames; splitter fans out: text+SSML to TTS, `OlafAction(emotion=content)` to ROS 2, anchored to first audio frame
-8. OLAF base pose shifts to content; LED ring goes warm amber
-9. Audio plays through speaker; last frame triggers SPEAKING → IDLE
-10. Total wall time: end-of-speech to first audio frame **≤ 1500ms**
-
-**Failure modes & recovery:**
-
-- *Wake-word misfires* on background noise → false-positive logged; pipeline returns to IDLE without dispatching
-- *STT confidence too low* → Talker prompts a clarification ("Sorry, I didn't catch that?")
-- *Daemon belief-state read fails* → Talker falls back to dispatching to the orchestrator (slow path)
-
-**Capabilities exercised:** wake-word detection, on-device STT, Talker LLM call, belief-state read API, Cartesia TTS streaming, splitter fan-out, ROS 2 expression publish, audio-frame anchoring, lifecycle transitions IDLE↔LISTENING↔THINKING↔SPEAKING.
-
-### Journey 2: Complex turn (orchestrator dispatch)
-
-**Scenario.** Kamal asks about his day. The orchestrator must check the calendar (subagent) and reply with structured narration.
+**Scenario.** OLAF is sleeping. Kamal walks into the kitchen.
 
 **Sequence:**
 
-1. Kamal: "Hey OLAF, what's on my calendar today?"
-2. Wake-word, STT, lifecycle → LISTENING
-3. Splitter routes: question requires data fetch — dispatch to orchestrator via `POST /turn`
-4. Lifecycle → THINKING; OLAF shows subtle "thinking" indicator
-5. Stream from orchestrator begins:
-   - `{"type": "narration", "text": "Let me check..."}` → splitter segments, sends to Cartesia, audio plays within ≤1000ms of end-of-speech
-   - `{"type": "subagent_started", "name": "comms"}` → lifecycle hint: subagent active
-   - `{"type": "subagent_progress", "name": "comms", "msg": "Reading calendar"}` → continued thinking indicator
-   - `{"type": "subagent_done", "name": "comms"}`
-   - `{"type": "response_chunk", "text": "<emotion value=\"content\"/> You've got "}` → splitter buffers, segments at sentence/emotion boundary
-   - `{"type": "response_chunk", "text": "two meetings today — one at 10..."}` → continues
-   - `{"type": "turn_end"}` → flush splitter, lifecycle SPEAKING → IDLE after last audio frame
-6. OLAF expression matches narration → response transition smoothly; LED goes warm amber on `content`
+1. `activity = sleeping`. Only the wake-word detector is active on the audio stream; no STT, no Talker invocation.
+2. Kamal: "Hey OLAF."
+3. Wake-word detector fires; `activity → waking` published on the activity topic.
+4. Pipeline invokes Talker with a wake-greeting prompt (system prompt + current `mood` state, no user transcript). Talker returns 2–8 words in the "cool friend" register, mood-tinted:
+   - mood `calm` → `<emotion value="content"/> hey, what's up?`
+   - mood `playful` → `<emotion value="excited"/> oh, hi!`
+   - mood `sleepy` → `<emotion value="calm"/> mm, hey...`
+5. Splitter parses; `speech_emotion` publishes for first segment; Cartesia streams audio.
+6. `activity → speaking` on first audio frame; `speech_emotion(raw_tag, resolved_fallback)` anchored to it.
+7. Audio plays; last frame triggers `speaking → listening` (continuous mic capture).
+8. Total wall time: wake-word fired → first greeting audio frame **≤ 1500ms** (NFR30).
 
 **Failure modes & recovery:**
 
-- *Orchestrator stream stalls* (no event for >5s) → pipeline plays a filler ("Still working on it...") via Talker, keeps lifecycle at THINKING
-- *Stream ends without `turn_end`* → splitter flushes pending text; lifecycle still transitions to IDLE after audio
-- *Cartesia rejects emotion* (text doesn't match) → Cartesia silently drops; OLAF still renders the LLM's intent
+- *Talker LLM unreachable / timeout* → fallback to a static greeting list (`["hey", "yeah?", "hi"]`), no mood tint. Logged at WARN.
+- *Mood not initialized* (first wake of process lifetime) → default mood = `calm`.
+- *Wake-word false positive* → greeting still plays (the design assumes responsiveness over silence); pipeline returns to `listening`. FP rate is bounded by NFR12.
 
-**Capabilities exercised:** orchestrator dispatch (HTTP/WebSocket stream), streaming SSML parser, segment-on-emotion-or-sentence logic, last-published-cache for OLAF base, narration handling, subagent lifecycle hints, `turn_end` cleanup.
+**Capabilities exercised:** wake-word detection, `mood` state persistence, Talker greeting-mode invocation, `activity` topic transitions (`sleeping → waking → speaking → listening`), `speech_emotion` publish, audio-frame anchoring, fallback greeting.
 
-### Journey 3: Barge-in mid-response
+### Journey 2: Continuous-conversation turn (Talker fast-path)
+
+**Scenario.** Conversation is already ongoing. Kamal is making coffee and asks the time. The wake word is **not** required — OLAF is already `AWAKE`.
+
+**Sequence:**
+
+1. `activity = listening`, mic open. (Pipeline returned here from a prior turn's `speaking`.)
+2. Kamal: "What time is it?"
+3. VAD detects end-of-speech; on-device STT transcribes.
+4. Splitter routes the transcript: short, factual question — Talker fast-path takes it. `activity → working` with sub-mode `thinking`.
+5. Talker reads belief state via daemon API (`GET /beliefs?keys=time`) and generates a reply with no tool-call: `<emotion value="content"/> it's 8:47 in the morning.`
+6. `activity → speaking` on first audio frame.
+7. Cartesia streams audio; splitter fans out: text+SSML to TTS, `speech_emotion(raw_tag="content", resolved_fallback="content")` to ROS 2, anchored to first audio frame.
+8. OLAF (consumer) receives `speech_emotion` and renders pose; LED ring goes warm amber.
+9. Audio plays; last frame triggers `speaking → listening`. Mic stays open for the next turn — no wake-word required.
+10. Total wall time: end-of-speech to first audio frame **≤ 1500ms** (NFR1).
+
+**Failure modes & recovery:**
+
+- *STT confidence too low* → Talker generates a clarification ("Sorry, I didn't catch that?") via the same fast-path; `activity` cycles `working.thinking → speaking → listening`.
+- *Daemon belief-state read fails* → Talker falls back to dispatching to the orchestrator (Journey 3).
+
+**Capabilities exercised:** continuous mic capture (no wake-word per turn), VAD-bounded utterance, on-device STT, Talker LLM call (without tool), belief-state read API, Cartesia TTS streaming, splitter fan-out, `activity` topic transitions, `speech_emotion` publish, audio-frame anchoring.
+
+### Journey 3: Complex turn (orchestrator dispatch)
+
+**Scenario.** Kamal asks about his day. The orchestrator must check the calendar (subagent) and reply with structured narration. Continuous-conversation context.
+
+**Sequence:**
+
+1. `activity = listening`. Kamal: "What's on my calendar today?"
+2. VAD, STT, transcript ready.
+3. Splitter routes: question requires data fetch — dispatch to orchestrator via `POST /turn`. `activity → working` with sub-mode `delegating`.
+4. Stream from orchestrator begins:
+   - `{"type": "narration", "text": "let me check..."}` → splitter segments, sends to Cartesia, audio plays within ≤1000ms of end-of-speech (NFR2).
+   - `{"type": "subagent_started", "name": "comms"}` → no `activity` change in v1 (sub-mode stays `delegating`); orchestrator events become richer sub-modes in v1.5.
+   - `{"type": "subagent_progress", "name": "comms", "msg": "Reading calendar"}` → continued.
+   - `{"type": "subagent_done", "name": "comms"}`.
+   - `{"type": "response_chunk", "text": "<emotion value=\"content\"/> you've got "}` → splitter buffers, segments at sentence / emotion / vocalization boundary; `speech_emotion` publishes per segment.
+   - `{"type": "response_chunk", "text": "two meetings today — one at 10..."}` → continues.
+   - `{"type": "turn_end"}` → flush splitter; `activity → speaking` (already, on first audio) → `listening` after last audio frame.
+5. OLAF expression matches narration; consumer-side animation transitions smoothly on each `speech_emotion` event.
+
+**Failure modes & recovery:**
+
+- *Orchestrator stream stalls* (no event for >5s) → pipeline plays a filler ("still working on it…") via Talker fast-path; `activity` stays at `working.delegating`.
+- *Stream ends without `turn_end`* → splitter flushes pending text; `activity → listening` after last audio frame.
+- *Cartesia rejects an emotion tag* → Cartesia silently drops; the `speech_emotion` event still publishes the raw tag and resolved fallback for OLAF's consumption.
+
+**Capabilities exercised:** orchestrator dispatch (HTTP/WebSocket stream), streaming SSML parser, segment-on-emotion-or-sentence-or-vocalization logic, narration handling, `working.delegating` sub-mode, `turn_end` cleanup, `speech_emotion` per-segment publish.
+
+### Journey 4: Sleep on intent (Talker tool-call)
+
+**Scenario.** Mid-conversation, Kamal signals he's done. He doesn't have to use a literal phrase — the Talker LLM detects the intent.
+
+**Sequence:**
+
+1. `activity = listening`. Kamal: "okay, that's all for now, thanks."
+2. STT transcribes. Splitter routes to Talker fast-path. `activity → working.thinking`.
+3. Talker reads the transcript and decides intent is "sleep." It emits a tool-call: `go_to_sleep()` plus a brief acknowledgement: `<emotion value="content"/> alright, see you in a bit.`
+4. Pipeline executes the tool — schedules the sleep transition to fire **after** the acknowledgement audio finishes (so the goodbye plays, then OLAF goes quiet).
+5. `activity → speaking` on first audio frame; `speech_emotion(content)` published.
+6. Last audio frame plays → `activity → going_to_sleep` (transient, optional brief animation hook for OLAF) → `activity → sleeping`.
+7. Mic returns to wake-word-only mode. STT, Talker, splitter all idle.
+
+**Failure modes & recovery:**
+
+- *Talker false-fires `go_to_sleep`* mid-real-conversation → user can simply say wake word again immediately; OLAF wakes and resumes. Logged as candidate FP for prompt tuning.
+- *Talker misses real sleep intent* → user can keep talking; eventually says it more explicitly. No idle auto-sleep means there's no "hidden" exit.
+- *Tool-call decision overhead pushes simple-turn past NFR1* → guard rail: NFR32 (≤100ms tool-call decision overhead).
+
+**Capabilities exercised:** Talker tool-using mode, `go_to_sleep()` tool execution, post-audio deferred transitions, `activity` transitions through `going_to_sleep → sleeping`, mic mode change to wake-word-only.
+
+### Journey 5: Mood shift mid-conversation (Talker tool-call)
+
+**Scenario.** Kamal and OLAF have just shared a laugh. The conversation has become more playful. Talker decides the mood should shift.
+
+**Sequence:**
+
+1. `mood = calm` (latched, last published 12 minutes ago).
+2. Kamal makes a joke; OLAF responds with `<emotion value="happy"/> [laugh] oh, that's good.` Splitter publishes `speech_emotion(happy)` and `vocalization([laugh])` events anchored to audio.
+3. On the next turn, before generating the response, Talker evaluates the conversation context (last N turns + current `mood`) and decides the mood has drifted. It emits a tool-call: `set_mood("playful")`.
+4. Pipeline executes the tool: `mood` topic publishes `playful` (latched). Cooldown timer starts to enforce NFR31 (≤4/hour).
+5. Talker continues with its normal response for the current turn, now generated with `playful` mood in its prompt context.
+6. OLAF (consumer) receives latched `mood = playful` and shifts ambient base (e.g. eye color shift, posture change). The shift is gradual on Olaf's side, not abrupt.
+
+**Failure modes & recovery:**
+
+- *Talker fires `set_mood` too frequently* → cooldown rejects the publish; logged WARN. NFR31 is enforced at the publisher, not just trusted of the LLM.
+- *Talker passes an unknown mood string* → publisher rejects with WARN; previous latched `mood` retained.
+- *Wake greeting on next session* → mood is persisted across the SLEEPING period (in-process state for v1; persistence across restarts is v1.5).
+
+**Capabilities exercised:** Talker tool-using mode, `set_mood(mood)` tool execution, `mood` topic publish (latched), mood enum validation, publish-rate cooldown enforcement, mood-aware Talker prompt construction.
+
+### Journey 6: Barge-in mid-response (DEFERRED to v1.5)
+
+> **Status: deferred.** Originally planned for v1, this journey moves to v1.1 / v1.5. Continuous-conversation feel is achievable without barge-in (the user simply waits for OLAF to finish a typically short response, then speaks). Barge-in adds VAD-during-TTS, splitter flush, and lifecycle short-circuit logic — non-trivial work that does not block v1's "alive feeling." Re-prioritized when the soak in Phase 3 reveals whether response lengths feel constrained without it. FRs FR5, FR29, FR30 also marked deferred.
+
+The contract below remains the v1.5 design intent and is preserved here so it doesn't have to be re-derived.
 
 **Scenario.** OLAF starts a long answer; Kamal interrupts.
 
-**Sequence:**
+**Sequence (v1.5 design):**
 
-1. Kamal asks a question; OLAF is mid-response (lifecycle = SPEAKING)
-2. Kamal speaks again ("Wait, actually—") before OLAF finishes
-3. VAD detects voice during SPEAKING → barge-in event fires
-4. Pipeline transitions SPEAKING → LISTENING immediately
-5. Cartesia audio playback halts; remaining audio frames discarded
-6. Splitter flushes in-flight expression events: any unpublished `OlafAction` are dropped, *not* published — OLAF doesn't get stuck mid-pose
-7. New utterance is captured and dispatched normally
+1. Kamal asks a question; OLAF is mid-response (`activity = speaking`).
+2. Kamal speaks again ("wait, actually—") before OLAF finishes.
+3. VAD detects sustained voice during `speaking` → barge-in event fires.
+4. Pipeline transitions `speaking → listening` immediately.
+5. Cartesia audio playback halts; remaining audio frames discarded.
+6. Splitter flushes in-flight `speech_emotion` and `vocalization` events: any unpublished events are dropped, *not* published — OLAF doesn't get stuck mid-pose.
+7. New utterance is captured and dispatched normally.
 
-**Failure modes & recovery:**
+**Failure modes & recovery (v1.5):**
 
-- *VAD false-positive during SPEAKING* (background noise, OLAF's own audio bleed) → must not trigger barge-in; barge-in requires sustained voice over a threshold
-- *Splitter has just published expression event but corresponding audio not yet played* → published event is the truth; OLAF holds that pose until next event
+- *VAD false-positive during `speaking`* (background noise, OLAF's own audio bleed) → must not trigger barge-in; barge-in requires sustained voice over a threshold.
+- *Splitter has just published an event but corresponding audio not yet played* → published event is the truth; OLAF holds that pose until next event.
 
-**Capabilities exercised:** mid-stream barge-in detection, splitter state flush, lifecycle SPEAKING→LISTENING transition without going through THINKING, audio playback abort.
+**Capabilities exercised (v1.5):** mid-stream barge-in detection, splitter state flush, `speaking → listening` short-circuit, audio playback abort.
 
-> **Open in v1:** exact tuning of barge-in sensitivity is empirical (per distillate §15.2). This journey is the contract; the implementation may need tuning passes during Phase 2.
+### Journey 7: Unmapped emotion fallback
 
-### Journey 4: Unmapped emotion fallback
-
-**Scenario.** The orchestrator's LLM emits a Cartesia tag the pipeline hasn't explicitly mapped (`<emotion value="enthusiastic"/>`).
+**Scenario.** The orchestrator's LLM emits a Cartesia tag the pipeline hasn't explicitly mapped (`<emotion value="enthusiastic"/>`). Pragmatic v1 model: open-set tags are accepted; the pipeline still resolves a fallback for downstream consumers that need the closed enum.
 
 **Sequence:**
 
-1. Response chunk arrives: `<emotion value="enthusiastic"/> That's amazing!`
-2. Splitter parses tag → looks up `enthusiastic` in `expression_map.yaml`
-3. Not found in primary or secondary tier
-4. Falls through to family table: `enthusiastic` ∈ `high_energy_positive` → maps to `excited`
-5. OLAF renders `excited` base pose (forward lean, head up, wide eyes, saturated yellow LED)
-6. Cartesia receives the original tag; if Sonic-3 supports `enthusiastic`, voice prosody reflects it; if not, voice is unchanged but OLAF still expresses excitement
-7. A warning is logged (DEBUG level): `unmapped emotion 'enthusiastic' → fallback to 'excited' via high_energy_positive`
+1. Response chunk arrives: `<emotion value="enthusiastic"/> that's amazing!`
+2. Splitter parses tag → looks up `enthusiastic` in `expression_map.yaml`.
+3. Not found in primary or secondary tier → falls through to family table: `enthusiastic` ∈ `high_energy_positive` → `excited`.
+4. `speech_emotion` event publishes with payload `{raw_tag: "enthusiastic", resolved_fallback: "excited", family: "high_energy_positive"}`. Consumers (OLAF, dashboard) decide which to honour.
+5. Cartesia receives the original tag; if Sonic-3 supports `enthusiastic`, voice prosody reflects it; if not, Cartesia ignores the unknown tag and voice is unchanged.
+6. A log entry at DEBUG level: `unmapped emotion 'enthusiastic' → fallback 'excited' via high_energy_positive` (first occurrence per process lifetime).
 
 **Failure modes & recovery:**
 
-- *Tag not in family table at all* (truly unknown) → fall through to `unknown: neutral`; warning logged at WARN level
-- *`expression_map.yaml` is malformed at startup* → pipeline refuses to start, error to stderr; doesn't silently run with broken mapping
+- *Tag not in family table at all* (truly unknown) → fall through to `unknown: neutral`; payload still published with `resolved_fallback="neutral"`; logged at WARN.
+- *`expression_map.yaml` is malformed at startup* → pipeline refuses to start, error to stderr; doesn't silently run with broken mapping.
 
-**Capabilities exercised:** fallback family resolution, structured logging for observability, config validation at startup, graceful degradation.
+**Capabilities exercised:** fallback family resolution, `speech_emotion` open-set schema with raw-and-resolved payload, structured logging for observability, config validation at startup.
 
-### Journey 5: Operator — live mapping tune
+### Journey 8: Operator — live mapping tune
 
 **Scenario.** Kamal feels OLAF's `excited` pose isn't energetic enough. He wants to tune the mapping without restarting the pipeline mid-session.
 
@@ -338,23 +448,32 @@ Each phase produces a runnable artifact, not a sub-component — incremental val
 
 ### Journey Requirements Summary
 
-The five journeys reveal these capability clusters that the functional requirements section specifies:
+The eight journeys (seven v1, one deferred) reveal these capability clusters that the functional requirements section specifies:
 
 | Capability area | Journeys exercising it |
 |---|---|
-| Wake-word detection (always-on, low-power) | 1, 2, 5 |
-| On-device STT (Whisper + Hailo-8L) | 1, 2 |
-| Talker fast-path (in-pipeline LLM, belief-state read) | 1 |
-| Orchestrator dispatch (HTTP/WebSocket stream) | 2 |
-| Streaming SSML parser + tag splitter | 2, 3, 4 |
-| Cartesia TTS streaming | 1, 2, 3 |
-| Splitter fan-out + audio-frame anchoring | 1, 2 |
-| ROS 2 expression publish (`OlafAction` events) | 1, 2, 4 |
-| Lifecycle state machine | 1, 2, 3, all |
-| Barge-in detection + splitter flush | 3 |
-| Fallback family resolution | 4 |
-| Config: schema validation, SIGHUP reload, atomic swap | 5 |
-| Observability: structured logging, warning levels | 4, 5, all |
+| Wake-word detection (always-on, low-power) | 1, 8 |
+| Continuous mic capture while AWAKE (no per-turn wake-word) | 2, 3, 4, 5 |
+| On-device STT (Whisper + Hailo-8L) | 2, 3, 4, 5 |
+| Talker fast-path (in-pipeline LLM, belief-state read) | 2, 4, 5 |
+| Talker greeting mode (mood-tinted, 2–8 word) | 1 |
+| Talker tool-using (`go_to_sleep`, `set_mood`) | 4, 5 |
+| Orchestrator dispatch (HTTP/WebSocket stream) | 3 |
+| Streaming SSML parser + tag splitter (emotion, vocalization, sentence boundaries) | 1, 2, 3, 5, 7 |
+| Cartesia TTS streaming | 1, 2, 3, 4, 5 |
+| Splitter fan-out + audio-frame anchoring | 1, 2, 3, 5 |
+| `mood` topic publish (latched, slow-cadence) | 1, 5 |
+| `activity` topic publish (FSM transitions + working sub-modes) | all v1 |
+| `speech_emotion` topic publish (open-set, raw + fallback) | 1, 2, 3, 4, 5, 7 |
+| `vocalization` topic publish (`[laugh]`, `[sigh]`, …) | 5 |
+| Common event envelope (`timestamp`, `schema_version`, `source`, `correlation_id`) | all v1 |
+| Post-audio deferred state transitions (sleep-after-goodbye) | 4 |
+| Mood publish-rate cooldown (NFR31 enforcement) | 5 |
+| Wake-greeting fallback (static list when Talker unreachable) | 1 |
+| Barge-in detection + splitter flush (DEFERRED to v1.5) | 6 |
+| Fallback family resolution | 7 |
+| Config: schema validation, SIGHUP reload, atomic swap | 8 |
+| Observability: structured logging, warning levels | 4, 5, 7, 8, all |
 
 ## IoT / Embedded Specific Requirements
 
@@ -385,8 +504,12 @@ The five journeys reveal these capability clusters that the functional requireme
 | **Belief-state read** | HTTP | Out | `http://localhost:8001/beliefs` (orchestrator daemon) |
 | **Orchestrator dispatch** | HTTP/WebSocket (SSE) | Out | `http://localhost:8001/turn` (orchestrator daemon) |
 | **TTS** | HTTPS / WebSocket | Out | Cartesia Sonic-3 API |
-| **OLAF expression** | ROS 2 (DDS, UDP multicast) | Out | `/olaf/expression` topic, `ros_domain_id=7` |
-| **Lifecycle** | ROS 2 | Out | OLAF lifecycle topic |
+| **`mood` topic** | ROS 2 (DDS) | Out | `/olaf/mood` topic — latched (transient_local), reliable, depth=1; slow-changing disposition |
+| **`activity` topic** | ROS 2 (DDS) | Out | `/olaf/activity` topic — latched (transient_local), reliable, depth=1; FSM transitions including `working` sub-modes |
+| **`speech_emotion` topic** | ROS 2 (DDS) | Out | `/olaf/speech_emotion` topic — volatile, reliable, depth=10; per-segment, audio-anchored Cartesia tags |
+| **`vocalization` topic** | ROS 2 (DDS) | Out | `/olaf/vocalization` topic — volatile, reliable, depth=10; punctual non-verbals (`[laugh]`, `[sigh]`, …) |
+
+> All four topics use `ros_domain_id=7` and share the common event envelope `{timestamp, schema_version, source, correlation_id, payload}`. The publisher is implemented behind an `EventPublisher` Protocol; ROS 2 is the v1 channel adapter, with a fake/log adapter available for tests. Adding Zenoh / NATS / WebSocket adapters in the future requires no consumer-side changes.
 
 **Network reachability requirements:**
 
@@ -402,7 +525,7 @@ The Pi is **mains-powered** (plugged in continuously as a fixed-location device)
 - **Always-on wake-word detector** must run continuously without significant CPU draw. Use a dedicated low-power wake-word model (e.g., openWakeWord, Picovoice Porcupine), not full Whisper. Target: < 5% CPU sustained.
 - **Thermal throttling** on the Pi can cause audio dropouts under load. STT + Cartesia decoding + ROS 2 publishing concurrently must stay below the throttle threshold. Active cooling (fan + heatsink) recommended.
 
-**OLAF embodiment power:** TBD — if OLAF is battery-powered, the pipeline must avoid spamming high-frequency expression events. Already designed for this: the splitter's "last published" cache prevents republishing unchanged base emotions.
+**OLAF embodiment power:** TBD — if OLAF is battery-powered, the pipeline must avoid spamming high-frequency events. Already designed for this: the splitter's "last published" cache prevents republishing unchanged `speech_emotion` values within a turn (FR24), `mood` is rate-limited (NFR31), and `activity` only publishes on actual transitions.
 
 ### Security Model
 
@@ -421,7 +544,8 @@ The Pi is **mains-powered** (plugged in continuously as a fixed-location device)
 
 **Privacy:**
 
-- **Wake-word-gated mic capture.** Pre-wake audio is buffered in-memory only and discarded. Not written to disk, not transmitted.
+- **Wake-word-gated mic capture (when SLEEPING).** While `activity = sleeping`, only the wake-word detector consumes the mic stream. Pre-wake audio is buffered in-memory only and discarded; not written to disk, not transmitted.
+- **Continuous mic capture while AWAKE.** When `activity ∈ {listening, working, speaking}`, the mic is continuously captured for VAD + STT (Journey 2). This is an explicit privacy trade-off for the continuous-conversation experience. Audio is still in-memory only and discarded after STT; transcripts are not persisted (FR42).
 - **STT transcripts are not persisted** by the pipeline. They are passed to Talker / orchestrator for the current turn and dropped.
 - **No telemetry.** No phone-home, no analytics, no usage tracking.
 
@@ -454,11 +578,11 @@ Personal-project scale, not a fleet:
 
 ### Audio I/O & Capture
 
-- **FR1**: The pipeline can detect a configurable wake-word from continuous mic input without dispatching downstream processing prior to detection.
-- **FR2**: The pipeline can capture user speech from the local mic device after wake-word detection, terminating capture on voice-activity end-of-speech.
+- **FR1**: The pipeline can detect a configurable wake-word from continuous mic input while in `activity = sleeping` without dispatching any downstream processing prior to detection. Wake-word detection is the **only** event that transitions `sleeping → waking`.
+- **FR2**: The pipeline can capture user speech from the local mic device while `activity ∈ {listening, working, speaking}` (continuous capture while AWAKE), terminating each utterance on voice-activity end-of-speech. **No wake-word is required between turns.**
 - **FR3**: The pipeline can play synthesized audio through the local speaker device with no perceivable buffering pause between frames.
 - **FR4**: The pipeline can pin audio devices by stable name in configuration, surviving reboots and USB hot-plug events of unrelated devices.
-- **FR5**: The pipeline can detect mid-utterance barge-in (user speaking during SPEAKING lifecycle state) and abort current playback.
+- **FR5** *(DEFERRED to v1.5)*: The pipeline can detect mid-utterance barge-in (user speaking during `activity = speaking`) and abort current playback. **Status: deferred from v1**. v1 ships without barge-in; user waits for OLAF to finish before speaking.
 
 ### Speech Recognition
 
@@ -471,9 +595,9 @@ Personal-project scale, not a fleet:
 - **FR9**: The pipeline can route a transcribed user turn to the Talker fast-path or to the orchestrator daemon based on a configurable routing decision.
 - **FR10**: The pipeline can read belief state from the orchestrator daemon via HTTP API to inform Talker responses.
 - **FR11**: The pipeline can dispatch a user turn to the orchestrator daemon via `POST /turn` and consume the typed event stream (narration, subagent events, response chunks, turn_end).
-- **FR12**: The pipeline can synthesize a fast-path response from belief state using an in-pipeline LLM (Talker), emitting Cartesia-tagged text.
-- **FR13**: The pipeline can recover gracefully from orchestrator stream stalls, emitting a filler response after a configurable timeout while keeping the lifecycle in THINKING.
-- **FR14**: The pipeline can recover gracefully from a missing `turn_end` event by flushing the splitter and transitioning lifecycle after the last audio frame plays.
+- **FR12**: The pipeline can synthesize a fast-path response from belief state using an in-pipeline LLM (Talker), emitting Cartesia-tagged text and (optionally) tool-calls. The Talker operates in two modes: **conversational** (generates a spoken reply, may emit tool-calls in parallel) and **greeting** (generates a 2–8 word mood-tinted wake greeting, see FR44).
+- **FR13**: The pipeline can recover gracefully from orchestrator stream stalls, emitting a filler response after a configurable timeout while keeping `activity` at `working.delegating`.
+- **FR14**: The pipeline can recover gracefully from a missing `turn_end` event by flushing the splitter and transitioning `activity → listening` after the last audio frame plays.
 
 ### Voice Synthesis
 
@@ -483,22 +607,41 @@ Personal-project scale, not a fleet:
 
 ### Embodiment Expression
 
-- **FR18**: The pipeline can parse incoming text streams as Cartesia SSML, identifying `<emotion value="X"/>` tags and `[burst]` events incrementally (token-by-token, tags may split across token boundaries).
-- **FR19**: The pipeline can segment text on whichever boundary comes first: sentence terminator, emotion tag, or burst tag.
-- **FR20**: The pipeline can map every Cartesia emotion tag to a defined `OlafAction` via the `expression_map.yaml` mapping table, with no silent gaps.
-- **FR21**: The pipeline can resolve unmapped emotion tags through a fallback family table, producing a defined `OlafAction` with a logged warning.
-- **FR22**: The pipeline can attach `OlafAction` event metadata to the matching Cartesia audio frame, ensuring expression events publish in lockstep with audio.
-- **FR23**: The pipeline can publish `OlafAction` events to ROS 2 on `/olaf/expression`, anchored to audio frame send time, achieving 30-80ms anticipatory alignment with voice.
-- **FR24**: The pipeline can suppress republishing of unchanged base emotions via a "last published" cache, while always publishing burst events.
-- **FR25**: The pipeline can strip Cartesia-unsupported burst tags from the TTS stream while still publishing them as `OlafAction` events to ROS 2.
+- **FR18**: The pipeline can parse incoming text streams as Cartesia SSML, identifying `<emotion value="X"/>` tags, vocalization tags (`[laugh]`, `[sigh]`, `[gasp]`, …), and any other inline events incrementally (token-by-token; tags may split across token boundaries).
+- **FR19**: The pipeline can segment text on whichever boundary comes first: sentence terminator, emotion tag, or vocalization tag.
+- **FR20**: The pipeline can produce a `speech_emotion` event for every `<emotion/>` tag encountered in the stream, carrying both the **raw tag** as emitted by the LLM and a **resolved fallback** looked up via the `expression_map.yaml` mapping table. The schema accepts open-set tag strings (any Cartesia tag, including ones unknown to the v1 mapping); consumers handle unknowns gracefully.
+- **FR21**: The pipeline can resolve unmapped emotion tags through a fallback family table, populating the `resolved_fallback` field of the `speech_emotion` event with a defined family member and logging at DEBUG (first occurrence) or WARN (truly unknown, fell to `neutral`).
+- **FR22**: The pipeline can attach `speech_emotion` and `vocalization` event metadata to the matching Cartesia audio frame, ensuring audio-anchored events publish in lockstep with audio.
+- **FR23**: The pipeline can publish `speech_emotion` events to ROS 2 on `/olaf/speech_emotion`, anchored to audio frame send time, achieving 30–80ms anticipatory alignment with voice (NFR5).
+- **FR24**: The pipeline can suppress republishing of unchanged `speech_emotion` values via a "last published" cache (turn-scoped, reset at `activity → listening`), while always publishing `vocalization` events.
+- **FR25**: The pipeline can publish `vocalization` events (e.g. `[laugh]`, `[sigh]`) to ROS 2 on `/olaf/vocalization`, deciding per-tag whether to also pass the tag to Cartesia (when Cartesia supports it) or strip it from the TTS text. Vocalization source: LLM-emitted inline tags parsed pre-TTS (Cartesia-emitted bursts are not v1).
 
 ### Lifecycle State Management
 
-- **FR26**: The pipeline can publish OLAF lifecycle state changes (SLEEPING, LISTENING, THINKING, SPEAKING, IDLE) to ROS 2 at conversation milestones.
-- **FR27**: The pipeline can transition between lifecycle states based on observable events: wake-word detection, end-of-speech, first audio frame, last audio frame, idle timeout.
-- **FR28**: The pipeline can transition from IDLE to SLEEPING after a configurable idle timeout (default: 5 minutes).
-- **FR29**: The pipeline can transition from SPEAKING to LISTENING directly on barge-in detection, bypassing THINKING.
-- **FR30**: The pipeline can flush in-flight expression events on barge-in to prevent OLAF being stuck on a half-finished pose.
+- **FR26**: The pipeline can publish `activity` state changes to ROS 2 on `/olaf/activity` at every transition. The v1 state set is `{starting, sleeping, waking, listening, working, speaking, going_to_sleep}`. The `working` state has v1 sub-modes `{thinking, delegating}`, encoded in the event payload.
+- **FR27**: The pipeline can transition between `activity` states based on observable events: wake-word detection (`sleeping → waking`), Talker greeting first audio frame (`waking → speaking`), TTS end (`speaking → listening`), VAD end-of-speech (`listening → working`), Talker fast-path or orchestrator dispatch (`working` sub-mode resolution), Talker `go_to_sleep()` tool-call (post-audio: `speaking → going_to_sleep → sleeping`).
+- **FR28** *(REMOVED — v1 has no idle auto-sleep; sleep is intent-driven only via FR45.)*
+- **FR29** *(DEFERRED to v1.5)*: The pipeline can transition from `speaking` to `listening` directly on barge-in detection. Status: deferred from v1.
+- **FR30** *(DEFERRED to v1.5)*: The pipeline can flush in-flight `speech_emotion` and `vocalization` events on barge-in to prevent OLAF being stuck on a half-finished pose. Status: deferred from v1.
+
+### Wake/Sleep & Talker Tool-Use
+
+- **FR44**: The pipeline can generate a 2–8 word mood-tinted wake greeting via Talker on every `sleeping → waking` transition. Talker is invoked in **greeting mode** with the current `mood` value and a system prompt enforcing the "cool friend" register. If Talker returns >8 words, is unreachable, or returns nothing within a configurable timeout (default 800 ms), the pipeline plays a static fallback from a configured list (`["hey", "yeah?", "hi"]`) and logs a WARN.
+- **FR45**: The pipeline can prompt Talker with a registered tool-set (`go_to_sleep`, `set_mood`) and accept tool-calls in Talker's response, following the active provider's tool-use protocol (OpenAI / Groq / Gemini all expose openai-compatible tool-use). Tool inputs are validated against typed Pydantic schemas before execution; invalid tool-calls log WARN and are dropped without side-effect.
+- **FR46**: The pipeline can execute the `go_to_sleep()` tool-call by **scheduling** the `speaking → going_to_sleep → sleeping` transition to fire **after** the current turn's audio finishes playing. This ensures Talker's goodbye is heard in full before the mic returns to wake-word-only mode.
+- **FR47**: The pipeline keeps the mic continuously open while `activity ∈ {listening, working, speaking}`, capturing user utterances without re-arming the wake-word detector. The wake-word detector is the **only** mic consumer when `activity = sleeping`.
+
+### Mood Control
+
+- **FR48**: The pipeline can execute the `set_mood(mood)` tool-call by validating the mood string against the v1 mood enum (`happy, playful, calm, curious, gloomy, grumpy, sleepy, excited`), publishing a `mood` event on `/olaf/mood` (latched / transient_local QoS) when the cooldown allows, and updating the in-process mood state used by future Talker prompts and the wake greeting.
+- **FR49**: The pipeline enforces a configurable mood publish-rate cooldown (default: ≥15 minutes between consecutive `mood` publishes, mapping to NFR31). `set_mood` tool-calls that fire faster than the cooldown are dropped with a WARN log; the in-memory mood state is NOT updated until a publish succeeds.
+- **FR50**: The pipeline retains the current `mood` value across `sleeping` periods within a single process lifetime. Mood resets to default `calm` on process restart. Cross-restart persistence is v1.5.
+
+### Event Publishing & Channels
+
+- **FR51**: The pipeline publishes events on four topics — `mood`, `activity`, `speech_emotion`, `vocalization` — via an `EventPublisher` Protocol. The v1 implementation publishes to ROS 2 (DDS) on `/olaf/{topic}`; a fake/log adapter exists for tests. Adding alternative channel adapters (Zenoh, NATS, WebSocket) requires no consumer-side changes.
+- **FR52**: Every event on every topic carries a common envelope: `timestamp` (UTC ISO8601), `schema_version` (integer; bumped only on breaking changes per CLAUDE.md rule 6), `source` (component name string), `correlation_id` (UUID — turn-scoped for audio-anchored events, session-scoped for `mood`/`activity`), and `payload` (topic-specific Pydantic model).
+- **FR53**: The event envelope's `schema_version` for this PRD direction is **2** (bumped from `1` due to the breaking topology change: single `/olaf/expression` channel replaced by four-topic publish). Consumers of `schema_version=1` events must be migrated; the pipeline will not run in dual-emit mode.
 
 ### Configuration & Operations
 
@@ -511,13 +654,13 @@ Personal-project scale, not a fleet:
 
 ### Observability & Diagnostics
 
-- **FR37**: The pipeline can emit structured (JSON) logs at INFO/WARN/ERROR levels for lifecycle transitions, emotion fallback resolutions, config reloads, and external service failures.
+- **FR37**: The pipeline can emit structured (JSON) logs at INFO/WARN/ERROR levels for `activity` transitions, `mood` transitions, Talker tool-call invocations (with input + outcome), emotion fallback resolutions, config reloads, and external service failures.
 - **FR38**: The pipeline can log unmapped Cartesia emotion tags with the mapped fallback (DEBUG-level on first occurrence, WARN if completely unknown).
 - **FR39**: The pipeline can omit raw audio from all logs at all levels; transcripts only appear at DEBUG level, which is off by default.
 - **FR40**: The pipeline can rotate logs locally with a configurable retention window (default: 7 days).
 - **FR41**: The pipeline can verify Hailo-8L driver presence at startup and log a clear error before falling back to CPU inference.
 - **FR42**: The pipeline does not persist user audio or transcripts to disk in the default operational path.
-- **FR43**: The pipeline does not initiate any outbound network connection beyond the configured Cartesia API, Anthropic API, and orchestrator daemon endpoints (no telemetry, no analytics).
+- **FR43**: The pipeline does not initiate any outbound network connection beyond the configured Cartesia API, the active Talker provider's API (one of OpenAI / Groq / Gemini per `[talker] provider` in setup.toml), and orchestrator daemon endpoints (no telemetry, no analytics).
 
 ## Non-Functional Requirements
 
@@ -531,14 +674,14 @@ These are the latency budgets from the Success Criteria, restated as testable NF
 - **NFR2**: Complex-turn end-to-end latency (end-of-speech → first narration audio frame) must be ≤ 1000ms at p95.
 - **NFR3**: On-device STT latency (end-of-speech → transcript ready) must be ≤ 500ms at p95 with Hailo-8L. CPU fallback path defines its own p95.
 - **NFR4**: Cartesia TTS latency (text-with-tags → first audio frame) must be ≤ 400ms at p95.
-- **NFR5**: Voice/embodiment alignment must be 30–80ms anticipatory at p95; outside this window is a defect.
+- **NFR5**: Voice / `speech_emotion` alignment must be 30–80ms anticipatory at p95; outside this window is a defect. (`mood` and `activity` events are FSM-driven and have no audio-alignment requirement; `vocalization` events are also audio-anchored under the same NFR5 window.)
 - **NFR6**: Audio playback must not introduce buffering pauses > 100ms during a single utterance.
 - **NFR7**: `SIGHUP`-triggered config reload must complete within 1 second from signal receipt.
 
 ### Reliability
 
 - **NFR8**: Pipeline must run continuously for ≥ 7 days under normal household ambient conditions without an unplanned restart, panic, or unrecoverable error state.
-- **NFR9**: Recovery from external service failure (Cartesia or Anthropic unreachable) must complete within 5 seconds of reachability return, without manual intervention.
+- **NFR9**: Recovery from external service failure (Cartesia or the active Talker provider unreachable) must complete within 5 seconds of reachability return, without manual intervention.
 - **NFR10**: A malformed config file at startup must produce a clear error and prevent startup; a malformed config on `SIGHUP` must produce a clear error and retain the prior config (no silent-broken state).
 - **NFR11**: Pipeline must survive USB hot-plug events on unrelated devices without restart or audio interruption.
 - **NFR12**: Wake-word false-positive rate must be ≤ 1 per hour of typical household ambient (TV, conversation, kitchen sounds) at the production threshold.
@@ -556,20 +699,26 @@ These are the latency budgets from the Success Criteria, restated as testable NF
 
 - **NFR19**: Cartesia TTS integration must implement automatic retry with exponential backoff (max 3 retries) on transient network errors before transitioning to text-only degraded mode.
 - **NFR20**: Orchestrator stream connection must include a heartbeat or stall-detection timeout (configurable, default 5s) and trigger graceful filler-response on stall.
-- **NFR21**: ROS 2 publishing on `/olaf/expression` must use reliable QoS; lost messages are not acceptable for embodiment correctness.
-- **NFR22**: Anthropic API integration must implement graceful degradation: if the Talker API is unreachable, dispatch the turn to the orchestrator instead (slow path).
+- **NFR21**: ROS 2 publishing must use per-topic QoS appropriate to the event semantics: `mood` and `activity` use **transient_local** (latched), reliable, depth=1 — late subscribers receive last-known state; `speech_emotion` and `vocalization` use **volatile**, reliable, depth=10 — transient events. Lost messages on any topic are not acceptable for embodiment correctness within reliability bounds.
+- **NFR22**: Active Talker provider API integration must implement graceful degradation: if the Talker API is unreachable, dispatch the turn to the orchestrator instead (slow path). Wake greetings (FR44) fall back to a static list when Talker is unreachable.
 
 ### Security
 
 > Functional security requirements are in FR34, FR35, FR42, FR43. NFRs below are quality attributes complementing them.
 
 - **NFR23**: All API credentials must be stored at file permission `0600` and loaded from disk only at process startup; the process must not re-read or expose them at runtime.
-- **NFR24**: Outbound HTTPS connections (Cartesia, Anthropic) must validate TLS certificates; the pipeline must refuse to start if certificate validation is disabled.
+- **NFR24**: Outbound HTTPS connections (Cartesia and the active Talker provider) must validate TLS certificates; the pipeline must refuse to start if certificate validation is disabled.
 - **NFR25**: All log output must be inspectable by Kamal locally; no log line may contain raw credential material, raw audio bytes, or (at INFO level or above) user transcripts.
 
 ### Maintainability
 
 - **NFR26**: This PRD, the brief (`voice-agent-pipeline-brief.md`), and the distillate (`voice-agent-pipeline.md`) are the canonical specs. Any implementation decision deviating from them must update the relevant document in the same change.
 - **NFR27**: Configuration schemas (`expression_map.yaml` and `pipeline.toml`) must be versioned with a `schema_version` field; the pipeline must reject configs with an incompatible schema version at startup.
-- **NFR28**: Components within the pipeline (wake-word, STT, Talker, splitter, TTS, ROS 2 publisher) must be independently testable — each can be exercised in isolation with mock or synthetic inputs.
+- **NFR28**: Components within the pipeline (wake-word, STT, Talker, splitter, TTS, `EventPublisher` adapters) must be independently testable — each can be exercised in isolation with mock or synthetic inputs. The `EventPublisher` Protocol enables substituting a fake/log adapter for the ROS 2 adapter in tests with no consumer changes.
 - **NFR29**: Logs must be machine-readable JSON to enable post-hoc analysis without manual parsing.
+
+### User-Experience Latency (continuous-conversation direction)
+
+- **NFR30**: Wake-greeting end-to-end latency (wake-word fired → first greeting audio frame from Cartesia) must be ≤ 1500ms at p95. The greeting Talker call, Cartesia TTS first-frame, and audio playback path together budget to NFR1 + NFR4 with no extra slack.
+- **NFR31**: `mood` topic publish cadence must not exceed 4 publishes per hour sustained, enforced at the `EventPublisher` boundary (FR49). Tool-calls that would exceed the rate are dropped, not queued.
+- **NFR32**: Talker tool-call decision overhead must add ≤ 100ms to the simple-turn budget at p95. Total simple-turn latency (NFR1, ≤ 1500ms) must not be exceeded as a result of tool-aware Talker invocation.
