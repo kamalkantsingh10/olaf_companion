@@ -8,10 +8,19 @@ stepsCompleted:
   - step-03-create-stories-epic-4
   - step-03-create-stories-epic-5
   - step-04-final-validation
+editsCompleted:
+  - edit-2026-05-06-direction-shift-correct-course
 inputDocuments:
   - build_documents/planning-artifacts/prd.md
+  - build_documents/planning-artifacts/voice-agent-pipeline-brief.md
+  - build_documents/planning-artifacts/voice-agent-pipeline.md
   - build_documents/planning-artifacts/architecture.md
 scope: v1-active-set-only
+deferredToV1_5:
+  - FR5, FR29, FR30 (barge-in cluster — VAD-during-SPEAKING + flush + cancel; v1.5 headline feature)
+  - Cross-restart mood persistence (additive under FR48)
+  - Expanded `working` sub-modes — `searching`, `tooling`, `composing` (additive Literal extension)
+  - Configurable idle auto-sleep fallback (additive opt-in safety net)
 deferredToV2:
   - FR7, FR41 (Hailo-8L acceleration + driver verification — Pi port)
   - FR13, FR16 (orchestrator stall filler + Cartesia text-only degraded mode — resilience layer)
@@ -21,23 +30,40 @@ approachGuidance: |
   Per Kamal: go super simple 1st and progressively add complexity in each sprint.
   Start with the leanest possible epic that proves the core flow end-to-end,
   then layer complexity sprint by sprint.
+lastEdited: '2026-05-06'
+editHistory:
+  - date: '2026-05-06'
+    summary: |
+      `bmad-correct-course` ran against the spec-triple direction shift
+      committed in 6f3bfe3 (PRD/brief/distillate) + ed8b276 (architecture).
+      Restructured Epic 3 (5 → 7 stories) for four-topic event publish +
+      mood module + event-schema rebuild; Epic 4 retitled "Activity FSM +
+      Tool-Use + Slow Path" (5 → 7 stories) for 7-state activity FSM with
+      deferred-sleep, Talker tool-using (`go_to_sleep`, `set_mood`),
+      mood-tinted wake greeting, mic-mode flip; Epic 5 (5 → 4 stories,
+      barge-in moved to v1.5 backlog, sign-off list expanded for NFR30/31/32
+      + intent-sleep FP/FN + mood cadence). Net v1 story count: 22 → 30
+      across 5 epics. New `## v1.5 Backlog (Post-v1)` section captures
+      4 deferred items. Epic 1 + Epic 2 (both at `review` status) untouched.
 ---
 
 # olaf_companion — voice-agent-pipeline — Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the **voice-agent-pipeline** component of `olaf_companion`, decomposing the requirements from the PRD and Architecture documents into implementable stories.
+This document provides the complete epic and story breakdown for the **voice-agent-pipeline** component of `olaf_companion`, decomposing the requirements from the PRD, brief, distillate, and Architecture documents into implementable stories.
 
-**Scope:** v1 active set only. v2-deferred FRs/NFRs (resilience layer, Pi/Hailo port) are tracked in frontmatter for traceability but produce no stories in this document.
+**Scope:** 5 epics, 30 v1 stories. Epic 1 + 2 (12 stories) are complete; Epic 3 + 4 + 5 (18 stories) remain. v1.5-deferred items (barge-in, cross-restart mood persistence, expanded `working` sub-modes, idle auto-sleep fallback) are captured in `## v1.5 Backlog (Post-v1)` for traceability but do not produce v1 stories. v2-deferred FRs/NFRs (resilience layer, Pi/Hailo port) are tracked in frontmatter.
 
 **Approach:** lean-first, then progressive complexity. Each sprint adds one new capability layer on top of a runnable artifact from the prior sprint.
+
+**Current state (as of 2026-05-06):** Epic 1 (7 stories, 1.1–1.7) + Epic 2 (5 stories, 2.1–2.5) at `review` status — simple-turn loop alive end-to-end through Story 2.5. Remaining work: Epic 3 (Embodiment Channel — four-topic events + mood), Epic 4 (Activity FSM + Tool-Use + Slow Path), Epic 5 (Production Hardening). The 2026-05-06 direction shift (commits `6f3bfe3` + `ed8b276`) reshaped Epics 3–5 substantially before any of their stories had started.
 
 ## Requirements Inventory
 
 ### Functional Requirements
 
-> v1 active set: 39 FRs. v2-deferred FRs (FR7, FR13, FR16, FR41) are intentionally omitted.
+> v1 active set: 49 FRs across 11 clusters. v1.5-deferred FRs (FR5, FR29, FR30) are listed below with their target epic but produce v1.5 backlog stories. v2-deferred FRs (FR7, FR13, FR16, FR41) and removed FR (FR28 — old IDLE state) are intentionally omitted.
 
 **Audio I/O & Capture**
 
@@ -45,7 +71,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 - **FR2**: The pipeline can capture user speech from the local mic device after wake-word detection, terminating capture on voice-activity end-of-speech.
 - **FR3**: The pipeline can play synthesized audio through the local speaker device with no perceivable buffering pause between frames.
 - **FR4**: The pipeline can pin audio devices by stable name in configuration, surviving reboots and USB hot-plug events of unrelated devices.
-- **FR5**: The pipeline can detect mid-utterance barge-in (user speaking during SPEAKING lifecycle state) and abort current playback.
+- **FR5**: *(deferred to v1.5)* The pipeline can detect mid-utterance barge-in (user speaking during SPEAKING activity state) and abort current playback.
 
 **Speech Recognition**
 
@@ -57,8 +83,9 @@ This document provides the complete epic and story breakdown for the **voice-age
 - **FR9**: The pipeline can route a transcribed user turn to the Talker fast-path or to the orchestrator daemon based on a configurable routing decision.
 - **FR10**: The pipeline can read belief state from the orchestrator daemon via HTTP API to inform Talker responses.
 - **FR11**: The pipeline can dispatch a user turn to the orchestrator daemon via `POST /turn` and consume the typed event stream (narration, subagent events, response chunks, turn_end).
-- **FR12**: The pipeline can synthesize a fast-path response from belief state using an in-pipeline LLM (Talker), emitting Cartesia-tagged text.
-- **FR14**: The pipeline can recover gracefully from a missing `turn_end` event by flushing the splitter and transitioning lifecycle after the last audio frame plays.
+- **FR12**: The pipeline can synthesize a fast-path response from belief state using an in-pipeline LLM (Talker), emitting Cartesia-tagged text. Talker operates in two modes: **conversational** (spoken reply, may emit tool-calls in parallel) and **greeting** (2–8 word mood-tinted wake greeting).
+- **FR13** *(deferred to v2)*: Stall heartbeat / filler response on slow orchestrator stream — resilience layer.
+- **FR14**: The pipeline can recover gracefully from a missing `turn_end` event by flushing the splitter and transitioning activity FSM after the last audio frame plays.
 
 **Voice Synthesis**
 
@@ -67,22 +94,41 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **Embodiment Expression**
 
-- **FR18**: The pipeline can parse incoming text streams as Cartesia SSML, identifying `<emotion value="X"/>` tags and `[burst]` events incrementally (token-by-token, tags may split across token boundaries).
-- **FR19**: The pipeline can segment text on whichever boundary comes first: sentence terminator, emotion tag, or burst tag.
-- **FR20**: The pipeline can map every Cartesia emotion tag to a defined `ExpressionEvent` via the `expression_map.yaml` mapping table, with no silent gaps.
-- **FR21**: The pipeline can resolve unmapped emotion tags through a fallback family table, producing a defined `ExpressionEvent` with a logged warning.
-- **FR22**: The pipeline can attach `ExpressionEvent` metadata to the matching Cartesia audio frame, ensuring expression events publish in lockstep with audio.
-- **FR23**: The pipeline can publish `ExpressionEvent` to the configured expression broadcast channel, anchored to audio frame send time, achieving 30-80ms anticipatory alignment with voice.
-- **FR24**: The pipeline can suppress republishing of unchanged base emotions via a "last published" cache, while always publishing burst events.
-- **FR25**: The pipeline can strip Cartesia-unsupported burst tags from the TTS stream while still publishing them as `ExpressionEvent` to the broadcast channel.
+- **FR18**: The pipeline can parse incoming text streams as Cartesia SSML, identifying `<emotion value="X"/>` tags and `[vocalization]` events incrementally (token-by-token, tags may split across token boundaries).
+- **FR19**: The pipeline can segment text on whichever boundary comes first: sentence terminator, emotion tag, or vocalization tag.
+- **FR20**: The pipeline can map every Cartesia emotion tag to a defined `SpeechEmotionEvent` via the `expression_map.yaml` mapping table, with no silent gaps. The payload carries both `emotion` (resolved name) and `raw_tag` + `resolved_fallback` (audit trail).
+- **FR21**: The pipeline can resolve unmapped emotion tags through a fallback family table, producing a defined `SpeechEmotionEvent` with a logged warning.
+- **FR22**: The pipeline can attach `SpeechEmotionEvent` and `VocalizationEvent` metadata to the matching Cartesia audio frame, ensuring audio-anchored events publish in lockstep with audio.
+- **FR23**: The pipeline can publish `SpeechEmotionEvent` and `VocalizationEvent` to the configured `/olaf/speech_emotion` and `/olaf/vocalization` topics, anchored to audio frame send time, achieving 30-80ms anticipatory alignment with voice.
+- **FR24**: The pipeline can suppress republishing of unchanged base emotions via a "last published" cache scoped per-turn, while always publishing vocalization events.
+- **FR25**: The pipeline can strip Cartesia-unsupported vocalization tags from the TTS stream while still publishing them as `VocalizationEvent` to the broadcast channel.
 
-**Lifecycle State Management**
+**Activity FSM (lifecycle)**
 
-- **FR26**: The pipeline can publish `LifecycleEvent` (SLEEPING, LISTENING, THINKING, SPEAKING, IDLE) to the configured lifecycle broadcast channel at conversation milestones.
-- **FR27**: The pipeline can transition between lifecycle states based on observable events: wake-word detection, end-of-speech, first audio frame, last audio frame, idle timeout.
-- **FR28**: The pipeline can transition from IDLE to SLEEPING after a configurable idle timeout (default: 5 minutes).
-- **FR29**: The pipeline can transition from SPEAKING to LISTENING directly on barge-in detection, bypassing THINKING.
-- **FR30**: The pipeline can flush in-flight expression events on barge-in to prevent the consumer being stuck on a half-finished pose.
+- **FR26**: The pipeline can publish `ActivityEvent` (`starting, sleeping, waking, listening, working, speaking, going_to_sleep`) to the configured `/olaf/activity` topic on every state transition. The `working` state has v1 sub-modes `thinking` (Talker reasoning in-pipeline) and `delegating` (orchestrator dispatched, awaiting response).
+- **FR27**: The pipeline can transition between activity states based on observable events: wake-word detection (`sleeping → waking`), end-of-speech (`listening → working`), first audio frame (`working → speaking`), last audio frame (`speaking → listening` or `speaking → going_to_sleep` on deferred sleep), Talker `go_to_sleep()` tool-call.
+- **FR28** *(REMOVED)*: ~~The pipeline can transition from IDLE to SLEEPING after a configurable idle timeout.~~ Idle auto-sleep removed in 2026-05-06 direction shift; sleep is intent-only via Talker `go_to_sleep()` tool. Optional configurable idle auto-sleep is v1.5 backlog.
+- **FR29** *(deferred to v1.5)*: The pipeline can transition from `speaking → listening` directly on barge-in detection, bypassing the deferred-sleep path.
+- **FR30** *(deferred to v1.5)*: The pipeline can flush in-flight `speech_emotion` + `vocalization` events on barge-in to prevent the consumer being stuck on a half-finished pose.
+
+**Wake/Sleep & Tool-Use** *(new in 2026-05-06 direction shift)*
+
+- **FR44**: The pipeline can generate a 2–8 word mood-tinted wake greeting via Talker greeting-mode on every `sleeping → waking` transition. Greeting must complete within 800 ms; on timeout/error/overlong-response, fall back to a static list (`["hey", "yeah?", "hi"]` default).
+- **FR45**: The pipeline can expose a Talker tool registry (`go_to_sleep`, `set_mood`) with typed Pydantic input schemas validated before execution. Invalid tool calls log WARN and are dropped without side effects. Tool calls execute concurrently with text emission (text-first ordering preserved).
+- **FR46**: The pipeline can defer the `speaking → going_to_sleep → sleeping` transition until after the acknowledgement audio finishes when Talker fires `go_to_sleep()`, so the goodbye is heard before the mic mode flips back to wake-word-only.
+- **FR47**: The pipeline can keep the mic stream continuously open while AWAKE — wake-word fires only on `sleeping → waking` transition. The audio transport flips between `wake_word_only` mode (Porcupine engaged, VAD/STT suspended) and `vad_stt` mode (VAD + STT engaged, Porcupine suspended) on FSM mic-mode signals. Single audio source; no parallel-listener architecture.
+
+**Mood Control** *(new in 2026-05-06 direction shift)*
+
+- **FR48**: The pipeline can maintain a discrete mood state (~6–8 enum values) updated by Talker via the `set_mood(mood)` tool. Initial mood at startup is `"calm"`. v1 lifetime is single-process (cross-restart persistence is v1.5 backlog).
+- **FR49**: The pipeline can enforce a mood publish cooldown of ≤ 4 publishes per hour (NFR31) at the `MoodController.set()` boundary. Over-rate `set_mood` calls drop with WARN; in-process mood state is updated only on successful publish.
+- **FR50**: The pipeline can publish `MoodEvent` to the configured `/olaf/mood` topic with latched / transient_local QoS, so subscribers learn the current mood immediately on connect.
+
+**Event Publishing & Channels** *(new in 2026-05-06 direction shift)*
+
+- **FR51**: The pipeline can publish on four typed ROS 2 topics (`/olaf/mood`, `/olaf/activity`, `/olaf/speech_emotion`, `/olaf/vocalization`), each with the appropriate QoS profile (latched/transient_local for `mood` + `activity`; volatile depth=8 for `speech_emotion` + `vocalization`).
+- **FR52**: The pipeline can serialize every event with a common `EventEnvelope` carrying `timestamp` (UTC ISO8601), `schema_version` (currently 2), `source` (`"voice_agent_pipeline"`), `correlation_id` (UUID), and `payload` (topic-specific Pydantic model). Per CLAUDE.md rule 6: bump `schema_version` only on breaking changes; additive field changes are forward-compat.
+- **FR53**: The pipeline can produce events with `schema_version=2` (bumped from 1 in the 2026-05-06 topology change away from a single `/olaf/expression` channel).
 
 **Configuration & Operations**
 
@@ -104,7 +150,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 ### NonFunctional Requirements
 
-> v1 active set: 20 NFRs. v2-deferred NFRs (NFR9, NFR14–NFR20, NFR22) are intentionally omitted.
+> v1 active set: 23 NFRs. v2-deferred NFRs (NFR9, NFR14–NFR20, NFR22) are intentionally omitted.
 
 **Performance**
 
@@ -112,9 +158,11 @@ This document provides the complete epic and story breakdown for the **voice-age
 - **NFR2**: Complex-turn end-to-end latency (end-of-speech → first narration audio frame) must be ≤ 1000ms at p95.
 - **NFR3**: On-device STT latency (end-of-speech → transcript ready) must be ≤ 500ms at p95. v1 measures on host CPU/GPU (faster-whisper); Hailo-accelerated p95 is a v2 target.
 - **NFR4**: Cartesia TTS latency (text-with-tags → first audio frame) must be ≤ 400ms at p95.
-- **NFR5**: Voice/embodiment alignment must be 30–80ms anticipatory at p95; outside this window is a defect.
+- **NFR5**: Voice / `speech_emotion` alignment must be 30–80ms anticipatory at p95; outside this window is a defect. (`mood` and `activity` events are FSM-driven, not audio-anchored — no alignment requirement.)
 - **NFR6**: Audio playback must not introduce buffering pauses > 100ms during a single utterance.
 - **NFR7**: `SIGHUP`-triggered config reload must complete within 1 second from signal receipt.
+- **NFR30**: Wake-greeting end-to-end latency (`sleeping → waking` transition → first audio frame of greeting) must be ≤ 800 ms at p95, including fallback to the static list when Talker greeting mode times out / errors / over-runs the 8-word cap.
+- **NFR32**: Talker tool-call dispatch overhead (Talker emit `tool_calls` → side-effect-complete in `ActivityFSM` / `MoodController`) must not block text emission; dispatch p95 < 50 ms measured against in-process side effects.
 
 **Reliability**
 
@@ -124,9 +172,13 @@ This document provides the complete epic and story breakdown for the **voice-age
 - **NFR12**: Wake-word false-positive rate must be ≤ 1 per hour of typical household ambient (TV, conversation, kitchen sounds) at the production threshold.
 - **NFR13**: Wake-word false-negative rate must be ≤ 5% in normal speaking conditions at the production threshold.
 
+**Mood Cadence**
+
+- **NFR31**: `MoodEvent` publishes must occur at a rate ≤ 4 per hour (sliding 60-minute window) per process. Cooldown is enforced at the `MoodController.set()` boundary; over-rate `set_mood` calls drop with WARN. In-process mood state is not updated until the publish succeeds.
+
 **Integration Reliability**
 
-- **NFR21**: Broadcast publishing on the configured expression and lifecycle channels must use reliable delivery (RELIABLE QoS for ROS 2 / DDS in v1).
+- **NFR21**: Broadcast publishing on all four configured topics (`mood`, `activity`, `speech_emotion`, `vocalization`) must use reliable delivery (RELIABLE QoS for ROS 2 / DDS in v1) with per-topic QoS profiles: latched / transient_local for `mood` + `activity`; volatile depth=8 for `speech_emotion` + `vocalization`.
 
 **Security**
 
@@ -136,8 +188,8 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **Maintainability**
 
-- **NFR26**: PRD, brief, distillate, and architecture are the canonical specs. Any implementation decision deviating from them must update the relevant document in the same change.
-- **NFR27**: Configuration schemas (`expression_map.yaml`, `setup.toml`) and event schemas (`ExpressionEvent`, `LifecycleEvent`) must be versioned with an integer `schema_version` field; the pipeline must reject incompatible versions at startup.
+- **NFR26**: PRD, brief, distillate, and architecture are the canonical specs (the four-document set governed by CLAUDE.md rule 9). Any implementation decision deviating from them must update the relevant document(s) in the same change.
+- **NFR27**: Configuration schemas (`expression_map.yaml`, `setup.toml`) and event schemas (`MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent` — all sharing the common `EventEnvelope`) must be versioned with an integer `schema_version` field; the pipeline must reject incompatible versions at startup. Current event schema version is **2** (bumped from 1 in the 2026-05-06 topology change away from a single `/olaf/expression` channel).
 - **NFR28**: Components within the pipeline (wake-word, STT, Talker, splitter, TTS, publisher) must be independently testable — each can be exercised in isolation with mock or synthetic inputs at its Protocol seam.
 - **NFR29**: Logs must be machine-readable JSON to enable post-hoc analysis without manual parsing.
 
@@ -147,9 +199,9 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **Project bootstrap (Architecture §"Selected Starter" + §"First Implementation Priority"):**
 
-- Initialize project via `uv init voice-agent-pipeline --python 3.12` with the documented dependency set: `pipecat-ai[local]`, `anthropic`, `cartesia`, `httpx`, `httpx-sse`, `pvporcupine`, `faster-whisper`, `pydantic`, `pydantic-settings`, `structlog`, dev: `ruff`, `pyright`, `pytest`, `pytest-asyncio`.
+- Initialize project via `uv init voice-agent-pipeline --python 3.12` with the documented dependency set: `pipecat-ai[local]`, `openai` (provider-agnostic Talker via openai-compatible endpoints — Story 2.2), `cartesia`, `httpx`, `httpx-sse`, `pvporcupine`, `faster-whisper`, `pydantic`, `pydantic-settings`, `structlog`, dev: `ruff`, `pyright`, `pytest`, `pytest-asyncio`.
 - `rclpy` is installed via system ROS 2 distro (e.g., `ros-jazzy-rclpy`), exposed to the venv via PYTHONPATH; documented in README.
-- Project layout follows the documented module-by-domain tree (`src/voice_agent_pipeline/{audio,stt,turn,tts,splitter,publisher,lifecycle,config,logging,schemas}` + `tests/{unit,integration,contract}`).
+- Project layout follows the documented module-by-domain tree (`src/voice_agent_pipeline/{audio,stt,turn,tts,splitter,publisher,activity,mood,config,logging,schemas}` + `tests/{unit,integration,contract}`). The `lifecycle/` package is renamed to `activity/` in Story 4.3; the `mood/` package and `turn/tools.py` module are added in Stories 3.6 and 4.4 respectively.
 - Committed root files: `pyproject.toml`, `uv.lock`, `justfile`, `setup.toml`, `expression_map.yaml`, `.env.example`, `.gitignore`, `README.md`, `CLAUDE.md`, `.python-version`.
 - Gitignored: `.env`, `./logs/`, `.venv/`.
 - `justfile` recipes: `run`, `check`, `test`, `reload`, `lint`, `format`.
@@ -159,31 +211,34 @@ This document provides the complete epic and story breakdown for the **voice-age
 - `snake_case` everywhere keys are written (Python, TOML, YAML, JSON payload, DDS field names, log keys).
 - `typing.Protocol` for interfaces (no `abc.ABC`); pydantic v2 `BaseModel` for events/config/data; `typing.Literal` for fixed string sets (no `enum.Enum`); `@dataclass(frozen=True)` only for internal trivial structs.
 - `pyright` strict for `src/`, basic for `tests/`. No `Any` outside the documented `payload: dict[str, Any]` extensibility seam.
-- Custom exception hierarchy in `errors.py` (`VoiceAgentError` root → `ConfigError`, `SchemaVersionError`, `StartupValidationError`, `ExternalServiceError` + subclasses, `PublisherError`, `SplitterError`).
+- Custom exception hierarchy in `errors.py` (`VoiceAgentError` root → `ConfigError`, `SchemaVersionError`, `StartupValidationError`, `ExternalServiceError` + subclasses (`CartesiaError`, `TalkerError`, `OrchestratorError`), `PublisherError`, `SplitterError`).
 - `just check` runs ruff + pyright + `pytest tests/unit`; AI partner runs this pre-commit; failures block.
 
 **Wake-word asset (Architecture §"Audio + STT Pipeline"):**
 
 - Custom Picovoice Porcupine wake-word phrase trained via Picovoice console; `.ppn` file committed to `models/wakeword/hey_olaf.ppn`.
-- `PICOVOICE_ACCESS_KEY` added to `.env.example` and validated at startup alongside `CARTESIA_API_KEY` and `ANTHROPIC_API_KEY`.
+- `PICOVOICE_ACCESS_KEY` added to `.env.example` and validated at startup alongside `CARTESIA_API_KEY` and the active Talker provider key (one of `OPENAI_API_KEY` / `GROQ_API_KEY` / `GEMINI_API_KEY` per `[talker] provider`).
 
 **v1 fail-fast posture (Architecture §"V1 Posture"):**
 
-- Startup validates: Cartesia API key + reachable, Anthropic API key + reachable, Picovoice access key valid, orchestrator daemon reachable + `GET /health` 200, broadcast bus connection established (expression + lifecycle channels), audio devices resolvable by name.
+- Startup validates: Cartesia API key + reachable, active Talker provider's API key + reachable (one of OpenAI / Groq / Gemini per `setup.toml`), Picovoice access key valid, orchestrator daemon reachable + `GET /health` 200, `EventPublisher` initialized with all four topic publishers (`mood`, `activity`, `speech_emotion`, `vocalization`), audio devices resolvable by name, Talker tool registry loadable + validates against typed Pydantic input schemas.
 - Any failure → process refuses to start with a clear error.
 - At runtime, external-service failures crash the process; systemd restarts. **No retry, no in-process recovery, no partial-mode fallbacks in v1.**
 
 **Architectural seams (Architecture §"Internal seams"):**
 
-- Six Protocol seams must be defined: `STTBackend`, `TalkerClient`, `OrchestratorClient`, `BeliefStateClient`, `TTSClient`, `ExpressionPublisher`.
+- Seven Protocol seams must be defined: `STTBackend`, `TalkerClient`, `ToolRegistry`, `OrchestratorClient`, `BeliefStateClient`, `TTSClient`, `EventPublisher`.
 - Each external library is imported in **exactly one file** (boundary concentration rule).
-- v1 ships **one** `ExpressionPublisher` implementation: `Ros2ExpressionPublisher`, using `std_msgs/String + JSON`-encoded payload (no custom `.msg` package in v1).
+- v1 ships **two** `EventPublisher` implementations: `Ros2EventPublisher` (production; four publishers + per-topic QoS + `std_msgs/String` + JSON-encoded `EventEnvelope`) and `LogEventPublisher` (in-memory adapter for tests + pre-Epic-3 dev). No custom ROS 2 `.msg` package in v1.
 
 **Event schemas (Architecture §"Publisher Contract + Event Schemas"):**
 
-- `ExpressionEvent` (frozen pydantic v2): `schema_version`, `event_type="expression"`, `emotion`, `source_tag`, `audio_frame_id`, `timestamp_ns`, open `payload: dict[str, Any]`.
-- `LifecycleEvent` (frozen pydantic v2): `schema_version`, `event_type="lifecycle"`, `state` (Literal of 5 states), `timestamp_ns`, open `payload`.
-- DDS wire format: `std_msgs/String` with the entire event JSON-encoded.
+- `EventEnvelope` mixin (frozen pydantic v2): `schema_version: int = 2`, `timestamp: datetime` (UTC ISO8601 on the wire), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload: <topic-specific BaseModel>`.
+- `MoodEvent` — `payload: MoodPayload(mood: Mood, reason: str | None)`. `Mood` is a `Literal[...]` of 6–8 values defined in `mood/state.py`.
+- `ActivityEvent` — `payload: ActivityPayload(state: ActivityState, working_submode: WorkingSubmode | None, transition_reason: str | None, from_state: ActivityState | None)`. `ActivityState` is the 7-value Literal; `WorkingSubmode = Literal["thinking", "delegating"]`.
+- `SpeechEmotionEvent` — `payload: SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str | None, raw_tag: str, resolved_fallback: str | None, expression_data: dict[str, Any])`. `expression_data` is the open extensibility seam (forward-compat for `expression_map.yaml` payload additions).
+- `VocalizationEvent` — `payload: VocalizationPayload(tag: str, audio_frame_id: str | None, tts_supported: bool)`.
+- DDS wire format: `std_msgs/String` per topic, body is the full `EventEnvelope` JSON-encoded as a single string.
 
 **External clients (Architecture §"External Clients"):**
 
@@ -205,8 +260,8 @@ This document provides the complete epic and story breakdown for the **voice-age
 **Test infrastructure (Architecture §"Test Patterns"):**
 
 - `tests/unit/` mirrors `src/` exactly; one behavior per test; mock only at Protocol boundaries.
-- `tests/integration/` runs the full Pipecat pipeline with Protocol mocks for external services; covers all 5 PRD journeys.
-- `tests/contract/` verifies pydantic ↔ JSON ↔ DDS round-trip stability and `schema_version` rejection.
+- `tests/integration/` runs the full Pipecat pipeline with Protocol mocks for external services; covers v1's 7 active PRD journeys (J1 wake-greeting, J2 simple turn, J3 complex turn, J4 intent-sleep, J5 coherent mood, J7 unmapped emotion, J8 SIGHUP). J6 (barge-in) is v1.5 backlog.
+- `tests/contract/` verifies pydantic ↔ JSON ↔ DDS round-trip stability and `schema_version=2` rejection across all four event types.
 - `pytest-asyncio` for async tests; `conftest.py` for shared fixtures.
 
 **Deployment (Architecture §"Operations: systemd"):**
@@ -231,45 +286,55 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 |---|---|---|
 | FR1 (wake-word) | Epic 1 | Picovoice Porcupine + custom `.ppn` |
 | FR2 (capture on VAD end-of-speech) | Epic 1 | Silero VAD + LocalAudioTransport input |
-| FR3 (audio playback, no buffering pause) | Epic 2 | First time speaker output is wired |
+| FR3 (audio playback, no buffering pause) | Epic 2 | Speaker output wired Epic 2 |
 | FR4 (audio devices by stable name) | Epic 1 (mic) → Epic 2 (speaker) | `resolve_audio_devices()` name-regex pattern established Epic 1, extended Epic 2 |
-| FR5 (barge-in detection) | Epic 5 | VAD-during-SPEAKING + sustained-voice threshold |
+| FR5 (barge-in detection) | **v1.5 backlog** | VAD-during-SPEAKING + sustained-voice threshold; deferred from Epic 5 in 2026-05-06 direction shift |
 | FR6 (on-device STT) | Epic 1 | `WhisperBackend` (faster-whisper, CPU/GPU as available) |
 | FR8 (transcript confidence + clarification routing) | Epic 1 | Low-confidence escape hatch |
-| FR9 (Talker vs orchestrator routing) | Epic 2 (Talker-only) → Epic 4 (full fast/slow) | TurnRouter routes everything to Talker until Epic 4 wires orchestrator |
-| FR10 (belief-state read) | Epic 4 | `BeliefStateClient` per-turn `GET /beliefs?keys=...`, no cache |
-| FR11 (orchestrator dispatch + SSE consume) | Epic 4 | `OrchestratorClient` httpx + httpx-sse |
-| FR12 (Talker fast-path emits Cartesia-tagged text) | Epic 2 (basic Talker, no belief, no SSML) → Epic 3 (Talker prompt updated to emit SSML) → Epic 4 (belief-state grounding) | Progressive enrichment of the same FR |
-| FR14 (missing `turn_end` recovery) | Epic 4 | Splitter flush + lifecycle transition after last frame |
-| FR15 (Cartesia streaming) | Epic 2 | `CartesiaClient` |
+| FR9 (Talker vs orchestrator routing) | Epic 2 (Talker-only) → Epic 4 (slow-path wired) | Routing logic landed in Story 2.4; Epic 4.7 wires the orchestrator branch and removes the `NotImplementedError` stub |
+| FR10 (belief-state read) | Epic 4 | `BeliefStateClient` per-turn `GET /beliefs?keys=...`, no cache (Story 4.1) |
+| FR11 (orchestrator dispatch + SSE consume) | Epic 4 | `OrchestratorClient` httpx + httpx-sse (Story 4.2) |
+| FR12 (Talker emits Cartesia-tagged text + greeting mode) | Epic 2 (basic Talker, no SSML, no tools) → Epic 3 (SSML prompt) → Epic 4 (tool-using + greeting mode + belief grounding) | Progressive enrichment across Stories 2.2 / 3.7 / 4.4 / 4.5 |
+| FR14 (missing `turn_end` recovery) | Epic 4 | Splitter flush + activity FSM transition after last frame (Story 4.7) |
+| FR15 (Cartesia streaming) | Epic 2 | `CartesiaClient` (Story 2.3) |
 | FR17 (configurable voice ID + default emotion) | Epic 2 | `setup.toml` `[tts]` |
-| FR18 (streaming SSML parser, token-by-token) | Epic 3 | Hand-rolled state machine ~50–100 LOC |
-| FR19 (segment on sentence/emotion/burst boundary) | Epic 3 | Segmenter |
-| FR20 (every Cartesia tag mapped, no silent gaps) | Epic 3 | `expression_map.yaml` full primary + secondary + family fallback |
-| FR21 (unmapped → fallback family) | Epic 3 | Resolver + WARN log |
-| FR22 (attach `ExpressionEvent` to audio frame) | Epic 3 | Extend `AudioRawFrame` metadata |
-| FR23 (publish on configured expression channel) | Epic 3 | `Ros2ExpressionPublisher` (std_msgs/String + JSON) |
-| FR24 (last-published cache, dedup base emotions) | Epic 3 | Burst events always publish |
-| FR25 (strip burst from TTS, publish to bus) | Epic 3 | Splitter responsibility |
-| FR26 (publish `LifecycleEvent` on lifecycle channel) | Epic 4 | First time lifecycle is broadcast |
-| FR27 (lifecycle transitions on observable events) | Epic 4 | State machine |
-| FR28 (IDLE → SLEEPING after timeout) | Epic 4 | Configurable, default 5min |
-| FR29 (SPEAKING → LISTENING on barge-in, bypass THINKING) | Epic 5 | New transition path |
-| FR30 (flush in-flight expression events on barge-in) | Epic 5 | Splitter + DELETE `/turn/{id}` |
-| FR31 (config schema validation, refuse-to-start on bad) | Epic 1 (`setup.toml` + `.env`) → Epic 3 (`expression_map.yaml` validation) | Pattern established Epic 1 |
-| FR32 (SIGHUP atomic swap of `expression_map.yaml`) | Epic 5 | Atomic in-memory swap, rollback on validation fail |
-| FR33 (defer mid-utterance reload) | Epic 5 | Pair with FR32 |
-| FR34 (load creds from `.env`, never inlined or logged) | Epic 1 (Picovoice) → Epic 2 (Anthropic + Cartesia) | Each epic adds the keys it needs |
-| FR35 (refuse non-localhost orchestrator without secret) | Epic 5 | Startup validation rule |
-| FR36 (systemd service, restart-on-failure) | Epic 5 | `deploy/systemd/voice-agent-pipeline.service` |
-| FR37 (structured JSON logs at INFO/WARN/ERROR) | Epic 1 | Pattern established; events grow per epic |
-| FR38 (log unmapped tags w/ fallback) | Epic 3 | DEBUG on first occurrence, WARN if completely unknown |
-| FR39 (no raw audio in logs, transcripts DEBUG-only) | Epic 1 | Redaction processor + level discipline from day 1 |
-| FR40 (log rotation, configurable retention) | Epic 5 | RotatingFileHandler config |
+| FR18 (streaming SSML parser, token-by-token) | Epic 3 | Hand-rolled state machine ~50–100 LOC (Story 3.3) |
+| FR19 (segment on sentence/emotion/vocalization boundary) | Epic 3 | Segmenter emits two distinct event paths (`speech_emotion` + `vocalization`) |
+| FR20 (every Cartesia tag mapped, no silent gaps) | Epic 3 | `expression_map.yaml` full primary + secondary + family fallback → `SpeechEmotionPayload` (Stories 3.1 + 3.2) |
+| FR21 (unmapped → fallback family) | Epic 3 | Resolver + WARN log (Story 3.2) |
+| FR22 (attach speech_emotion + vocalization metadata to audio frame) | Epic 3 | Extend `AudioRawFrame` with two distinct metadata slots (Story 3.7) |
+| FR23 (publish on configured speech_emotion + vocalization topics) | Epic 3 | `Ros2EventPublisher` per-topic publishers (Story 3.5 + audio-anchored publish in 3.7) |
+| FR24 (last-published cache, dedup base emotions) | Epic 3 | Per-turn scope; vocalization events always publish (Story 3.2) |
+| FR25 (strip Cartesia-unsupported vocalization tags from TTS) | Epic 3 | Splitter responsibility (Story 3.3) |
+| FR26 (publish `ActivityEvent` on activity topic) | Epic 4 | First time activity FSM is broadcast (Story 4.3) |
+| FR27 (activity transitions on observable events) | Epic 4 | 7-state FSM with `working` sub-modes (Story 4.3); deferred-sleep scheduler same story |
+| FR28 (~~IDLE → SLEEPING after timeout~~) | **REMOVED** | Idle auto-sleep removed in 2026-05-06 direction shift; sleep is intent-only via Talker `go_to_sleep()` tool |
+| FR29 (speaking → listening on barge-in) | **v1.5 backlog** | New transition path; deferred from Epic 5 |
+| FR30 (flush in-flight events on barge-in) | **v1.5 backlog** | Splitter flush + DELETE `/turn/{id}`; deferred from Epic 5 |
+| FR31 (config schema validation, refuse-to-start on bad) | Epic 1 (`setup.toml` + `.env`) → Epic 3 (`expression_map.yaml` validation) | Pattern established Epic 1 (Story 1.2); extended Epic 3 (Story 3.1) |
+| FR32 (SIGHUP atomic swap of `expression_map.yaml`) | Epic 5 | Atomic in-memory swap, rollback on validation fail (Story 5.1) |
+| FR33 (defer mid-utterance reload) | Epic 5 | Pair with FR32 (Story 5.1) |
+| FR34 (load creds from `.env`, never inlined or logged) | Epic 1 (Picovoice) → Epic 2 (Talker provider key + Cartesia) | Each epic adds the keys it needs |
+| FR35 (refuse non-localhost orchestrator without secret) | Epic 5 | Startup validation rule (Story 5.2) |
+| FR36 (systemd service, restart-on-failure) | Epic 5 | `deploy/systemd/voice-agent-pipeline.service` (Story 5.3) |
+| FR37 (structured JSON logs at INFO/WARN/ERROR) | Epic 1 | Pattern established Story 1.3; events grow per epic |
+| FR38 (log unmapped tags w/ fallback) | Epic 3 | DEBUG on first occurrence, WARN if completely unknown (Story 3.2) |
+| FR39 (no raw audio in logs, transcripts DEBUG-only) | Epic 1 | Redaction processor + level discipline from Story 1.3 |
+| FR40 (log rotation, configurable retention) | Epic 5 | RotatingFileHandler config (Story 5.2) |
 | FR42 (no audio/transcript persistence) | Epic 1 | Architectural property, true from day 1 |
 | FR43 (no telemetry beyond configured deps) | Epic 1 | Architectural property, true from day 1 |
+| FR44 (mood-tinted wake greeting, 800ms timeout, fallback list) | Epic 4 | `talker.greet()` + `activity/greeting.trigger_greeting()` (Story 4.5) |
+| FR45 (Talker tool registry — `go_to_sleep`, `set_mood` — typed Pydantic input validation) | Epic 4 | `turn/tools.py` + Talker tool-using upgrade (Story 4.4) |
+| FR46 (deferred-sleep transition after last audio frame) | Epic 4 | FSM `sleep_pending` flag + last-frame trigger (Story 4.3 logic + Story 4.4 tool dispatch) |
+| FR47 (continuous mic capture while AWAKE; mic-mode flip on FSM signal) | Epic 4 | `audio/transport.py` mic-mode router (Story 4.6); FSM signal source (Story 4.3) |
+| FR48 (mood enum + Talker `set_mood` tool integration) | Epic 3 (mood module + cooldown) → Epic 4 (Talker tool wiring) | `mood/state.py` Story 3.6; tool registry Story 4.4 |
+| FR49 (mood publish cooldown ≤4/hr at controller boundary) | Epic 3 | `MoodController.set()` boundary check (Story 3.6) |
+| FR50 (publish `MoodEvent` on /olaf/mood with latched QoS) | Epic 3 | Latched / transient_local QoS (Story 3.5 publisher impl + 3.6 controller) |
+| FR51 (four typed ROS 2 topics with per-topic QoS) | Epic 3 | `Ros2EventPublisher` four publishers + per-topic QoS (Story 3.5) |
+| FR52 (common `EventEnvelope` across topics) | Epic 3 | `schemas/envelope.py` + four event types (Story 3.4) |
+| FR53 (`schema_version=2` bump) | Epic 3 | Bumped from 1 in event schema rebuild (Story 3.4) |
 
-**Coverage check:** all 39 v1-active FRs mapped. v2-deferred FRs (FR7, FR13, FR16, FR41) intentionally absent.
+**Coverage check:** all 49 v1-active FRs mapped. FR5 + FR29 + FR30 deferred to v1.5 (tracked in `## v1.5 Backlog (Post-v1)`). FR28 removed. FR7, FR13, FR16, FR41 intentionally absent (v2 deferred).
 
 ## Epic List
 
@@ -317,75 +382,76 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 
 ---
 
-### Epic 3: Embodiment Channel — emotion in lockstep with voice
+### Epic 3: Embodiment Channel — four typed event topics + mood
 
-**Goal:** Talker emits Cartesia SSML tags. The streaming splitter parses them, segments output on boundaries, attaches `ExpressionEvent` metadata to the matching audio frame, and `Ros2ExpressionPublisher` broadcasts the events with 30–80ms anticipatory alignment. Full Cartesia tag → expression mapping with no silent gaps.
+**Goal:** Talker emits Cartesia SSML tags. The streaming splitter parses them and segments along sentence / emotion / vocalization boundaries; segments anchor to audio frames; `Ros2EventPublisher` broadcasts on four typed topics — `mood` (latched, slow-cadence), `activity` (FSM-driven, latched — wired Epic 4), `speech_emotion` (audio-anchored, volatile), `vocalization` (audio-anchored, volatile) — sharing a common envelope with `schema_version=2`. Full Cartesia tag → `speech_emotion` mapping with no silent gaps. Mood module ships with publisher-boundary cooldown enforcement (≤4/hr, NFR31).
 
-**User outcome:** OLAF's voice now carries emotion. With any embodiment subscriber on the bus (or a stdout test consumer), expression events arrive in lockstep with audio. Adding a new emotion is a YAML edit (no code touchpoints — the architectural extensibility test).
+**User outcome:** OLAF's voice now carries emotion. Subscribers on the bus see four distinct event topics in lockstep with audio (speech_emotion + vocalization) or on transition (mood + activity, the latter wired in Epic 4). Adding a new `speech_emotion` is a YAML edit (no code touchpoints — the architectural extensibility test).
 
 **What's built:**
 
 - Streaming SSML state machine (`splitter/state_machine.py`, ~50–100 LOC, hand-rolled, zero-dep).
-- Segmenter: boundary-based emission (sentence terminator / emotion tag / burst tag).
-- Mapping resolver: full primary (6) + secondary (6) + fallback family table covering all 60+ Cartesia tags + `unknown → neutral`.
-- Last-published cache for base-emotion dedup; bursts always publish.
-- Burst stripping: removed from TTS stream, still emitted as `ExpressionEvent`.
-- Audio-frame metadata threading: extend Pipecat's `AudioRawFrame` with optional `expression_event` metadata; transport reads on send and calls `ExpressionPublisher.publish_expression()`.
-- `ExpressionPublisher` Protocol implementation: `Ros2ExpressionPublisher` using `std_msgs/String` + JSON-encoded payload, RELIABLE QoS.
-- `expression_map.yaml` ships with full mapping; loaded at startup, schema-validated (extends FR31).
+- Segmenter: boundary-based emission with two distinct event paths — `speech_emotion` (on emotion tag boundary) and `vocalization` (on vocalization tag boundary).
+- Mapping resolver: full primary (6) + secondary (6) + fallback family table covering all 60+ Cartesia tags + `unknown → neutral`. Returns `SpeechEmotionPayload`.
+- Last-published cache for `speech_emotion` dedup, scoped per-turn; vocalizations always publish.
+- Vocalization-tag stripping: Cartesia-supported tags pass through to TTS; unsupported tags stripped from text but still published as `VocalizationEvent`.
+- Audio-frame metadata threading: extend Pipecat's `AudioRawFrame` with optional `speech_emotion_event` AND `vocalization_event` metadata (two distinct slots); transport reads on send and calls the corresponding `EventPublisher.publish_*` method.
+- **NEW: Event schema rebuild** — `schemas/envelope.py` (`EventEnvelope` mixin) + four `<topic>_event.py` files (`mood_event`, `activity_event`, `speech_emotion_event`, `vocalization_event`). `schema_version=2`. Replaces placeholder `expression_event.py` + `lifecycle_event.py`.
+- **NEW: `EventPublisher` Protocol + Implementations** — Protocol with four publish methods + connect/disconnect/health. `Ros2EventPublisher` (four publishers, per-topic QoS, `std_msgs/String` + JSON envelope). `LogEventPublisher` (in-memory adapter for tests + pre-Epic-3 dev).
+- **NEW: Mood module** — `mood/state.py` (Mood Literal + MoodState; default `"calm"`) + `mood/controller.py` (`MoodController.set()` with ≤4/hr cooldown enforced at publisher boundary; over-rate drops with WARN; in-process state updated only on successful publish).
+- `expression_map.yaml` ships with full mapping; loaded at startup, schema-validated (extends FR31). `schema_version=2` enforced.
 - Talker prompt updated to emit `<emotion value="..."/>` SSML tags.
-- Startup validation extended: broadcast bus connection (expression channel) established or refuse-to-start.
+- Startup validation extended: `EventPublisher` initialized with all four topic publishers; initial `MoodEvent("calm")` published on connect.
 
-**FRs:** FR18, FR19, FR20, FR21, FR22, FR23, FR24, FR25, FR31 (extended with `expression_map.yaml`), FR38, FR12 (extended — Talker now emits SSML)
-**NFRs primarily proven:** NFR5 (30–80ms anticipatory alignment), NFR21 (RELIABLE QoS)
+**FRs:** FR12 (extended — Talker now emits SSML), FR18, FR19, FR20, FR21, FR22, FR23, FR24, FR25, FR31 (extended), FR38, FR48, FR49, FR50, FR51, FR52, FR53
+**NFRs primarily proven:** NFR5 (30–80ms anticipatory alignment for `speech_emotion` + `vocalization`), NFR21 (per-topic QoS), NFR31 (mood cadence cooldown)
 
 ---
 
-### Epic 4: Complex Questions & Lifecycle
+### Epic 4: Activity FSM + Tool-Use + Slow Path
 
-**Goal:** TurnRouter routes complex intents to the orchestrator via SSE; narration plays first, subagent runs, response chunks stream. Belief-state lookup grounds Talker fast-path. LifecycleEvents (SLEEPING/LISTENING/THINKING/SPEAKING/IDLE) publish so subscribers know what OLAF is doing. Missing-`turn_end` cleanup keeps the splitter sane.
+**Goal:** Build the conversation-shaped surface: 7-state activity FSM with deferred-sleep transition + mic-mode signaling; Talker becomes tool-using (`go_to_sleep`, `set_mood`); mood-tinted wake greeting on every wake; continuous mic capture while AWAKE; orchestrator slow-path with belief-state grounding.
 
-**User outcome:** Kamal asks "what's on my calendar today?" — OLAF says "let me check…" within ~1s, runs the comms subagent via the orchestrator, then narrates the result. Lifecycle channel emits state transitions in real time.
+**User outcome:** OLAF wakes with a "hey," follows up without re-saying the wake word, says goodbye on natural language and returns to sleep. Kamal asks "what's on my calendar today?" — OLAF says "let me check…" within ~1s, runs the comms subagent via the orchestrator, then narrates the result. The four-topic `/olaf/activity` channel emits state transitions in real time. Journeys J1, J3, J4, J5 all demonstrable.
 
 **What's built:**
 
-- `OrchestratorClient` (httpx + httpx-sse): `POST /turn` returns SSE; per-turn `httpx.AsyncClient` lifecycle. Dispatch by `type` field; unknown types → log WARN + ignore (forward-compat).
-- `BeliefStateClient` (httpx): per-turn fresh `GET /beliefs?keys=...`, no cache.
-- TurnRouter routing rule (config-driven keyword/regex from `setup.toml`).
+- `BeliefStateClient` (httpx): per-turn fresh `GET /beliefs?keys=...`, no cache (Story 4.1).
+- `OrchestratorClient` (httpx + httpx-sse): `POST /turn` returns SSE; persistent `httpx.AsyncClient`. Dispatch by `type` field; unknown types → log WARN + ignore. `cancel(session_id)` stub raises `NotImplementedError` (wired in v1.5 barge-in) (Story 4.2).
+- **NEW: Activity FSM core** — `activity/states.py` (7-state Literal + `WorkingSubmode` Literal). `activity/machine.py` (sync FSM, transition methods, deferred-sleep scheduler, mic-mode signal emitter, `ActivityEvent` publish on transition). Single-writer rule. Renames `lifecycle/` → `activity/`. (Story 4.3)
+- **NEW: Talker tool-using upgrade** — `turn/tools.py` (`ToolSpec`, `ToolRegistry`, `GoToSleepTool`, `SetMoodTool`). Validation via Pydantic; invalid input → WARN + drop. Extend `TalkerClient` Protocol with `complete_with_tools()` + `greet()`. Wire into `TurnDispatchProcessor` — text emitted **before** tool dispatch returns (FR45 parallel + FR46 deferred-sleep depend on this ordering). (Story 4.4)
+- **NEW: Wake greeting** — `activity/greeting.py:trigger_greeting(mood)` invoked by FSM on `sleeping → waking`. Talker greeting mode with 800 ms timeout + static fallback list. Output via `TalkerResponseFrame` rejoins normal output path. (Story 4.5)
+- **NEW: Mic-mode flip** — `audio/transport.py` consumes FSM mic-mode signals, switches between `wake_word_only` (Porcupine engaged) and `vad_stt` (VAD + STT engaged). Single audio source; no parallel listening. (Story 4.6)
+- **EVOLVED**: TurnRouter slow-path wiring + missing-`turn_end` recovery + complex-turn integration test. Old TurnRouter logic landed in Story 2.4; this story removes the `NotImplementedError` stub, wires `OrchestratorClient.dispatch()`, handles missing `turn_end`, sets `WorkingSubmode="delegating"` during orchestrator dispatch. (Story 4.7)
 - Talker fast-path uses belief state for grounding (extends FR12).
-- Missing-`turn_end` recovery: flush splitter, transition lifecycle after last audio frame.
-- Lifecycle state machine in `lifecycle/machine.py`: `Literal["SLEEPING","LISTENING","THINKING","SPEAKING","IDLE"]` transitions on observable events; `publish_lifecycle()` calls.
-- Idle → Sleeping after configurable idle timeout (default 5min).
-- Startup validation extended: orchestrator daemon reachable + `GET /health` 200 (spec-drift item — orchestrator project must expose `/health`).
-- Startup validation extended: lifecycle broadcast channel established.
+- Startup validation extended: orchestrator daemon reachable + `GET /health` 200 (spec-drift item).
+- Startup validation extended: tool registry loadable + validates against typed Pydantic input schemas.
 
-**FRs:** FR9 (full fast/slow), FR10, FR11, FR12 (extended with belief state), FR14, FR26, FR27, FR28
-**NFRs primarily proven:** NFR2 (complex-turn ≤1000ms p95)
-**Coordination point:** orchestrator project must expose `GET /health`. Story will surface this on the spec-drift list.
+**FRs:** FR9 (slow-path wiring), FR10, FR11, FR12 (extended with belief state + tool-using + greeting mode), FR14, FR26, FR27, FR44, FR45, FR46, FR47
+**NFRs primarily proven:** NFR2 (complex-turn ≤1000ms p95), NFR30 (wake-greeting ≤800ms p95), NFR32 (tool-call dispatch overhead bounded)
+**Coordination point:** orchestrator project must expose `GET /health`. Story 4.2 surfaces this on the spec-drift list.
 
 ---
 
 ### Epic 5: Production Hardening
 
-**Goal:** Make OLAF interruptible, hot-tunable, and durable. Barge-in halts playback and flushes; SIGHUP swaps `expression_map.yaml` atomically with mid-utterance defer; systemd manages the service; logs rotate; LAN orchestrator without a shared secret refuses to start; 7-day soak validates wake-word thresholds against real household ambient.
+**Goal:** Make OLAF hot-tunable and durable. SIGHUP swaps `expression_map.yaml` atomically with mid-utterance defer; systemd manages the service; logs rotate; LAN orchestrator without a shared secret refuses to start; 7-day soak validates wake-word thresholds, intent-sleep FP/FN, mood cadence, and wake-greeting timing against real household ambient. **Interruptibility (barge-in) is the headline v1.5 feature — deferred to keep v1's quality budget on conversation-shape reliability.**
 
-**User outcome:** OLAF is now a service Kamal can leave running. Mid-response interruption works ("Wait, actually—"). Tweaking `excited` pose values is a YAML edit + `kill -HUP` away. The pipeline survives a week of daily use without manual restart.
+**User outcome:** OLAF is now a service Kamal can leave running. Tweaking `excited` pose values is a YAML edit + `kill -HUP` away. The pipeline survives a week of daily use without manual restart. Wake-word thresholds, intent-sleep prompt, and mood cadence are all tuned against real ambient. v1 sign-off complete; release tag cut.
 
 **What's built:**
 
-- Barge-in detection: VAD-during-SPEAKING with sustained-voice threshold to avoid false-fires from OLAF's own audio bleed.
-- SPEAKING → LISTENING bypass on barge-in (no THINKING).
-- In-flight expression event flush + `HTTP DELETE /turn/{session_id}` for orchestrator cancellation.
-- SIGHUP handler in `__main__.py` → `expression_map` atomic swap; rollback on validation failure with line-number error.
+- SIGHUP handler in `__main__.py` → `expression_map` atomic swap; rollback on validation failure with line-number error. (Mood enum, activity state set, tool registry are code-level — not SIGHUP-reloadable.)
 - Mid-utterance reload defer: SIGHUP during turn queues until current turn ends.
 - LAN orchestrator + shared-secret/mTLS validation rule at startup (refuse-to-start with clear error).
 - systemd unit at `deploy/systemd/voice-agent-pipeline.service`: `Type=simple`, `Restart=on-failure`, `RestartSec=5`, `StartLimitInterval=60`, `StartLimitBurst=5`, `WorkingDirectory` pinned, app reads `.env` directly via pydantic-settings.
 - Log rotation: size-based (default 50MB/file), retention 7 days default, configurable in `setup.toml`.
-- Schema versioning enforcement: refuse to load configs/parse events with unsupported `schema_version`.
-- 7-day soak under real household ambient; tune wake-word threshold to NFR12 (≤1 FP/hour) and NFR13 (≤5% FN).
+- Schema versioning enforcement: refuse to load configs/parse events with unsupported `schema_version`. Contract test exercises all four event types.
+- 7-day soak under real household ambient; tune wake-word threshold to NFR12 (≤1 FP/hour) and NFR13 (≤5% FN); tune Talker sleep-intent prompt for FP/FN; verify mood cadence (NFR31) and wake-greeting timing (NFR30); verify J1/J4/J5 journeys end-to-end.
 
-**FRs:** FR5, FR29, FR30, FR32, FR33, FR35, FR36, FR40
-**NFRs primarily proven:** NFR7 (SIGHUP <1s), NFR8 (7-day soak), NFR10 (mal config rollback), NFR11 (USB hot-plug survival), NFR12 (final FP threshold), NFR13 (final FN threshold), NFR27 (schema versioning enforcement)
+**FRs:** FR32, FR33, FR35, FR36, FR40
+**NFRs primarily proven:** NFR7 (SIGHUP <1s), NFR8 (7-day soak), NFR10 (malformed config rollback), NFR11 (USB hot-plug survival), NFR12 (final FP threshold), NFR13 (final FN threshold), NFR27 (schema versioning enforcement, all four event types), NFR30 (wake-greeting timing soak validation), NFR31 (mood cadence soak validation)
+**Deferred to v1.5:** FR5, FR29, FR30 (barge-in cluster) — see `## v1.5 Backlog (Post-v1)`.
 
 ---
 
@@ -880,40 +946,40 @@ So that I can run `just run`, say "Hey OLAF, what time is it?", and hear OLAF re
 
 ---
 
-## Epic 3: Embodiment Channel — emotion in lockstep with voice
+## Epic 3: Embodiment Channel — four typed event topics + mood
 
-**Goal:** Talker emits Cartesia SSML tags; the streaming splitter parses them; segments anchor to audio frames; `Ros2ExpressionPublisher` broadcasts `ExpressionEvent`s on the configured channel with 30–80ms anticipatory alignment. Full Cartesia tag → expression mapping with no silent gaps. The "OLAF feels alive" sprint.
+**Goal:** Talker emits Cartesia SSML tags; the streaming splitter parses them and segments along sentence / emotion / vocalization boundaries; segments anchor to audio frames; `Ros2EventPublisher` broadcasts on four typed topics — `mood` (latched, slow-cadence), `activity` (FSM-driven, latched — wired Epic 4), `speech_emotion` (audio-anchored, volatile), `vocalization` (audio-anchored, volatile) — sharing a common envelope with `schema_version=2`. Full Cartesia tag → `speech_emotion` mapping with no silent gaps. Mood module ships with publisher-boundary cooldown enforcement (≤4/hr, NFR31). The "OLAF feels alive" sprint.
 
 ### Story 3.1: `expression_map.yaml` authoring + loader + schema validation
 
 As Kamal,
-I want a complete `expression_map.yaml` covering all Cartesia emotion tags + bursts plus a pydantic-validated loader that refuses bad maps at startup,
+I want a complete `expression_map.yaml` covering all Cartesia emotion tags + vocalizations plus a pydantic-validated loader that refuses bad maps at startup,
 So that subsequent stories have a typed, complete mapping table to consume — and adding new tags is forever a YAML edit.
 
 **Acceptance Criteria:**
 
 **Given** `expression_map.yaml` at the project root,
 **When** I inspect it,
-**Then** it contains an integer `schema_version`, an `emotions:` block with all 6 primary (`neutral, content, excited, sad, angry, scared`) and 6 secondary (`happy, curious, sympathetic, surprised, frustrated, melancholic`) emotions as first-class entries with full payload (`base_pose`, `eye_state`, `led_color`, `led_intensity` — values negotiated with embodiment but published as opaque `payload`), a `bursts:` block (`laughter, sigh, gasp, clears_throat`), a `fallback_families:` block grouping the remaining 50+ Cartesia tags into 7 families (e.g., `high_energy_positive → excited`, `low_energy_negative → sad`), and an `unknown:` entry mapping to `neutral`.
+**Then** it contains an integer `schema_version: 2`, an `emotions:` block with all 6 primary (`neutral, content, excited, sad, angry, scared`) and 6 secondary (`happy, curious, sympathetic, surprised, frustrated, melancholic`) emotions as first-class entries with full payload (`base_pose`, `eye_state`, `led_color`, `led_intensity` — values negotiated with embodiment but published as opaque `expression_data`), a `vocalizations:` block (`laughter, sigh, gasp, clears_throat`), a `fallback_families:` block grouping the remaining 50+ Cartesia tags into 7 families (e.g., `high_energy_positive → excited`, `low_energy_negative → sad`), and an `unknown:` entry mapping to `neutral`.
 
 **Given** `src/voice_agent_pipeline/config/expression_map.py`,
 **When** I inspect it,
-**Then** `ExpressionMapConfig` is a pydantic v2 model with the full schema (emotions, bursts, fallback_families, unknown, schema_version), `extra="forbid"` on every nested model, and a `load_from_path(path) -> ExpressionMapConfig` function that validates at startup.
+**Then** `ExpressionMapConfig` is a pydantic v2 model with the full schema (emotions, vocalizations, fallback_families, unknown, schema_version), `extra="forbid"` on every nested model, and a `load_from_path(path) -> ExpressionMapConfig` function that validates at startup.
 
 **Given** a malformed `expression_map.yaml` (missing key, wrong type, unknown extra key),
 **When** the pipeline starts,
 **Then** loading raises `ConfigError` with the offending key/path and exits non-zero (FR31 extension).
 
-**Given** an `expression_map.yaml` with an unsupported `schema_version`,
+**Given** an `expression_map.yaml` with `schema_version` ≠ 2,
 **When** the pipeline starts,
-**Then** it raises `SchemaVersionError` (NFR27).
+**Then** it raises `SchemaVersionError` naming the file, the file's version, and the supported version 2 (NFR27).
 
 **Given** a coverage check at startup,
 **When** the loader validates the map,
-**Then** every primary + secondary emotion has a non-empty `payload`; missing payload raises `ConfigError` (FR20 — no silent gaps).
+**Then** every primary + secondary emotion has a non-empty `expression_data` field; missing payload raises `ConfigError` (FR20 — no silent gaps). Note: the YAML key is `expression_data` to match the wire-schema field name on `SpeechEmotionPayload`.
 
 **Given** the architectural extensibility test,
-**When** I add a new entry under `emotions:` (e.g., `serene`) with payload, restart the pipeline, and the LLM emits `<emotion value="serene"/>`,
+**When** I add a new entry under `emotions:` (e.g., `serene`) with `expression_data`, restart the pipeline, and the LLM emits `<emotion value="serene"/>`,
 **Then** the resolver (Story 3.2) finds it as first-class — proven by the unit test in 3.2 covering the new entry. (SIGHUP hot-reload of this same change is Epic 5.)
 
 **Given** unit tests in `tests/unit/config/test_expression_map.py`,
@@ -925,56 +991,56 @@ So that subsequent stories have a typed, complete mapping table to consume — a
 ### Story 3.2: Mapping resolver + last-published cache
 
 As Kamal,
-I want a pure-function resolver that turns any Cartesia tag into an `ExpressionEvent` payload via the loaded mapping with fallback-family resolution,
+I want a pure-function resolver that turns any Cartesia tag into a `SpeechEmotionPayload` via the loaded mapping with fallback-family resolution,
 So that the splitter (Story 3.3) can call one function regardless of whether the tag is primary, secondary, family-fallback, or completely unknown.
 
 **Acceptance Criteria:**
 
 **Given** `src/voice_agent_pipeline/splitter/mapping.py`,
 **When** I inspect it,
-**Then** it exposes `resolve(tag: str, mapping: ExpressionMapConfig) -> ResolvedExpression` returning the resolved emotion name, source tag, and payload dict (FR20, FR21).
+**Then** it exposes `resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload` returning a fully-populated payload with `emotion` (resolved name), `source_tag` (original Cartesia tag), `raw_tag`, `resolved_fallback`, and `expression_data` (FR20, FR21).
 
 **Given** a tag that exists in the `emotions:` block,
 **When** `resolve("excited", mapping)` is called,
-**Then** it returns `ResolvedExpression(emotion="excited", source_tag="excited", payload=<excited payload>)` with no log noise.
+**Then** it returns a payload with `emotion="excited"`, `source_tag="excited"`, `raw_tag="excited"`, `resolved_fallback=None`, `expression_data=<excited expression_data>` — with no log noise.
 
 **Given** a tag in `fallback_families` mapped to a primary,
 **When** `resolve("enthusiastic", mapping)` is called,
-**Then** it returns `ResolvedExpression(emotion="excited", source_tag="enthusiastic", payload=<excited payload>)` and logs `event="emotion.fallback"` at DEBUG level on first occurrence per process (de-duped via in-memory set), per FR38 (DEBUG on first; WARN if completely unknown).
+**Then** it returns a payload with `emotion="excited"`, `source_tag="enthusiastic"`, `raw_tag="enthusiastic"`, `resolved_fallback="high_energy_positive"`, `expression_data=<excited expression_data>` — and logs `event="speech_emotion.fallback"` at DEBUG level on first occurrence per process (de-duped via in-memory set), per FR38.
 
 **Given** a tag truly absent from any family,
 **When** `resolve("neverbeforeseentag", mapping)` is called,
-**Then** it returns `ResolvedExpression(emotion="neutral", source_tag="neverbeforeseentag", payload=<neutral payload>)` and logs `event="emotion.unmapped"` at WARN level (FR38).
+**Then** it returns a payload with `emotion="neutral"`, `source_tag="neverbeforeseentag"`, `resolved_fallback="unknown"`, `expression_data=<neutral expression_data>` — and logs `event="speech_emotion.unmapped"` at WARN level (FR38).
 
 **Given** `LastPublishedCache` in `splitter/mapping.py`,
-**When** the same base emotion (`excited`) resolves twice consecutively without a different emotion intervening,
-**Then** `cache.should_publish(resolved)` returns `True` for the first call and `False` for the second (FR24 dedup).
+**When** the same base emotion (`excited`) resolves twice consecutively within the same turn without a different emotion intervening,
+**Then** `cache.should_publish(resolved)` returns `True` for the first call and `False` for the second (FR24 dedup, scoped per-turn — cache resets at turn boundary).
 
-**Given** burst events,
-**When** a burst (`[laughter]`, `[sigh]`, etc.) is offered to the cache,
-**Then** `cache.should_publish(burst)` always returns `True` (bursts are never deduped, per FR24).
+**Given** vocalization events,
+**When** a vocalization (`[laughter]`, `[sigh]`, etc.) is offered to the cache,
+**Then** `cache.should_publish(vocalization)` always returns `True` (vocalizations are never deduped, per FR24).
 
 **Given** a unit test in `tests/unit/splitter/test_mapping.py`,
-**When** the resolver is exercised against primary, secondary, family-fallback, unknown, and burst inputs,
+**When** the resolver is exercised against primary, secondary, family-fallback, unknown, and vocalization inputs,
 **Then** all expected outputs hold and log assertions match (DEBUG vs WARN per case).
 
 **Given** a unit test for the cache,
-**When** sequences like `[content, content, sad, content, [laughter], [laughter]]` are offered,
-**Then** `should_publish` returns `[T, F, T, T, T, T]` — bursts always publish, base emotions dedup until they change.
+**When** sequences like `[content, content, sad, content, [laughter], [laughter]]` are offered within one turn,
+**Then** `should_publish` returns `[T, F, T, T, T, T]` — vocalizations always publish, base emotions dedup until they change. After turn boundary, the cache resets so a fresh `content` re-publishes.
 
 ---
 
 ### Story 3.3: Streaming SSML state machine + boundary-based segmenter
 
 As Kamal,
-I want a hand-rolled streaming parser that consumes Cartesia-tagged text token-by-token, splits across token boundaries safely, and emits segments on whichever boundary comes first (sentence / emotion-tag / burst),
-So that segments can be handed to TTS and resolver in lockstep without buffering the full response.
+I want a hand-rolled streaming parser that consumes Cartesia-tagged text token-by-token, splits across token boundaries safely, and emits segments on whichever boundary comes first (sentence / emotion-tag / vocalization-tag),
+So that segments can be handed to TTS and the resolver in lockstep without buffering the full response, with two distinct event paths (`speech_emotion` + `vocalization`).
 
 **Acceptance Criteria:**
 
 **Given** `src/voice_agent_pipeline/splitter/state_machine.py`,
 **When** I inspect it,
-**Then** it implements a hand-rolled state machine in ~50–100 LOC, zero external dependencies, parsing `<emotion value="X"/>` tags and `[burst_name]` events from a token stream incrementally (FR18).
+**Then** it implements a hand-rolled state machine in ~50–100 LOC, zero external dependencies, parsing `<emotion value="X"/>` tags and `[vocalization_name]` events from a token stream incrementally (FR18).
 
 **Given** a tag split across two tokens (e.g., `<emoti` then `on value="excited"/>`),
 **When** the state machine consumes the tokens,
@@ -982,19 +1048,23 @@ So that segments can be handed to TTS and resolver in lockstep without buffering
 
 **Given** `src/voice_agent_pipeline/splitter/segmenter.py`,
 **When** the segmenter consumes the state machine's events,
-**Then** it emits a `Segment(text, current_emotion, burst_events)` on whichever boundary comes first: sentence terminator (`.?!`), emotion tag, or burst tag (FR19).
+**Then** it emits a `Segment(text, speech_emotion_payload, vocalization_payloads)` on whichever boundary comes first: sentence terminator (`.?!`), emotion tag, or vocalization tag (FR19). `speech_emotion_payload` is set when the segment crosses an emotion boundary; `vocalization_payloads` is a list of any vocalizations encountered during the segment.
 
 **Given** a stream containing `<emotion value="content"/> Hello there. <emotion value="excited"/> Great news!`,
 **When** segmented,
-**Then** segments emit in order: `Segment(text="Hello there.", current_emotion="content", bursts=[])` then `Segment(text="Great news!", current_emotion="excited", bursts=[])`.
+**Then** segments emit in order: `Segment(text="Hello there.", speech_emotion_payload=<content>, vocalization_payloads=[])` then `Segment(text="Great news!", speech_emotion_payload=<excited>, vocalization_payloads=[])`.
 
-**Given** a stream with `[laughter]` mid-sentence,
+**Given** a stream with `[laughter]` mid-sentence (Cartesia-supported tag),
 **When** segmented,
-**Then** the burst is emitted as a separate event (Story 3.5 attaches it to its audio anchor); the burst tag is **stripped from the text** that goes to TTS (FR25).
+**Then** the vocalization is added to `vocalization_payloads` for that segment; the tag is **kept in the text** going to TTS so Cartesia renders the laugh audio (FR25).
+
+**Given** a stream with `[sigh]` (Cartesia-unsupported tag),
+**When** segmented,
+**Then** the vocalization is added to `vocalization_payloads` for that segment; the tag is **stripped from the text** going to TTS (FR25). The `VocalizationPayload.tts_supported` field reflects `True` for `[laughter]` and `False` for `[sigh]`.
 
 **Given** state across calls,
 **When** the segmenter retains `current_emotion` and `last_published_emotion` (the latter consumed by Story 3.2's cache),
-**Then** the dedup contract (FR24) is satisfied: a segment with no emotion change does not republish its `ExpressionEvent`.
+**Then** the dedup contract (FR24) is satisfied: a segment with no emotion change does not republish its `SpeechEmotionEvent`.
 
 **Given** a malformed tag (e.g., `<emotion value=`),
 **When** the parser encounters end-of-stream without closure,
@@ -1002,53 +1072,95 @@ So that segments can be handed to TTS and resolver in lockstep without buffering
 
 **Given** unit tests in `tests/unit/splitter/test_state_machine.py` and `test_segmenter.py`,
 **When** the suite runs,
-**Then** the following cases pass: token-boundary tag assembly, sentence-terminator emission, mixed sentence+tag+burst, burst stripping from text, malformed tag error, multiple emotion changes in one stream, no-emotion plain-text fallthrough.
+**Then** the following cases pass: token-boundary tag assembly, sentence-terminator emission, mixed sentence+emotion+vocalization, vocalization-keep-in-text vs strip-from-text by `tts_supported`, malformed tag error, multiple emotion changes in one stream, no-emotion plain-text fallthrough, vocalization-only segment with no emotion change.
 
 ---
 
-### Story 3.4: `Ros2ExpressionPublisher` — `std_msgs/String` + JSON over RELIABLE QoS
+### Story 3.4: Event schema rebuild — common envelope + four typed events
 
 As Kamal,
-I want the `ExpressionPublisher` Protocol implemented over ROS 2 / DDS using `std_msgs/String` with the full event JSON-serialized (no custom `.msg` package in v1),
-So that v1 ships an embodiment broadcast channel with zero ament/colcon overhead and any subscriber on the configured topic receives the events.
+I want an `EventEnvelope` mixin and four typed event classes (`MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent`) replacing the placeholder `expression_event.py` + `lifecycle_event.py` from Story 1.4,
+So that subsequent stories (3.5 publisher, 3.6 mood module, 4.3 activity FSM) consume a coherent typed-event surface with `schema_version=2`.
 
 **Acceptance Criteria:**
 
+**Given** `src/voice_agent_pipeline/schemas/envelope.py`,
+**When** I inspect it,
+**Then** it defines `EventEnvelope` as a frozen pydantic v2 BaseModel with `model_config = ConfigDict(frozen=True, extra="forbid")` and fields: `schema_version: int = 2`, `timestamp: datetime` (UTC), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload` (typed by each subclass).
+
+**Given** `src/voice_agent_pipeline/schemas/mood_event.py`,
+**When** I inspect it,
+**Then** it defines `MoodPayload(mood: Mood, reason: str | None)` (where `Mood` is a `Literal[...]` of 6–8 values imported from `mood/state.py` — Story 3.6) and `MoodEvent(EventEnvelope)` with `payload: MoodPayload`.
+
+**Given** `src/voice_agent_pipeline/schemas/activity_event.py`,
+**When** I inspect it,
+**Then** it defines `ActivityState = Literal["starting", "sleeping", "waking", "listening", "working", "speaking", "going_to_sleep"]`, `WorkingSubmode = Literal["thinking", "delegating"]`, `ActivityPayload(state: ActivityState, working_submode: WorkingSubmode | None, transition_reason: str | None, from_state: ActivityState | None)`, and `ActivityEvent(EventEnvelope)` with `payload: ActivityPayload`. (Note: `working_submode` is non-null only when `state="working"`; `from_state` is null only on the initial `starting` publish. Validators enforce both invariants.)
+
+**Given** `src/voice_agent_pipeline/schemas/speech_emotion_event.py`,
+**When** I inspect it,
+**Then** it defines `SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str | None, raw_tag: str, resolved_fallback: str | None, expression_data: dict[str, Any])` and `SpeechEmotionEvent(EventEnvelope)` with `payload: SpeechEmotionPayload`. The open `expression_data` field is the documented extensibility seam (forward-compat for `expression_map.yaml` payload additions).
+
+**Given** `src/voice_agent_pipeline/schemas/vocalization_event.py`,
+**When** I inspect it,
+**Then** it defines `VocalizationPayload(tag: str, audio_frame_id: str | None, tts_supported: bool)` and `VocalizationEvent(EventEnvelope)` with `payload: VocalizationPayload`.
+
+**Given** the placeholder schemas from Story 1.4 (`expression_event.py`, `lifecycle_event.py`),
+**When** Story 3.4 lands,
+**Then** both files are removed; `tests/unit/schemas/test_expression_event.py` and `test_lifecycle_event.py` are removed; `tests/contract/test_expression_event_schema.py` and `test_lifecycle_event_schema.py` are removed (replaced by per-event-type contract tests below).
+
+**Given** contract tests in `tests/contract/test_event_envelope.py`, `test_mood_event_schema.py`, `test_activity_event_schema.py`, `test_speech_emotion_event_schema.py`, `test_vocalization_event_schema.py`,
+**When** the suite runs,
+**Then** for each event type: a representative instance round-trips through `model_dump_json` → JSON parse → `model_validate` with field equality intact; an instance with `schema_version=1` raises `SchemaVersionError`; an instance violating an invariant (e.g., `working_submode` set when state is not `working`) raises `ValidationError` at construction.
+
+**Given** unit tests in `tests/unit/schemas/`,
+**When** the suite runs,
+**Then** each event type has tests for: minimal valid construction, `extra="forbid"` enforcement on extra fields, correlation_id UUID generation, timestamp serialization to ISO8601 UTC, `Literal` enforcement on `state` / `working_submode` / `mood`.
+
+---
+
+### Story 3.5: `EventPublisher` Protocol + `Ros2EventPublisher` + `LogEventPublisher` (per-topic QoS)
+
+As Kamal,
+I want the `EventPublisher` Protocol with four publish methods and two implementations — `Ros2EventPublisher` (production, four `rclpy` publishers + per-topic QoS + JSON envelope) and `LogEventPublisher` (in-memory adapter for tests + pre-Epic-3 dev),
+So that v1 ships the four-topic broadcast surface with zero ament/colcon overhead, downstream consumers see correct per-topic QoS, and tests can drive the publisher without standing up a ROS 2 environment.
+
+**Acceptance Criteria:**
+
+**Given** `src/voice_agent_pipeline/publisher/interface.py`,
+**When** I inspect it,
+**Then** it defines `EventPublisher` as a `typing.Protocol` with async methods: `connect() -> None`, `disconnect() -> None`, `is_healthy() -> bool`, `publish_mood(MoodEvent) -> None`, `publish_activity(ActivityEvent) -> None`, `publish_speech_emotion(SpeechEmotionEvent) -> None`, `publish_vocalization(VocalizationEvent) -> None`. (Story 1.4's placeholder `ExpressionPublisher` Protocol is removed.)
+
 **Given** `src/voice_agent_pipeline/publisher/ros2.py`,
 **When** I inspect it,
-**Then** it implements `ExpressionPublisher` Protocol; `rclpy` is imported only in this file (boundary-concentration rule).
-
-**Given** the v1 wire-format simplification (architecture revision to Batch 3),
-**When** publishing,
-**Then** the publisher uses `std_msgs/String` with the entire `ExpressionEvent` (and `LifecycleEvent` — wired in Epic 4) JSON-encoded as the message data; no custom `.msg` IDL, no ament_python package, no colcon.
+**Then** it implements `EventPublisher` as `Ros2EventPublisher`; `rclpy` is imported only in this file (boundary-concentration rule). The class holds four `rclpy.Publisher` instances, one per topic.
 
 **Given** ROS 2 QoS configuration,
 **When** the publisher is constructed,
-**Then** it uses RELIABLE QoS for both expression and lifecycle topics (NFR21 — lost messages are not acceptable for embodiment correctness).
+**Then** per-topic QoS profiles are set: `mood` → RELIABLE + `transient_local` durability + depth=1 (latched); `activity` → RELIABLE + `transient_local` + depth=1 (latched); `speech_emotion` → RELIABLE + `volatile` + depth=8; `vocalization` → RELIABLE + `volatile` + depth=8 (NFR21, FR51).
 
-**Given** `setup.toml` with `[publisher] transport = "ros2"`, `dds_domain_id`, `expression_channel = "/olaf/expression"`, `lifecycle_channel = "/olaf/lifecycle"`,
+**Given** `setup.toml` `[publisher]` block with `adapter = "ros2"`, `dds_domain_id = ...`, and `topics = { mood = "/olaf/mood", activity = "/olaf/activity", speech_emotion = "/olaf/speech_emotion", vocalization = "/olaf/vocalization" }`,
 **When** the pipeline starts,
-**Then** the publisher reads channel names + DDS domain from config (no hard-coded topic names — agnostic publisher per the project's pipeline-scope boundary memory).
+**Then** the publisher reads all four topic names + DDS domain from config (no hard-coded topic names — agnostic publisher per the project's pipeline-scope boundary memory).
 
-**Given** `Ros2ExpressionPublisher.connect()`,
+**Given** `Ros2EventPublisher.connect()`,
 **When** called at startup,
-**Then** it initializes `rclpy`, creates a node, creates publishers on both channels, and returns; failure raises `PublisherError` and `StartupValidationError` cascades (v1 fail-fast — broadcast bus is a hard dep).
+**Then** it initializes `rclpy`, creates a node, creates all four publishers with their per-topic QoS, and returns; failure raises `PublisherError` and `StartupValidationError` cascades (v1 fail-fast — broadcast bus is a hard dep).
 
-**Given** `publish_expression(event)`,
+**Given** any of the four `publish_*(event)` methods,
 **When** called,
-**Then** it serializes `event.model_dump_json()` into a `String` message and publishes on the expression channel; runtime failure raises `PublisherError` and crashes the process.
+**Then** it serializes `event.model_dump_json()` (full envelope including payload) into a `String` message and publishes on the corresponding topic; runtime failure raises `PublisherError` and crashes the process.
 
-**Given** `publish_lifecycle(event)` defined for symmetry,
-**When** called in Epic 3,
-**Then** it works the same way but is **not yet invoked** by any caller (Epic 4 wires the lifecycle machine).
+**Given** `src/voice_agent_pipeline/publisher/log_adapter.py`,
+**When** I inspect it,
+**Then** `LogEventPublisher` implements the same Protocol with all four methods recording events to an in-memory list (`self.published: list[tuple[str, EventEnvelope]]` keyed by topic name); `connect`/`disconnect`/`is_healthy` are no-ops returning healthy. Used by integration tests and pre-Epic-3 dev runs.
 
-**Given** a unit test in `tests/unit/publisher/test_ros2.py` mocking `rclpy`,
-**When** events are published,
-**Then** the JSON content matches `event.model_dump_json()`, the topic name matches config, and QoS settings match.
+**Given** unit tests in `tests/unit/publisher/test_ros2.py` mocking `rclpy`,
+**When** events are published on each of the four topics,
+**Then** the JSON content matches `event.model_dump_json()`, the topic name matches config, and per-topic QoS settings match the spec.
 
-**Given** a contract test in `tests/contract/test_expression_event_schema.py`,
-**When** an `ExpressionEvent` is JSON-encoded → `String` message → JSON-decoded back,
-**Then** field equality holds across the round-trip (NFR27 schema versioning verified at parse).
+**Given** unit tests in `tests/unit/publisher/test_log_adapter.py`,
+**When** the adapter is exercised with all four event types,
+**Then** `published` records each event under the correct topic key in publish order.
 
 **Given** the README,
 **When** I open the deployment notes,
@@ -1056,37 +1168,71 @@ So that v1 ships an embodiment broadcast channel with zero ament/colcon overhead
 
 ---
 
-### Story 3.5: Audio-frame metadata threading + Talker SSML prompt + integration test
+### Story 3.6: Mood module — `MoodState` + `MoodController` + cooldown enforcement
 
 As Kamal,
-I want segments' `ExpressionEvent` metadata threaded through Pipecat's audio frames so the publisher fires when each frame is sent — and Talker updated to emit Cartesia SSML tags — and an integration test that proves voice/embodiment alignment hits the 30–80ms anticipatory window,
-So that Sprint 3 delivers visible (on-bus) embodiment in lockstep with audio.
+I want a `mood/` package owning the discrete mood enum, the in-process current-mood cell, and a controller that enforces the ≤4/hr publish cooldown at the publisher boundary,
+So that Talker's `set_mood(mood)` tool (Story 4.4) and `activity/greeting.py` (Story 4.5) have a single coherent surface for reading and updating mood — and NFR31 is enforced in one place.
+
+**Acceptance Criteria:**
+
+**Given** `src/voice_agent_pipeline/mood/state.py`,
+**When** I inspect it,
+**Then** it defines `Mood = Literal[<6–8 values>]` (final list a code-level decision — recommended: `"calm", "happy", "playful", "curious", "thoughtful", "sleepy", "grumpy", "excited"`), and `MoodState` as a single mutable cell with `current: Mood = "calm"`. Read path is sync; write path goes through `MoodController.set()`.
+
+**Given** `src/voice_agent_pipeline/mood/controller.py`,
+**When** I inspect it,
+**Then** `MoodController` holds references to `MoodState` and `EventPublisher`. Its async `set(mood: Mood, reason: str) -> bool` method: (a) checks the cooldown window (sliding 60-min, ≤4 publishes), (b) if allowed, builds a `MoodEvent` with the new mood and `reason`, calls `publisher.publish_mood(event)`, and **only on successful publish** updates `MoodState.current = mood`; returns `True`. (c) If over-rate, logs `event="mood.publish_dropped"` at WARN with `attempted_mood`, `current_mood`, `reason="cooldown"`, returns `False`, leaves state unchanged.
+
+**Given** the cooldown's "publish history,"
+**When** `set()` is called,
+**Then** the controller maintains a deque of timestamps of successful publishes, popping any older than 60 minutes; if the deque length is ≥ 4 the call is rate-limited.
+
+**Given** startup,
+**When** `EventPublisher.connect()` succeeds,
+**Then** `MoodController.publish_initial()` publishes `MoodEvent(mood="calm", reason="startup")` exactly once, even though this counts toward the cooldown budget. Subsequent test/dev workflow may see this initial publish in the latched topic.
+
+**Given** unit tests in `tests/unit/mood/test_state.py` and `tests/unit/mood/test_controller.py`,
+**When** the suite runs,
+**Then** the following cases pass: state defaults to `"calm"`; controller `set()` happy path updates state and publishes; over-rate `set()` drops with WARN, leaves state unchanged, returns `False`; sliding-window window math (4 calls within 60 min vs straddling the window) verified with `freezegun` or equivalent; invalid `Mood` raises `ValidationError` at the type boundary; `publish_initial()` fires once at startup.
+
+**Given** `setup.toml` `[mood]` block,
+**When** the pipeline starts,
+**Then** it reads optional `[mood] cooldown_publishes_per_hour = 4` (default 4) and `[mood] initial = "calm"` (default `"calm"`); the controller respects both. The mood **enum** is code-level and not config-overridable (per architecture's mood enum lifecycle decision).
+
+---
+
+### Story 3.7: Audio-frame metadata threading + Talker SSML prompt + embodiment alignment integration test
+
+As Kamal,
+I want segments' `SpeechEmotionEvent` AND `VocalizationEvent` metadata threaded through Pipecat's audio frames so the publisher fires when each frame is sent — and Talker updated to emit Cartesia SSML tags — and an integration test that proves voice / `speech_emotion` alignment hits the 30–80ms anticipatory window (NFR5),
+So that Sprint 3 delivers visible (on-bus) embodiment in lockstep with audio across both audio-anchored topics.
 
 **Acceptance Criteria:**
 
 **Given** Pipecat's `AudioRawFrame`,
-**When** the splitter (Story 3.3) emits a `Segment` with an `ExpressionEvent`,
-**Then** the segment's first audio frame from Cartesia carries the event in an optional `expression_event` metadata field (architecture's Batch 2 decision; if Pipecat's processor model can't carry it cleanly, fall back to time-based correlation per the documented PRD risk fallback — and document the deviation in PRD/architecture per NFR26).
+**When** the splitter (Story 3.3) emits a `Segment` with a `speech_emotion_payload` and/or `vocalization_payloads`,
+**Then** the segment's first audio frame from Cartesia carries the events in **two** optional metadata slots — `speech_emotion_event` and `vocalization_events: list[VocalizationEvent]` — both wrapped with full envelope (timestamp, correlation_id, etc.) (architecture's Batch 2 decision; if Pipecat's processor model can't carry it cleanly, fall back to time-based correlation per the documented PRD risk fallback — and document the deviation in PRD/architecture per NFR26).
 
 **Given** `LocalAudioTransport` output,
 **When** it sends an audio frame to the speaker,
-**Then** if `frame.expression_event` is set, it calls `ExpressionPublisher.publish_expression(event)` immediately before `frame.send_to_speaker()` (FR22, FR23).
+**Then** if `frame.speech_emotion_event` is set, it calls `EventPublisher.publish_speech_emotion(event)` immediately before frame send; if `frame.vocalization_events` is non-empty, it calls `EventPublisher.publish_vocalization(event)` for each, in order, immediately before frame send (FR22, FR23).
 
 **Given** the last-published cache from Story 3.2,
-**When** the segmenter resolves a segment's emotion via the resolver and the cache says `should_publish=False`,
-**Then** no `ExpressionEvent` is attached to that segment's audio frame (FR24 dedup).
+**When** the segmenter resolves a segment's emotion and the cache says `should_publish=False`,
+**Then** no `speech_emotion_event` is attached to that segment's audio frame (FR24 dedup). Vocalizations are unaffected — they always attach.
 
 **Given** `prompts/talker_system.md`,
 **When** I inspect it,
-**Then** it now instructs Talker to emit responses with Cartesia `<emotion value="..."/>` SSML tags inline (e.g., `<emotion value="content"/> It's 8:47.`), and to optionally use `[laughter]` / `[sigh]` bursts. The prompt enumerates the 6 primary + 6 secondary emotions for the LLM (FR12 extension).
+**Then** it now instructs Talker to emit responses with Cartesia `<emotion value="..."/>` SSML tags inline (e.g., `<emotion value="content"/> It's 8:47.`), and to use `[laughter]` / `[sigh]` / `[gasp]` vocalizations naturally. The prompt enumerates the 6 primary + 6 secondary emotions for the LLM (FR12 extension). Greeting-mode prompt is added in Story 4.5; here we only update conversational mode.
 
 **Given** an integration test in `tests/integration/test_embodiment_alignment.py`,
-**When** the full pipeline runs with mocked Cartesia (yielding deterministic audio frames at known timestamps) and a mocked publisher (capturing publish times),
-**Then** for 30 simulated turns, the p95 of (publish_time − frame_send_time) falls within the 30–80ms anticipatory window (NFR5).
+**When** the full pipeline runs with mocked Cartesia (yielding deterministic audio frames at known timestamps) and `LogEventPublisher` (capturing publish times per topic),
+**Then** for 30 simulated turns, the p95 of (publish_time − frame_send_time) for **both** `speech_emotion` and `vocalization` events falls within the 30–80ms anticipatory window (NFR5).
 
 **Given** an integration test mocking the publisher and asserting on event payloads,
-**When** Talker emits a response with one primary, one secondary, and one fallback-family tag,
-**Then** all three `ExpressionEvent`s publish with correct `emotion`, `source_tag`, and `payload` fields, in correct order, with bursts always present and base emotions deduped per FR24.
+**When** Talker emits a response with one primary, one secondary, one fallback-family tag, and one `[laughter]`,
+**Then** three `SpeechEmotionEvent`s and one `VocalizationEvent` publish with correct field values, in correct order, base emotions deduped per FR24, vocalization always present.
 
 **Given** the redaction discipline,
 **When** Epic 3's integration tests run,
@@ -1098,9 +1244,9 @@ So that Sprint 3 delivers visible (on-bus) embodiment in lockstep with audio.
 
 ---
 
-## Epic 4: Complex Questions & Lifecycle
+## Epic 4: Activity FSM + Tool-Use + Slow Path
 
-**Goal:** Add the orchestrator dispatch path (SSE), belief-state grounding for Talker, full TurnRouter fast/slow decision, and lifecycle event publishing. After this, OLAF can answer "what's on my calendar?" with narration → subagent → response chunks, and subscribers know what state OLAF is in.
+**Goal:** Build the conversation-shaped surface: 7-state activity FSM with deferred-sleep transition + mic-mode signaling; Talker becomes tool-using (`go_to_sleep`, `set_mood`); mood-tinted wake greeting on every wake; continuous mic capture while AWAKE; orchestrator slow-path with belief-state grounding. After this, OLAF wakes with a "hey," follows up without re-saying the wake word, says goodbye on natural language, and answers complex questions via the orchestrator. Journeys J1, J3, J4, J5 demonstrable.
 
 ### Story 4.1: `BeliefStateClient` — per-turn fresh `GET /beliefs?keys=...`
 
@@ -1131,16 +1277,12 @@ So that Talker can answer "what time is it?" using actual daemon state rather th
 **Then** the client targets the configured URL.
 
 **Given** Talker integration,
-**When** `AnthropicTalker.complete(transcript)` is called in Epic 4,
-**Then** it now optionally fetches belief state via `BeliefStateClient.read(...)` based on a configurable list of keys (e.g., `[talker] grounded_keys = ["time", "calendar_today"]`) and includes them in the system prompt context (FR12 extension — belief grounding).
+**When** Story 4.4's `TalkerClient.complete_with_tools(transcript)` is called,
+**Then** it optionally fetches belief state via `BeliefStateClient.read(...)` based on a configurable list of keys (e.g., `[talker] grounded_keys = ["time", "calendar_today"]`) and includes them in the system prompt context (FR12 extension — belief grounding). Note: The integration of `BeliefStateClient` into Talker is finalized in Story 4.4 (which delivers `complete_with_tools`); this story defines the client and stubs the consumer hook.
 
 **Given** a unit test in `tests/unit/turn/test_beliefs.py` mocking `httpx.AsyncClient`,
 **When** `read(["time"])` is called,
 **Then** the request URL matches `?keys=time`, the parsed response shape matches expectations, and a 500 response raises `OrchestratorError`.
-
-**Given** an updated unit test for `AnthropicTalker`,
-**When** `grounded_keys` is configured and a transcript triggers Talker,
-**Then** the test asserts `BeliefStateClient.read(grounded_keys)` was called and the response was injected into the prompt context.
 
 ---
 
@@ -1148,7 +1290,7 @@ So that Talker can answer "what time is it?" using actual daemon state rather th
 
 As Kamal,
 I want an `OrchestratorClient` that opens `POST /turn` as an SSE stream and yields typed events as they arrive (narration, subagent_started, subagent_progress, subagent_done, response_chunk, turn_end),
-So that Story 4.5's pipeline can dispatch complex turns without buffering the full response.
+So that Story 4.7's pipeline can dispatch complex turns without buffering the full response.
 
 **Acceptance Criteria:**
 
@@ -1174,7 +1316,7 @@ So that Story 4.5's pipeline can dispatch complex turns without buffering the fu
 
 **Given** a `cancel(session_id)` method,
 **When** declared in the Protocol,
-**Then** `HttpOrchestratorClient.cancel(session_id)` is **stubbed** in Epic 4 (raises `NotImplementedError`); the `HTTP DELETE /turn/{session_id}` wiring lands Epic 5 with barge-in.
+**Then** `HttpOrchestratorClient.cancel(session_id)` is **stubbed** in Epic 4 (raises `NotImplementedError`); the `HTTP DELETE /turn/{session_id}` wiring lands in **v1.5 Story v1.5-1 (barge-in)** — see `## v1.5 Backlog (Post-v1)`.
 
 **Given** v1 retry semantics,
 **When** any HTTP error occurs (connection, timeout, non-2xx),
@@ -1190,97 +1332,201 @@ So that Story 4.5's pipeline can dispatch complex turns without buffering the fu
 
 ---
 
-### Story 4.3: TurnRouter — full fast vs slow routing rule
+### Story 4.3: Activity FSM core — 7-state + deferred-sleep + mic-mode signaling
 
 As Kamal,
-I want `TurnRouter` to route transcripts to Talker (fast) or orchestrator (slow) based on a configurable keyword/regex rule, replacing Epic 2's always-Talker stub,
-So that simple questions stay fast and complex questions get the orchestrator.
+I want a 7-state activity FSM in a new `activity/` package (renamed from `lifecycle/`) that transitions on observable events, schedules deferred-sleep on `go_to_sleep` tool calls, signals mic-mode flips to the audio transport, and publishes `ActivityEvent` on every transition,
+So that the conversation-shaped pipeline has a single coherent state spine — and Stories 4.4 (Talker tool-using), 4.5 (wake greeting), and 4.6 (mic-mode flip) have a stable surface to integrate with.
 
 **Acceptance Criteria:**
 
-**Given** `setup.toml` `[router]` block,
-**When** I inspect it,
-**Then** it contains a `slow_path_patterns` list (regex strings) and a `default = "talker"` setting; transcripts matching any pattern route to `"orchestrator"`, others route to `"talker"` (FR9 full).
-
-**Given** `TurnRouter.route(transcript, confidence)`,
-**When** the transcript matches a slow-path pattern,
-**Then** it returns `RouteDecision(target="orchestrator", text=transcript)`.
-
-**Given** the transcript does not match,
-**When** `route(...)` is called,
-**Then** it returns `RouteDecision(target="talker", text=transcript)` (Talker fast-path with belief grounding from Story 4.1).
-
-**Given** the low-confidence clarification path from Story 2.4,
-**When** confidence is below threshold,
-**Then** routing still produces the clarification prompt to Talker, **bypassing** slow-path matching (clarification always goes through Talker — fast).
-
-**Given** the architecture's open question on hot-reload of the router rule,
-**When** Epic 4 lands the rule,
-**Then** the rule is **boot-time only** in Epic 4; SIGHUP hot-reload of `[router]` is bundled with the SIGHUP work in Epic 5 (deferred decision: include router patterns in the same atomic-swap mechanism, or only `expression_map.yaml`).
-
-**Given** the orchestrator path's `NotImplementedError` from Story 2.4,
+**Given** the existing placeholder package `src/voice_agent_pipeline/lifecycle/`,
 **When** Story 4.3 lands,
-**Then** that stub is removed; the slow-path now actually invokes `OrchestratorClient.dispatch(...)` (wired in Story 4.5).
+**Then** the package is renamed to `src/voice_agent_pipeline/activity/`. Any imports across the codebase referencing `lifecycle/` are updated. The rename is a single discrete change with no other behaviour mixed in.
 
-**Given** a unit test in `tests/unit/turn/test_router.py`,
-**When** transcripts matching and not matching slow-path patterns are routed,
-**Then** the routing decisions match expectations; a malformed regex in config raises `ConfigError` at startup.
-
----
-
-### Story 4.4: Lifecycle state machine + `publish_lifecycle` wiring + idle→sleeping
-
-As Kamal,
-I want a lifecycle state machine that transitions between SLEEPING/LISTENING/THINKING/SPEAKING/IDLE on observable events, publishes each transition on the lifecycle channel, and falls back to SLEEPING after configurable idle,
-So that subscribers (embodiment, observability, future analytics) know what OLAF is doing in real time.
-
-**Acceptance Criteria:**
-
-**Given** `src/voice_agent_pipeline/lifecycle/machine.py`,
+**Given** `src/voice_agent_pipeline/activity/states.py`,
 **When** I inspect it,
-**Then** `LifecycleMachine` holds the current state as `Literal["SLEEPING","LISTENING","THINKING","SPEAKING","IDLE"]` and exposes `transition(to_state, reason)` that validates the transition is legal, updates state, and calls `ExpressionPublisher.publish_lifecycle(...)` (FR26, FR27).
+**Then** it defines `ActivityState = Literal["starting", "sleeping", "waking", "listening", "working", "speaking", "going_to_sleep"]` and `WorkingSubmode = Literal["thinking", "delegating"]`, both re-exported from `activity/__init__.py` for ergonomic imports.
 
-**Given** the legal transition table per PRD lifecycle and architecture,
+**Given** `src/voice_agent_pipeline/activity/machine.py`,
 **When** I inspect it,
-**Then** legal transitions cover at minimum: `SLEEPING ↔ IDLE`, `IDLE → LISTENING` (on wake-word), `LISTENING → THINKING` (on end-of-speech), `THINKING → SPEAKING` (on first audio frame), `SPEAKING → IDLE` (on last audio frame), `IDLE → SLEEPING` (on idle timeout). Illegal transitions raise `VoiceAgentError`.
+**Then** `ActivityFSM` is a sync class holding `current_state: ActivityState`, `working_submode: WorkingSubmode | None`, a `sleep_pending: bool` flag, references to `EventPublisher` and an event-emitter for mic-mode signals (e.g., `asyncio.Queue` consumed by audio/transport in Story 4.6). Single-writer rule: only the FSM mutates `current_state`. Other components emit transition events into FSM methods, never mutate state directly.
 
-**Given** the wakeword + STT + Cartesia events from Epics 1–3,
-**When** they fire,
-**Then** the lifecycle machine subscribes to the corresponding pipeline events and transitions automatically — no manual `transition(...)` calls scattered across the codebase. Centralized in `lifecycle/machine.py`.
+**Given** the FSM's transition methods,
+**When** I inspect them,
+**Then** they cover: `on_wake_detected()` (`sleeping → waking`), `on_speech_started()` (`waking → listening` if waking, otherwise `listening` stays), `on_speech_ended()` (`listening → working[thinking]`), `on_dispatch_to_orchestrator()` (`working[thinking] → working[delegating]`), `on_first_audio_frame()` (`working → speaking`), `on_last_audio_frame()` (`speaking → listening` OR `speaking → going_to_sleep` if `sleep_pending=True`), `on_going_to_sleep_complete()` (`going_to_sleep → sleeping`), `on_tool_call_go_to_sleep()` (sets `sleep_pending=True`, no transition).
 
-**Given** `setup.toml` `[lifecycle] idle_to_sleeping_seconds = 300`,
-**When** the pipeline sits in IDLE for 300s without a wake-word,
-**Then** the machine transitions to SLEEPING and publishes the event (FR28).
+**Given** the deferred-sleep scheduler,
+**When** `on_tool_call_go_to_sleep()` is called mid-`speaking` state,
+**Then** `sleep_pending` is set; on next `on_last_audio_frame()`, the FSM transitions `speaking → going_to_sleep`, schedules an immediate follow-up transition `going_to_sleep → sleeping`, and publishes both transitions. If a wake-word fires before `on_last_audio_frame()` (edge case), `sleep_pending` is cleared and the deferred-sleep is cancelled (FR46).
 
-**Given** `Ros2ExpressionPublisher.publish_lifecycle` from Story 3.4 (defined but unused),
-**When** Story 4.4 lands,
-**Then** `publish_lifecycle` is now invoked on every legal transition with a `LifecycleEvent` carrying the new state and `timestamp_ns`. The lifecycle channel is established at startup (extends startup validation).
+**Given** the mic-mode signaling,
+**When** the FSM enters `sleeping`,
+**Then** it emits `mic_mode = "wake_word_only"` on the signal queue. When it enters `waking`, `listening`, `working`, or `speaking`, it emits `mic_mode = "vad_stt"`. When it enters `going_to_sleep`, mic mode stays at `vad_stt` (so a follow-up wake-word from the user could in theory cancel — though edge case). On entering `sleeping`, mic mode flips to `wake_word_only`. (Story 4.6 wires the consumer side.)
+
+**Given** every transition,
+**When** the FSM transitions,
+**Then** it publishes an `ActivityEvent` via `EventPublisher.publish_activity()` with `from_state`, `to_state`, `working_submode` (when applicable), `transition_reason` (e.g., `"wake_detected"`, `"end_of_speech"`, `"go_to_sleep_tool_call"`, `"last_audio_frame"`, `"deferred_sleep_complete"`).
+
+**Given** an illegal transition request,
+**When** invoked (e.g., `on_first_audio_frame()` from `sleeping`),
+**Then** `ActivityFSM` raises `VoiceAgentError` with a message naming the current state and the requested transition; v1 fail-fast crashes the process.
 
 **Given** redaction discipline,
-**When** lifecycle logs fire,
-**Then** they emit `event="lifecycle.transition"` with `from_state`, `to_state`, `reason`, `session_id` — no transcript content, no audio bytes (NFR25).
+**When** activity logs fire,
+**Then** they emit `event="activity.transition"` at INFO with `from_state`, `to_state`, `working_submode`, `transition_reason`, `correlation_id` — no transcript content, no audio bytes (NFR25).
 
-**Given** a unit test in `tests/unit/lifecycle/test_machine.py`,
-**When** legal and illegal transitions are exercised + the idle timeout fires (using `pytest-asyncio` + a fast-forward time fixture),
-**Then** all expected transitions succeed, illegal ones raise, the timer fires, and `publish_lifecycle` is called for each transition.
+**Given** unit tests in `tests/unit/activity/test_machine.py`,
+**When** legal and illegal transitions are exercised + deferred-sleep + mic-mode signal sequencing (using `pytest-asyncio`),
+**Then** all expected transitions succeed, illegal ones raise, deferred-sleep fires correctly (including the wake-word-cancel edge case), mic-mode signals are emitted in the correct sequence, and `publish_activity` is called for each transition.
 
-**Given** an integration test in `tests/integration/test_lifecycle_journey.py`,
-**When** the full pipeline runs through journey 1 (simple turn),
-**Then** the published lifecycle sequence is `[IDLE, LISTENING, THINKING, SPEAKING, IDLE]` with timestamps matching the observed pipeline events.
+**Given** an integration test in `tests/integration/test_activity_lifecycle.py`,
+**When** the full pipeline runs through a simple turn,
+**Then** the published activity sequence is `[starting, sleeping, waking, listening, working[thinking], speaking, listening]` with `correlation_id` shared across the turn.
 
 ---
 
-### Story 4.5: Pipeline wiring (slow path) + missing-`turn_end` recovery + complex-turn integration test (NFR2 baseline)
+### Story 4.4: Talker tool-using upgrade — `complete_with_tools` + tool registry + `GoToSleepTool` + `SetMoodTool`
 
 As Kamal,
-I want `pipeline.py` to wire the slow path (router → orchestrator → splitter → TTS+publisher) including missing-`turn_end` cleanup, plus an integration test for journey 2 (complex turn) that records the NFR2 baseline,
-So that I can ask "what's on my calendar?" and OLAF actually answers — narration first, then real result via subagent.
+I want Talker to become tool-using — exposing `go_to_sleep` and `set_mood` to the LLM via the openai SDK's `tools=` parameter, validating tool inputs against typed Pydantic schemas, and dispatching to `ActivityFSM` and `MoodController` concurrently with text emission,
+So that Talker's natural-language goodbye triggers the deferred-sleep path (FR46) and natural-language mood shifts publish on `/olaf/mood` — without blocking text-to-TTS on tool side effects.
+
+**Acceptance Criteria:**
+
+**Given** `src/voice_agent_pipeline/turn/tools.py`,
+**When** I inspect it,
+**Then** it defines `ToolSpec` (frozen pydantic v2: `name: str`, `description: str`, `input_schema: type[BaseModel]`, `dispatch: Callable[[BaseModel], Awaitable[None]]`), `ToolRegistry` (holds list of `ToolSpec`, exposes `dispatch(tool_call: ToolCall)` async method + `as_openai_tools_param()` returning the openai SDK's tool definitions list), `GoToSleepTool` (empty input model `GoToSleepInput()`; dispatch calls `activity_fsm.on_tool_call_go_to_sleep()`), `SetMoodTool` (input model `SetMoodInput(mood: Mood)`; dispatch calls `mood_controller.set(mood, reason="talker_set_mood")`).
+
+**Given** the tool registry's `dispatch(tool_call)` method,
+**When** invoked with a `tool_call.name` matching a registered tool,
+**Then** it looks up the spec, calls `spec.input_schema.model_validate(tool_call.arguments)` — Pydantic raises `ValidationError` on bad input; the registry catches it, logs `event="tool.dispatch_invalid_input"` at WARN with `tool=<name>`, `error=<message>`, drops the call with no side effect. Successful validation calls `spec.dispatch(validated_input)` and awaits.
+
+**Given** an unknown tool name,
+**When** `dispatch(tool_call)` is called,
+**Then** the registry logs `event="tool.dispatch_unknown_name"` at WARN and drops the call.
+
+**Given** the `TalkerClient` Protocol in `turn/talker.py`,
+**When** I inspect it,
+**Then** it gains two new methods: `complete_with_tools(prompt: str, tool_registry: ToolRegistry, **kwargs) -> TalkerResponse(text: str, tool_calls: list[ToolCall])` and `greet(mood: Mood) -> str`. The existing `complete()` method stays for backward compatibility but is no longer called in production — `TurnDispatchProcessor` switches to `complete_with_tools()`.
+
+**Given** the openai-SDK-backed Talker implementation (Story 2.2),
+**When** `complete_with_tools()` is called,
+**Then** it passes `tools=tool_registry.as_openai_tools_param()` to `client.chat.completions.create()`, parses the response for tool_calls (alongside text content), and returns `TalkerResponse(text=..., tool_calls=...)`. Belief-state grounding from Story 4.1 is integrated here: if `[talker] grounded_keys` is configured, `BeliefStateClient.read(grounded_keys)` is called and results injected into the system prompt context.
+
+**Given** `TurnDispatchProcessor` (Story 2.4),
+**When** updated,
+**Then** it calls `talker.complete_with_tools(prompt, tool_registry)`, **emits `TalkerResponseFrame(text)` immediately** to the splitter, then concurrently kicks off `asyncio.gather(*[tool_registry.dispatch(tc) for tc in tool_calls])` — text-to-TTS is never blocked on tool-side-effect completion (FR45 parallel + FR46 deferred-sleep). The dispatcher does NOT await tool dispatches; they run as background tasks (created with `asyncio.create_task`, with logging of any exceptions via task done-callbacks).
+
+**Given** `setup.toml` `[tools]` block,
+**When** I inspect it,
+**Then** it contains optional flags `enable_go_to_sleep = true`, `enable_set_mood = true` (default both true). When false, the corresponding tool is not registered with the openai SDK at invocation time.
+
+**Given** unit tests in `tests/unit/turn/test_tools.py`,
+**When** the suite runs,
+**Then** the following cases pass: registry construction with tool list; `as_openai_tools_param()` emits correct openai-format tool definitions; `dispatch()` happy-path validates input + calls dispatch coroutine; `dispatch()` invalid-input logs WARN + drops; `dispatch()` unknown tool logs WARN + drops; `GoToSleepTool` dispatch invokes `activity_fsm.on_tool_call_go_to_sleep()`; `SetMoodTool` dispatch invokes `mood_controller.set(mood, reason="talker_set_mood")`.
+
+**Given** an updated unit test for the Talker implementation,
+**When** `complete_with_tools(...)` is called,
+**Then** the openai SDK is called with `tools=` param; if the mocked response includes `tool_calls`, they are parsed correctly; belief-state grounding (when configured) is fetched and injected into the system prompt.
+
+**Given** an integration test `tests/integration/test_intent_sleep.py` (PRD Journey 4) at the dispatch level (does not require the full FSM to be wired into the pipeline yet — that's Story 4.7's complex-turn test),
+**When** Talker's mocked response includes `tool_calls=[{"name": "go_to_sleep", "arguments": {}}]`,
+**Then** (a) `TalkerResponseFrame(text)` is emitted to the splitter before `tool_registry.dispatch` completes, (b) `activity_fsm.sleep_pending` is set to `True` after dispatch completes.
+
+---
+
+### Story 4.5: Wake greeting — `talker.greet()` greeting mode + `activity/greeting.trigger_greeting()` + 800ms timeout + J1 integration test
+
+As Kamal,
+I want a 2–8 word mood-tinted wake greeting fired automatically on every `sleeping → waking` FSM transition, generated by Talker in greeting mode with an 800ms timeout and a static fallback list,
+So that wake-up feels like a friend acknowledging me ("hey", "yeah?", "what's up?") instead of a scripted "Hello, I am OLAF" — and Journey 1 (wake-with-greeting) becomes demonstrable end-to-end.
+
+**Acceptance Criteria:**
+
+**Given** the existing `TalkerClient` Protocol (extended in Story 4.4 with `greet(mood: Mood) -> str`),
+**When** the Talker implementation's `greet(mood)` is called,
+**Then** it invokes the openai SDK with a **dedicated greeting-mode system prompt** in `prompts/talker_greeting.md` (or as a constant in `turn/talker.py`) that directs: 2–8 words, "cool friend" register (NOT formal, NOT scripted), tinted by the supplied `mood` (e.g., `playful` → "what's up?"; `sleepy` → "mm yeah?"; `calm` → "yeah?"). Returns the LLM's text reply directly (no SSML tags in greeting mode).
+
+**Given** `src/voice_agent_pipeline/activity/greeting.py`,
+**When** I inspect it,
+**Then** it exposes `async def trigger_greeting(mood: Mood, talker: TalkerClient, fallback_list: list[str]) -> str`. The implementation: (a) calls `await asyncio.wait_for(talker.greet(mood), timeout=0.8)`; (b) on success, validates the response is 2–8 words (split on whitespace, strip punctuation), returns the text if valid; (c) on `asyncio.TimeoutError`, on Talker exception, or on word-count failure, logs `event="greeting.fallback"` at INFO with `mood`, `reason=<timeout|error|too_long>`, and returns `random.choice(fallback_list)`.
+
+**Given** `setup.toml` `[greeting]` block,
+**When** I inspect it,
+**Then** it contains `timeout_seconds = 0.8` (default), `min_words = 2` (default), `max_words = 8` (default), `fallback_list = ["hey", "yeah?", "hi"]` (default). All overridable.
+
+**Given** `ActivityFSM` (Story 4.3),
+**When** the FSM transitions `sleeping → waking`,
+**Then** the `_publish_transition()` callback (or equivalent hook) creates a background task `asyncio.create_task(_handle_wake_greeting())` which: reads `mood_controller.state.current` (sync), calls `await trigger_greeting(mood, talker, fallback_list)`, wraps the returned text in a `TalkerResponseFrame`, and pushes it to the splitter — same downstream path as conversational replies. The `ActivityEvent(state="waking")` publish happens immediately on the FSM transition, NOT awaiting the greeting (decouples FSM publishing from greeting latency).
+
+**Given** the splitter receives a greeting `TalkerResponseFrame`,
+**When** it segments the text,
+**Then** the greeting flows through the same splitter / TTS / audio-anchored event publish path. Greetings typically have no SSML tags, so no `speech_emotion_event` is published; that's fine — `speech_emotion` is for in-conversation emotion, not the greeting.
+
+**Given** unit tests in `tests/unit/activity/test_greeting.py`,
+**When** the suite runs,
+**Then** the following cases pass: happy-path `trigger_greeting` returns Talker's response within 800ms; timeout falls back to static list; Talker exception falls back; overlong response (>8 words) falls back; word-count math is correct (whitespace split, punctuation-stripped); each `mood` value is exercisable.
+
+**Given** an integration test `tests/integration/test_wake_greeting.py` (PRD Journey 1),
+**When** the test simulates: pipeline up + `MoodController` initial mood `"calm"` + wake-word fires →,
+**Then** within ~1 second: (a) `ActivityEvent(state="waking")` publishes, (b) a `TalkerResponseFrame` containing the greeting text is observed at the splitter, (c) audio frames flow to the speaker, (d) `ActivityEvent(state="listening")` publishes after the last greeting audio frame. Both Talker-success and Talker-timeout (fallback list) variants are exercised.
+
+**Given** NFR30,
+**When** the integration test measures `(sleeping_to_waking transition timestamp → first audio frame of greeting)` for 30 simulated wakes,
+**Then** the p95 is ≤ 800 ms (NFR30 baseline; final soak validation in Story 5.4).
+
+---
+
+### Story 4.6: Mic-mode flip — `audio/transport` consumes FSM mic-mode signal (FR47)
+
+As Kamal,
+I want `audio/transport.py` to subscribe to the `ActivityFSM` mic-mode signal queue and route the single mic stream between `wake_word_only` (Porcupine engaged, VAD/STT suspended) and `vad_stt` (VAD + STT engaged, Porcupine suspended) modes,
+So that wake-word fires only on `sleeping → waking` (not on every turn) and follow-up turns flow without re-prompting (FR47, continuous conversation while AWAKE).
+
+**Acceptance Criteria:**
+
+**Given** `src/voice_agent_pipeline/audio/transport.py`,
+**When** I inspect it,
+**Then** the `LocalAudioTransport` wrapper holds an internal `mic_mode: Literal["wake_word_only", "vad_stt"]` (default `"wake_word_only"` at startup, before FSM transitions to `sleeping` via `starting → sleeping`). It subscribes to the FSM's mic-mode signal queue and updates `mic_mode` on each signal.
+
+**Given** `mic_mode == "wake_word_only"`,
+**When** mic frames arrive,
+**Then** they are routed to `audio/wakeword.py` (Porcupine processor); VAD + STT processors are skipped (no audio frames flow into them).
+
+**Given** `mic_mode == "vad_stt"`,
+**When** mic frames arrive,
+**Then** they are routed to VAD + STT processors; Porcupine is **not** called (no wake-word detection runs while AWAKE — FR47 single-stream invariant).
+
+**Given** the mode transition from `wake_word_only → vad_stt`,
+**When** triggered (FSM enters `waking`),
+**Then** Porcupine's internal buffer is cleared (no stale buffered audio leaking into VAD); VAD + STT are reset to a clean starting state.
+
+**Given** the mode transition from `vad_stt → wake_word_only`,
+**When** triggered (FSM enters `sleeping`),
+**Then** any in-flight VAD detection state is dropped; STT's transcription buffer is cleared; Porcupine is re-engaged on subsequent frames.
+
+**Given** unit tests in `tests/unit/audio/test_transport.py`,
+**When** the suite runs,
+**Then** the following cases pass: starting `mic_mode` is `"wake_word_only"`; signal-driven transitions update the mode; in `wake_word_only` Porcupine receives frames + VAD doesn't; in `vad_stt` VAD receives frames + Porcupine doesn't; mode transitions reset internal buffers correctly; rapid sequential signals (e.g., `wake_word_only → vad_stt → wake_word_only`) are handled correctly without dropped frames.
+
+**Given** an integration test `tests/integration/test_continuous_conversation.py`,
+**When** the test simulates: wake-word → simple turn 1 → simple turn 2 (no second wake-word) → intent-sleep,
+**Then** turn 2's transcript is captured WITHOUT a second wake-word fire; the activity FSM stays in `listening` between turns (no return to `sleeping`); only at the very end (Talker `go_to_sleep`) does the FSM return to `sleeping` and `mic_mode` flip back to `wake_word_only`.
+
+---
+
+### Story 4.7: TurnRouter slow-path wiring + missing-`turn_end` recovery + complex-turn integration test (J3, NFR2 baseline)
+
+As Kamal,
+I want `pipeline.py` to wire the slow path (TurnRouter `target="orchestrator"` → orchestrator SSE → splitter → TTS+publisher) including missing-`turn_end` cleanup and FSM `working[delegating]` sub-mode coordination, plus an integration test for journey 3 (complex turn) recording the NFR2 baseline,
+So that I can ask "what's on my calendar?" and OLAF actually answers — narration first, then real result via subagent — with the activity FSM correctly tracking `delegating` during orchestrator dispatch.
 
 **Acceptance Criteria:**
 
 **Given** `pipeline.py` updates,
-**When** `TurnRouter` returns `target="orchestrator"`,
-**Then** the pipeline dispatches via `OrchestratorClient.dispatch(...)`, consumes the SSE stream, and pipes `narration` + `response_chunk` text to the splitter (Epic 3) just like Talker output. `subagent_*` events update an internal "thinking" indicator (no audio impact in v1).
+**When** `TurnRouter` (Story 2.4) returns `target="orchestrator"`,
+**Then** `TurnDispatchProcessor` (updated from Story 4.4 to call `complete_with_tools` for fast-path) routes to a new `OrchestratorDispatchProcessor`, which: (a) calls `activity_fsm.on_dispatch_to_orchestrator()` (FSM transitions `working[thinking] → working[delegating]`), (b) calls `OrchestratorClient.dispatch(...)`, (c) consumes the SSE stream, (d) pipes `narration` + `response_chunk` text to the splitter as `TalkerResponseFrame` instances. `subagent_*` events update an internal "thinking" indicator (logged but no audio impact in v1).
 
 **Given** the splitter sees a slow-path stream,
 **When** segments emit,
@@ -1288,19 +1534,23 @@ So that I can ask "what's on my calendar?" and OLAF actually answers — narrati
 
 **Given** an orchestrator stream that ends without a `turn_end` event,
 **When** the SSE connection closes,
-**Then** the pipeline flushes the splitter (any pending text is segmented + sent to TTS) and waits for the last audio frame before transitioning lifecycle SPEAKING → IDLE (FR14).
+**Then** the pipeline flushes the splitter (any pending text is segmented + sent to TTS), waits for the last audio frame, the FSM transitions normally on `on_last_audio_frame()` — to `listening` (or to `going_to_sleep` if a `go_to_sleep` tool call fired during the slow turn) — and a WARN log `orchestrator.missing_turn_end` is emitted (FR14).
 
 **Given** an orchestrator stream that includes `turn_end`,
 **When** received,
-**Then** the splitter drains immediately and the lifecycle transitions normally on last-frame.
+**Then** the splitter drains immediately and the FSM transitions normally on last-frame.
 
-**Given** an integration test in `tests/integration/test_complex_turn.py` (PRD Journey 2),
+**Given** the `TurnRouter`'s old `NotImplementedError` stub from Story 2.4 in the orchestrator branch,
+**When** Story 4.7 lands,
+**Then** the stub is removed; the slow path now actually invokes `OrchestratorClient.dispatch(...)`.
+
+**Given** an integration test in `tests/integration/test_complex_turn.py` (PRD Journey 3),
 **When** the pipeline runs with mocked orchestrator emitting the full event sequence (`narration → subagent_started → subagent_progress → subagent_done → response_chunk × N → turn_end`),
-**Then** end-of-speech → first narration audio frame is measured for 30 simulated turns and p95 is recorded as the **NFR2 baseline** (≤1000ms target).
+**Then** end-of-speech → first narration audio frame is measured for 30 simulated turns and p95 is recorded as the **NFR2 baseline** (≤1000ms target). The FSM publishes `[working[thinking], working[delegating], speaking, listening]` correctly across each turn.
 
 **Given** an integration test for missing-`turn_end`,
 **When** the mock orchestrator drops the `turn_end` event after the last `response_chunk`,
-**Then** the pipeline still completes the turn (splitter flushes, lifecycle transitions to IDLE after last frame), and a WARN log `orchestrator.missing_turn_end` is emitted.
+**Then** the pipeline still completes the turn (splitter flushes, FSM transitions on last frame), and `orchestrator.missing_turn_end` WARN is emitted.
 
 **Given** the redaction discipline,
 **When** Epic 4's integration tests run,
@@ -1314,55 +1564,13 @@ So that I can ask "what's on my calendar?" and OLAF actually answers — narrati
 
 ## Epic 5: Production Hardening
 
-**Goal:** Make OLAF interruptible, hot-tunable, and durable. Barge-in halts playback and flushes; SIGHUP swaps `expression_map.yaml` atomically with mid-utterance defer; systemd manages the service; logs rotate; LAN orchestrator without a shared secret refuses to start; 7-day soak validates wake-word thresholds against real household ambient.
+**Goal:** Make OLAF hot-tunable and durable. SIGHUP swaps `expression_map.yaml` atomically with mid-utterance defer; systemd manages the service; logs rotate; LAN orchestrator without a shared secret refuses to start; 7-day soak validates wake-word thresholds, intent-sleep FP/FN, mood cadence (NFR31), and wake-greeting timing (NFR30) against real household ambient. **Interruptibility (barge-in) is the headline v1.5 feature — deferred to keep v1's quality budget on conversation-shape reliability.**
 
-### Story 5.1: Barge-in — VAD-during-SPEAKING + SPEAKING→LISTENING bypass + flush
-
-As Kamal,
-I want OLAF to stop speaking when I interrupt mid-response, flush in-flight expression events so embodiment doesn't get stuck on a half-finished pose, and cancel any active orchestrator stream — without false-firing on OLAF's own audio bleed,
-So that natural conversation feels like talking to a person, not a voice assistant that won't shut up.
-
-**Acceptance Criteria:**
-
-**Given** the lifecycle is in SPEAKING state,
-**When** the VAD signals voice activity above a sustained-voice threshold (configurable in `setup.toml` `[barge_in] sustained_ms = 250` and `[barge_in] energy_threshold = ...`),
-**Then** a barge-in event fires (FR5).
-
-**Given** OLAF's own audio is bleeding into the mic,
-**When** transient mic energy spikes that don't sustain past `sustained_ms` occur,
-**Then** **no** barge-in fires (false-positive guard per PRD Journey 3 failure-mode + NFR12 reasoning).
-
-**Given** a barge-in event fires,
-**When** the lifecycle machine receives it,
-**Then** it transitions SPEAKING → LISTENING **directly**, bypassing THINKING (FR29). The transition publishes a `LifecycleEvent`.
-
-**Given** Cartesia is mid-stream when barge-in fires,
-**When** the barge-in handler runs,
-**Then** Cartesia playback halts immediately, remaining audio frames in the buffer are discarded, and the splitter state flushes — any unpublished `OlafAction`/`ExpressionEvent` is **dropped, not published**, so the consumer doesn't get stuck mid-pose (FR30).
-
-**Given** an orchestrator stream is active when barge-in fires,
-**When** the handler runs,
-**Then** `OrchestratorClient.cancel(session_id)` is invoked (Story 4.2's stub becomes real here), issuing `HTTP DELETE /turn/{session_id}` to release the orchestrator's resources.
-
-**Given** the splitter has just published an `ExpressionEvent` whose corresponding audio frame has not yet played,
-**When** barge-in fires,
-**Then** the published event is the truth — the consumer holds that pose until next event (PRD Journey 3 contract).
-
-**Given** an integration test in `tests/integration/test_barge_in.py` (PRD Journey 3),
-**When** the test simulates: trigger turn → mid-SPEAKING fire VAD voice → assert,
-**Then** lifecycle goes SPEAKING → LISTENING (no THINKING), audio frames stop, splitter is empty, `cancel()` was invoked, and a new utterance after the barge-in is dispatched normally.
-
-**Given** PRD's "open in v1" note on barge-in tuning,
-**When** Story 5.1 lands,
-**Then** the configurable thresholds are exposed in `setup.toml`, defaults are set conservatively (favor false-negatives over false-positives initially), and a comment in the config notes that final tuning lives in Story 5.5's soak.
-
----
-
-### Story 5.2: SIGHUP atomic swap of `expression_map.yaml` + mid-utterance defer
+### Story 5.1: SIGHUP atomic swap of `expression_map.yaml` + mid-utterance defer
 
 As Kamal,
 I want to edit `expression_map.yaml` and apply changes without restarting the pipeline mid-session, with mid-utterance reloads deferred until the current turn completes and validation failures retaining the prior mapping,
-So that I can tune emotion poses live during real conversation without breaking the running session.
+So that I can tune `speech_emotion` poses live during real conversation without breaking the running session.
 
 **Acceptance Criteria:**
 
@@ -1374,23 +1582,23 @@ So that I can tune emotion poses live during real conversation without breaking 
 **When** the reload runs,
 **Then** the in-memory `ExpressionMapConfig` is replaced atomically (the resolver in `splitter/mapping.py` reads via a single reference that's swapped under a lock); the next turn that emits an emotion uses the new mapping.
 
-**Given** the new `expression_map.yaml` is malformed (bad schema, unknown extra key, missing payload, incompatible `schema_version`),
+**Given** the new `expression_map.yaml` is malformed (bad schema, unknown extra key, missing `expression_data`, `schema_version` ≠ 2),
 **When** the reload runs,
 **Then** validation rejects, the **prior mapping is retained** (no silent-broken state), and a clear error is logged at WARN with the line number and key path.
 
-**Given** a SIGHUP arrives mid-utterance (lifecycle in SPEAKING with audio frames still flowing),
+**Given** a SIGHUP arrives mid-utterance (FSM in `speaking` with audio frames still flowing),
 **When** the handler runs,
-**Then** the reload is **deferred** — queued — and applied after the current turn completes (lifecycle returns to IDLE) (FR33). A `config.reload.deferred` INFO log fires.
+**Then** the reload is **deferred** — queued — and applied after the current turn completes (FSM returns to `listening`) (FR33). A `config.reload.deferred` INFO log fires.
 
 **Given** NFR7 (≤1s SIGHUP reload),
 **When** measured on the dev host (not mid-utterance),
 **Then** signal-receipt → reload-complete is < 1 second at p95 over 30 reloads.
 
 **Given** the architecture's open question on router-rule hot-reload,
-**When** Story 5.2 lands,
-**Then** `[router]` patterns are **also** included in the SIGHUP swap (per architecture's "lean yes, config-only extensibility theme" — extends FR32 to cover router patterns); `setup.toml` non-router/non-mapping fields still require restart.
+**When** Story 5.1 lands,
+**Then** `[router]` patterns are **also** included in the SIGHUP swap (per architecture's "lean yes, config-only extensibility theme" — extends FR32 to cover router patterns); `setup.toml` non-router/non-mapping fields still require restart. The mood enum, activity state set, tool registry, and greeting fallback list are **code-level** and not SIGHUP-reloadable (per architecture's mood enum lifecycle decision).
 
-**Given** an integration test in `tests/integration/test_sighup_reload.py` (PRD Journey 5),
+**Given** an integration test in `tests/integration/test_sighup_reload.py` (PRD Journey 8),
 **When** the test runs the pipeline, edits `expression_map.yaml` with a valid change, sends SIGHUP, then triggers a turn,
 **Then** the new mapping is in effect for that turn.
 **And** when the same test sends SIGHUP with a malformed file, **then** the old mapping persists and an error is logged.
@@ -1398,10 +1606,10 @@ So that I can tune emotion poses live during real conversation without breaking 
 
 ---
 
-### Story 5.3: Security & config hardening — LAN orchestrator rule + log-rotation config + schema-version contract test
+### Story 5.2: Security & config hardening — LAN orchestrator rule + log-rotation config + schema-version contract test
 
 As Kamal,
-I want the pipeline to refuse to start with an insecure orchestrator config, log retention to be configurable not just defaulted, and a contract test proving every config file and event schema rejects incompatible `schema_version` consistently,
+I want the pipeline to refuse to start with an insecure orchestrator config, log retention to be configurable not just defaulted, and a contract test proving every config file and the four event schemas reject incompatible `schema_version` consistently,
 So that v1 ships with no surprise security holes or undefended schema drift.
 
 **Acceptance Criteria:**
@@ -1427,8 +1635,8 @@ So that v1 ships with no surprise security holes or undefended schema drift.
 **Then** `RotatingFileHandler` uses them for `maxBytes` and `backupCount` (with retention computed from the largest expected log volume per day).
 
 **Given** a contract test in `tests/contract/test_schema_version.py`,
-**When** the test loads `setup.toml`, `expression_map.yaml`, `ExpressionEvent`, `LifecycleEvent`, and `OrchestratorStreamEvent` each with an unsupported `schema_version`,
-**Then** every load/parse raises `SchemaVersionError` with a message naming the file/type, the file's version, and the supported version (NFR27 final enforcement — proves the contract holds across **all** schema-versioned surfaces, not just the ones already tested epic-by-epic).
+**When** the test loads `setup.toml`, `expression_map.yaml`, `MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent`, and `OrchestratorStreamEvent` each with an unsupported `schema_version`,
+**Then** every load/parse raises `SchemaVersionError` with a message naming the file/type, the file's version, and the supported version 2 (NFR27 final enforcement — proves the contract holds across **all** schema-versioned surfaces and **all four event types**, not just the ones already tested epic-by-epic).
 
 **Given** an unit test for the LAN-orchestrator rule,
 **When** invalid configurations are loaded (LAN URL with no bearer/mTLS, malformed bearer env reference, mTLS path not readable),
@@ -1436,7 +1644,7 @@ So that v1 ships with no surprise security holes or undefended schema drift.
 
 ---
 
-### Story 5.4: systemd service deployment
+### Story 5.3: systemd service deployment
 
 As Kamal,
 I want a committed systemd unit that manages the pipeline as a service with restart-on-failure, plus deployment instructions,
@@ -1466,7 +1674,7 @@ So that I can install once and have OLAF run on boot, restart on crash, and surv
 
 **Given** SIGTERM (sent by `systemctl stop`),
 **When** received,
-**Then** the pipeline drains in-flight Cartesia frames (Story 2.5 contract), closes httpx clients, calls `Ros2ExpressionPublisher.disconnect()`, and exits 0.
+**Then** the pipeline drains in-flight Cartesia frames (Story 2.5 contract), closes httpx clients, calls `EventPublisher.disconnect()` (which closes all four publishers), calls `MoodController` final cleanup if applicable, and exits 0.
 
 **Given** an integration test in `tests/integration/test_systemd_lifecycle.py` (manual on the dev host, not CI),
 **When** the test exercises start → trigger turn → SIGTERM → restart → trigger turn,
@@ -1474,10 +1682,10 @@ So that I can install once and have OLAF run on boot, restart on crash, and surv
 
 ---
 
-### Story 5.5: 7-day soak + wake-word threshold tuning + v1 sign-off
+### Story 5.4: 7-day soak + intent-sleep tuning + mood cadence verification + v1 sign-off
 
 As Kamal,
-I want a continuous 7-day run on the dev host under real household ambient with wake-word thresholds tuned against actual conditions, USB hot-plug survival verified, and a final v1 sign-off checklist,
+I want a continuous 7-day run on the dev host under real household ambient with wake-word thresholds tuned against actual conditions, intent-sleep FP/FN tuned via Talker prompt iteration, mood cadence verified against NFR31, USB hot-plug survival confirmed, and a final v1 sign-off checklist,
 So that I can declare voice-agent-pipeline v1 done with confidence and cut the release.
 
 **Acceptance Criteria:**
@@ -1494,6 +1702,18 @@ So that I can declare voice-agent-pipeline v1 done with confidence and cut the r
 **When** false-negative rate is measured (≥100 attempts across varied speaking conditions),
 **Then** the rate is ≤ 5% at the production threshold (NFR13). Final value committed.
 
+**Given** intent-sleep events during the soak,
+**When** Talker `go_to_sleep()` tool calls are tracked across real conversations,
+**Then** false-positive rate (Talker fires `go_to_sleep` mid-real-conversation, ending it prematurely) and false-negative rate (Talker misses an actual goodbye, leaves OLAF awake until manual sleep) are measured and tuned to within target via iterative Talker system prompt revision. Final prompt committed in this story.
+
+**Given** mood cadence during the soak,
+**When** `MoodEvent` publishes vs `mood.publish_dropped` (cooldown) WARN logs are counted,
+**Then** publish rate is ≤ 4 per hour over any sliding 60-min window (NFR31), and the cooldown drops are not so frequent that the user-facing mood is "stuck" — if the soak shows the cooldown rate-limiting too aggressively, the mood enum or Talker prompt is tuned.
+
+**Given** wake-greeting timing during the soak,
+**When** `(sleeping → waking transition timestamp → first audio frame of greeting)` is measured for ≥30 wakes,
+**Then** the p95 is ≤ 800 ms (NFR30) — including any falls-back-to-static-list invocations.
+
 **Given** USB hot-plug events during the soak (intentional or incidental — keyboard, mouse, drive),
 **When** they occur on devices unrelated to the pinned mic/speaker,
 **Then** the pipeline does not restart and audio capture/playback continue uninterrupted (NFR11).
@@ -1506,18 +1726,55 @@ So that I can declare voice-agent-pipeline v1 done with confidence and cut the r
 **Given** the soak completes,
 **When** the v1 sign-off checklist is run,
 **Then** all of these pass:
-1. **All 5 PRD measurable outcomes** for v1 hold over a 30-min representative slice of the soak: no voice/expression drift, no unhandled tag freeze, wake-word reliable, no audio cutout >100ms (NFR6), no latency target missed by >20%.
+1. **All v1 PRD measurable outcomes** hold over a 30-min representative slice of the soak: no voice / `speech_emotion` drift, no unhandled tag freeze, wake-word reliable at threshold, no audio cutout >100ms (NFR6), no latency target missed by >20%, mood doesn't flicker turn-to-turn, intent-sleep doesn't false-trigger.
 2. **NFR1** (simple-turn ≤1500ms p95) verified against soak traffic.
 3. **NFR2** (complex-turn ≤1000ms p95) verified against soak traffic.
 4. **NFR4** (Cartesia TTS ≤400ms p95) verified.
-5. **NFR5** (voice/embodiment 30-80ms anticipatory p95) verified.
+5. **NFR5** (voice / `speech_emotion` 30–80ms anticipatory p95) verified.
 6. **NFR8** (7-day continuous uptime) verified — this story's primary contract.
 7. **NFR12, NFR13** (wake-word FP/FN) verified at final threshold.
-8. **NFR26** (spec-as-contract) — PRD/architecture have been updated wherever implementation deviated; the spec-drift list (added in Story 4.2) is empty or has documented rationale for each open item.
+8. **NFR30** (wake-greeting ≤800ms p95) verified.
+9. **NFR31** (`mood` cadence ≤4 publishes/hour) verified.
+10. **NFR32** (tool-call dispatch overhead p95 < 50 ms) verified.
+11. **Intent-sleep FP/FN** within tuned target; final Talker system prompt committed.
+12. **J1, J4, J5** acceptance verified end-to-end in real conditions (wake-with-greeting, intent-sleep, coherent mood across the conversation). J2 (simple turn) and J3 (complex turn) inherit from Epic 2 + 4 integration tests; J7 (unmapped emotion) and J8 (SIGHUP) from Epic 3 + 5 integration tests.
+13. **NFR26** (spec-as-contract) — PRD, brief, distillate, and architecture have all been updated wherever implementation deviated; the spec-drift list is empty or has documented rationale for each open item.
 
 **Given** the sign-off completes,
 **When** I cut the v1 release tag,
-**Then** the release notes summarize: epics shipped, NFR results table (target vs measured), known v2-deferred items (Hailo port, resilience layer, Pi resource calibration), and any architecture deviations. The v1 spec docs (PRD, brief, distillate, architecture) are tagged at the same commit.
+**Then** the release notes summarize: epics shipped (5 epics, 30 stories), NFR results table (target vs measured), known **v1.5-deferred items** (barge-in, cross-restart mood persistence, expanded `working` sub-modes, configurable idle auto-sleep), known **v2-deferred items** (Hailo port, resilience layer, Pi resource calibration), and any architecture deviations. The v1 canonical spec quartet (PRD, brief, distillate, architecture) is tagged at the same commit.
+
+---
+
+## v1.5 Backlog (Post-v1)
+
+These items were deferred from v1 in the 2026-05-06 direction shift to keep v1's quality budget focused on conversation-shape reliability. They are tracked here for v1.5 sprint planning. Story specs are intentionally lightweight (1–2 paragraphs) — full acceptance criteria are written when v1.5 planning begins.
+
+### Story v1.5-1: Barge-in — VAD-during-SPEAKING + flush + cancellation
+
+The barge-in cluster (FR5, FR29, FR30) was the headline v1 capability deferred in the 2026-05-06 direction shift. Activity FSM (Story 4.3) has the `speaking → listening` arrow already in place; v1.5 wires the VAD-during-SPEAKING detection (with sustained-voice threshold to avoid false positives from OLAF's own audio bleed), splitter flush of in-flight `speech_emotion` + `vocalization` events, last-published cache reset, and `OrchestratorClient.cancel(session_id)` (the v1 stub from Story 4.2 becomes real). Activates `tests/integration/test_barge_in.py` (PRD Journey J6).
+
+**v1 stub artifacts to wire:** `OrchestratorClient.cancel()` raises `NotImplementedError` in v1 (Story 4.2). This story replaces the body with the real `HTTP DELETE /turn/{session_id}` call.
+
+**Configurables to add in `setup.toml`:** `[barge_in] sustained_ms = 250`, `[barge_in] energy_threshold = ...`, conservative defaults favoring false-negatives over false-positives initially; final tuning lives in v1.5 soak.
+
+---
+
+### Story v1.5-2: Cross-restart mood persistence
+
+Persist `current_mood` to a small state file (`./state/mood.json` or similar) on shutdown; restore on startup. `MoodState.__init__` reads if present; `MoodController.set` writes through. Default-on with `[mood] persist = true`; off if disabled. Single-file, ~30 LOC. Mood survives systemd restarts (relevant for the 7-day soak; without persistence, every restart resets to `"calm"`).
+
+---
+
+### Story v1.5-3: Expanded `working` sub-modes
+
+Extend `WorkingSubmode = Literal["thinking", "delegating", "searching", "tooling", "composing"]` (additive Literal extension; per CLAUDE.md rule 6 this is forward-compat, no `schema_version` bump needed). Talker prompt updated to indicate which sub-mode applies when. Activity FSM payload schema is forward-compat. New sub-modes published in `ActivityEvent` payloads. Useful when v1.5 adds RAG / web-search tooling beyond the v1 `go_to_sleep` + `set_mood` registry.
+
+---
+
+### Story v1.5-4: Configurable idle auto-sleep fallback
+
+Optional fallback if Talker fails to detect goodbye. `setup.toml` `[activity] idle_auto_sleep_seconds = 0` (off by default; positive value enables). When enabled and no user speech for N seconds while AWAKE, FSM schedules `going_to_sleep` deferred-transition (same path as `go_to_sleep` tool call). For users who want a safety net beyond intent-only sleep — should remain off-by-default since v1 ships intent-only as the canonical behaviour.
 
 ---
 
@@ -1526,7 +1783,9 @@ So that I can declare voice-agent-pipeline v1 done with confidence and cut the r
 These NFRs aren't owned by a single epic — they're enforced as architectural properties from Epic 1 onward and re-validated each sprint:
 
 - **NFR23–NFR25** (security & redaction): logging/redaction land Epic 1; new credentials added in Epic 2 inherit the `.env` pattern.
-- **NFR26** (spec-as-contract): every epic must update PRD/architecture if it deviates.
+- **NFR26** (spec-as-contract): every epic must update PRD, brief, distillate, and architecture if it deviates (the four-document set governed by CLAUDE.md rule 9).
 - **NFR28** (testability): every Epic adds tests at the Protocol-mock seam in `tests/unit/`, plus integration tests covering the journey unlocked.
 - **NFR29** (JSON logs): established Epic 1, immutable thereafter.
+- **NFR31** (mood cadence): established Epic 3 (Story 3.6 — `MoodController.set()` boundary check); soak-validated Epic 5 (Story 5.4).
+- **NFR32** (tool-call dispatch overhead bounded): established Epic 4 (Story 4.4 — async-gather text-first, tools-concurrent ordering); soak-validated Epic 5 (Story 5.4).
 
