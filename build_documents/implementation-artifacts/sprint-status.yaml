@@ -79,7 +79,7 @@ development_status:
   epic-3: in-progress
   3-1-expression-map-loader: review
   3-2-mapping-resolver-and-cache: review
-  3-3-streaming-ssml-state-machine: ready-for-dev
+  3-3-streaming-ssml-state-machine: review
   3-4-event-schema-rebuild: ready-for-dev
   3-5-event-publisher-ros2-and-log-adapter: ready-for-dev
   3-6-mood-module-state-and-controller: ready-for-dev
