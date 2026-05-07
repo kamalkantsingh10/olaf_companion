@@ -54,6 +54,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from voice_agent_pipeline.activity.machine import ActivityFSM
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
 from voice_agent_pipeline.audio.transport import build_audio_transport
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
@@ -575,7 +576,7 @@ class _WakewordEventLogger(FrameProcessor):
     """Surface :class:`WakeWordDetectedFrame` arrivals as JSON log events.
 
     INFO-level so the operator's default ``voice-agent.log`` shows wakes.
-    Story 4.4's lifecycle FSM will later subscribe to the same frame and
+    Story 4.3's activity FSM uses the same frame as a transition trigger and
     drive state transitions; this logger is a separate concern.
     """
 
@@ -592,6 +593,75 @@ class _WakewordEventLogger(FrameProcessor):
                 keyword_index=frame.keyword_index,
                 timestamp_ns=frame.timestamp_ns,
             )
+        await self.push_frame(frame, direction)
+
+
+class _FsmEventBridge(FrameProcessor):
+    """Translate audio-pipeline frames into :class:`ActivityFSM` transitions.
+
+    Story 4.3 — keeps the ``audio/*`` package decoupled from
+    ``activity/*``. ``WakewordProcessor`` and ``VadProcessor`` keep
+    emitting their existing frames (``WakeWordDetectedFrame``,
+    ``UtteranceCapturedFrame``); this bridge consumes both and calls
+    the matching FSM method.
+
+    What this story wires:
+
+    - ``WakeWordDetectedFrame`` → ``fsm.on_wake_detected()``
+      (``sleeping → waking``).
+    - ``UtteranceCapturedFrame`` → ``fsm.on_speech_started()`` then
+      ``fsm.on_speech_ended()`` chained together — the v1 VAD only
+      emits one frame at end-of-utterance, so the brief ``waking →
+      listening`` step happens here in the bridge rather than as a
+      separate VAD signal.
+
+    What this story does NOT wire (deferred):
+
+    - ``on_first_audio_frame`` / ``on_last_audio_frame`` — these
+      require detecting first/last TTS audio frame leaving the
+      transport. Story 3.7's ``_PrePublishProcessor`` doesn't track
+      "last frame" yet; Story 4.6 (mic-mode flip) and Story 4.7
+      (orchestrator slow-path with ``turn_end`` detection) will land
+      this with concrete signal sources.
+    - ``_TurnBoundaryFrame`` migration of Story 3.7's segmenter
+      reset — also deferred; the existing ``UtteranceCapturedFrame``
+      proxy in :class:`SegmenterProcessor` keeps working.
+
+    Why a separate processor (not extending the existing wakeword /
+    VAD processors): keeps the audio package decoupled from the
+    activity package. ``audio/wakeword.py`` doesn't need to import
+    ``activity.machine``; it just emits its detection frame and
+    moves on.
+    """
+
+    def __init__(self, fsm: ActivityFSM) -> None:
+        super().__init__()  # pyright: ignore[reportUnknownMemberType]
+        self._fsm = fsm
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Pipecat hook — drive FSM transitions; forward the frame unchanged."""
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, WakeWordDetectedFrame):
+            # If the user manages to fire the wake-word during the
+            # deferred-sleep race window (before on_last_audio_frame
+            # lands), clear the pending flag first so the next
+            # last-frame transitions normally instead of dropping us
+            # back to sleeping (FR46 cancellation rule).
+            self._fsm.cancel_pending_sleep()
+            await self._fsm.on_wake_detected()
+        elif isinstance(frame, UtteranceCapturedFrame):
+            # End-of-user-speech. v1 VAD doesn't emit a separate
+            # speech-started frame; collapse the waking → listening
+            # → working[thinking] chain here. Idempotent on
+            # on_speech_started if the FSM is already in listening
+            # (continuous-conversation flow per Story 4.6).
+            if self._fsm.current_state == "waking":
+                await self._fsm.on_speech_started()
+            await self._fsm.on_speech_ended()
+
+        # Forward the frame downstream so Story 1.7's STT processor
+        # and the rest of the chain keep working.
         await self.push_frame(frame, direction)
 
 
@@ -697,6 +767,15 @@ async def run_pipeline(config: SetupConfig) -> None:
         )
         await mood_controller.publish_initial()
 
+        # Story 4.3: activity FSM. Constructed AFTER the publisher
+        # connects (FSM transitions publish via event_publisher) and
+        # BEFORE the pipeline starts (start() publishes the initial
+        # ``starting → sleeping`` transition + first ``wake_word_only``
+        # mic-mode signal). Story 4.5 will inject the wake-greeting
+        # callback here; Story 4.6 will subscribe to mic_mode_queue.
+        activity_fsm = ActivityFSM(publisher=event_publisher)
+        await activity_fsm.start()
+
         # Story 3.2 + 3.3 + 3.7: segmenter + cache, then the processors
         # that drive them in the Pipecat pipeline.
         segmenter = Segmenter(mapping)
@@ -711,6 +790,8 @@ async def run_pipeline(config: SetupConfig) -> None:
                 SttProcessor(stt_backend),
                 _SttResultLogger(config.stt.low_confidence_threshold),
                 _WakewordEventLogger(),
+                # Story 4.3: drive FSM transitions from wake + VAD frames.
+                _FsmEventBridge(activity_fsm),
                 TurnDispatchProcessor(router),
                 # Story 3.7: SegmenterProcessor consumes TalkerResponseFrame
                 # and emits SegmentFrame per boundary.

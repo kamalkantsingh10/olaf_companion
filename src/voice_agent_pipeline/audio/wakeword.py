@@ -64,7 +64,7 @@ class WakeWordDetectedFrame(Frame):
         keyword: Human-readable name; today always ``"hey_olaf"``. Resolved
             via a name table once we ship multiple keywords.
         timestamp_ns: Monotonic nanosecond timestamp at detection. Story
-            4.4's lifecycle FSM reads this to decide whether the wake fires
+            4.3's activity FSM reads this to decide whether the wake fires
             old (e.g. >5s ago) and should be ignored.
     """
 
