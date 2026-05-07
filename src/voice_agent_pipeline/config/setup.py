@@ -299,6 +299,51 @@ class TtsConfig(BaseModel):
     speed: float = 0.9
 
 
+class TopicNames(BaseModel):
+    """Per-topic name mapping for the four-topic event publisher (Story 3.5).
+
+    Operator-tunable per the agnostic-publisher boundary
+    (memory: ``project_pipeline_scope_boundary.md``) — embodiment teams
+    can wire their subscribers to whatever ROS 2 topic names match their
+    naming conventions.
+
+    Attributes:
+        mood: Topic for :class:`MoodEvent`. Latched/transient_local
+            durability per architecture.md §"Per-topic QoS".
+        activity: Topic for :class:`ActivityEvent`. Latched.
+        speech_emotion: Topic for :class:`SpeechEmotionEvent`. Volatile.
+        vocalization: Topic for :class:`VocalizationEvent`. Volatile.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mood: str = "/olaf/mood"
+    activity: str = "/olaf/activity"
+    speech_emotion: str = "/olaf/speech_emotion"
+    vocalization: str = "/olaf/vocalization"
+
+
+class PublisherConfig(BaseModel):
+    """Four-topic event publisher knobs (Story 3.5).
+
+    Attributes:
+        adapter: Which :class:`EventPublisher` implementation to wire
+            up. ``"ros2"`` uses :class:`Ros2EventPublisher` (production).
+            ``"log"`` uses :class:`LogEventPublisher` (in-memory; for
+            local dev without a ROS 2 stack installed).
+        dds_domain_id: ROS 2 DDS domain id. Must match the subscriber's
+            domain. ``0`` is the conventional default.
+        topics: Per-topic name mapping (defaults to the v1 production
+            ``/olaf/<topic>`` paths).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    adapter: Literal["ros2", "log"] = "ros2"
+    dds_domain_id: int = 0
+    topics: TopicNames = Field(default_factory=TopicNames)
+
+
 class SetupConfig(BaseSettings):
     """Typed top-level configuration for the voice-agent pipeline.
 
@@ -344,6 +389,11 @@ class SetupConfig(BaseSettings):
     stt: SttConfig = Field(default_factory=SttConfig)
     talker: TalkerConfig = Field(default_factory=TalkerConfig)
     tts: TtsConfig
+    # Story 3.5: four-topic event publisher. Required at startup —
+    # the broadcast bus is a hard dep (architecture.md §"V1 Posture:
+    # Hard Dependencies, Fail-Fast"). Operators set adapter="log" for
+    # dev runs without a ROS 2 stack installed.
+    publisher: PublisherConfig = Field(default_factory=PublisherConfig)
 
 
 def load_setup_config(

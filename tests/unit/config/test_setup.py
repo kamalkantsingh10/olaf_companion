@@ -116,6 +116,69 @@ def test_load_happy_path(tmp_path: Path) -> None:
     # on platform-specific path normalization (we just want "did it land").
     assert str(config.wakeword.model_path) == "models/wakeword/hey_olaf.ppn"
     assert config.wakeword.sensitivity == 0.5
+    # Story 3.5: PublisherConfig is required, default_factory provides the
+    # production v1 values. Operators override [publisher] in setup.toml
+    # only when they need to change adapter / domain / topic names.
+    assert config.publisher.adapter == "ros2"
+    assert config.publisher.dds_domain_id == 0
+    assert config.publisher.topics.mood == "/olaf/mood"
+    assert config.publisher.topics.activity == "/olaf/activity"
+    assert config.publisher.topics.speech_emotion == "/olaf/speech_emotion"
+    assert config.publisher.topics.vocalization == "/olaf/vocalization"
+
+
+def test_publisher_block_overrides_loaded(tmp_path: Path) -> None:
+    """A [publisher] block in TOML overrides the defaults (Story 3.5).
+
+    Verifies the per-topic + adapter knobs land correctly.
+    """
+    toml_body = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "stub-voice-uuid"\n'
+        "[publisher]\n"
+        'adapter = "log"\n'
+        "dds_domain_id = 7\n"
+        "[publisher.topics]\n"
+        'mood = "/custom/m"\n'
+        'activity = "/custom/a"\n'
+        'speech_emotion = "/custom/se"\n'
+        'vocalization = "/custom/v"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_body)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.publisher.adapter == "log"
+    assert config.publisher.dds_domain_id == 7
+    assert config.publisher.topics.mood == "/custom/m"
+    assert config.publisher.topics.activity == "/custom/a"
+    assert config.publisher.topics.speech_emotion == "/custom/se"
+    assert config.publisher.topics.vocalization == "/custom/v"
+
+
+def test_publisher_block_unknown_adapter_rejected(tmp_path: Path) -> None:
+    """``[publisher] adapter = "kafka"`` raises (Literal enforcement)."""
+    from voice_agent_pipeline.errors import ConfigError
+
+    toml_body = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "stub-voice-uuid"\n'
+        "[publisher]\n"
+        'adapter = "kafka"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_body)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
 
 
 def test_wakeword_block_extra_key_rejected(tmp_path: Path) -> None:

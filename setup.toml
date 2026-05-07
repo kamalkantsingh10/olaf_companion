@@ -125,9 +125,22 @@ model = "sonic-3"
 # >1.0 speeds up. Adjust to taste.
 speed = 0.9
 
+# Story 3.5: four-topic event publisher. `adapter = "ros2"` for
+# production; `adapter = "log"` for local dev without a ROS 2 stack
+# (LogEventPublisher records every publish in-memory). DDS domain id
+# must match the subscriber's domain. Topic names are operator-tunable
+# per the agnostic-publisher boundary.
+[publisher]
+adapter = "ros2"
+dds_domain_id = 0
+[publisher.topics]
+mood = "/olaf/mood"
+activity = "/olaf/activity"
+speech_emotion = "/olaf/speech_emotion"
+vocalization = "/olaf/vocalization"
+
 # Sections populated by subsequent stories:
 # [talker] -- extended in Story 4.1 (grounded_keys for belief-state)
-# [publisher]      -- Story 3.4 (transport, dds_domain_id, expression_channel, lifecycle_channel)
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
 # [router]         -- Story 4.3 (slow_path_patterns, default)
 # [daemon]         -- Story 4.1/4.2 (url) + Story 5.3 (bearer_token_env, mtls)

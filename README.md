@@ -85,6 +85,64 @@ target.
 - **Epic 5 (production hardening):** barge-in, SIGHUP atomic config
   swap, systemd unit, 7-day soak, NFR1 calibration.
 
+## ROS 2 / rclpy setup (Story 3.5)
+
+The four-topic event publisher (`mood`, `activity`, `speech_emotion`,
+`vocalization`) needs `rclpy` available to the venv at runtime. ROS 2
+is **not** installed via `uv` — it lives in your system's package
+manager.
+
+### System install (Ubuntu 24.04 / Pi OS)
+
+```bash
+sudo apt install ros-jazzy-rclpy ros-jazzy-std-msgs
+```
+
+Use whatever ROS 2 distro your platform supports. v1 is tested
+against Jazzy.
+
+### Make `rclpy` visible to the venv
+
+ROS 2's `setup.bash` adds the system-installed `rclpy` to
+`PYTHONPATH`. Source it before invoking the pipeline:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+just run
+```
+
+Verify the bridge works:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+uv run python -c "import rclpy; rclpy.init(); print('ok')"
+```
+
+### Dev mode without ROS 2
+
+If you want to run the pipeline without a ROS 2 stack installed, edit
+`setup.toml`:
+
+```toml
+[publisher]
+adapter = "log"
+```
+
+`LogEventPublisher` records every publish in-memory (useful for unit
+tests + local dev without DDS subscribers). The pipeline starts
+identically; only the wire-side broadcast is no-op.
+
+### Subscribing to the topics
+
+With ROS 2 sourced and the pipeline running, in a second terminal:
+
+```bash
+ros2 topic echo /olaf/speech_emotion
+ros2 topic echo /olaf/mood
+ros2 topic echo /olaf/activity
+ros2 topic echo /olaf/vocalization
+```
+
 ## Audio device setup (per machine)
 
 The pipeline pins the microphone (and later the speaker) by **regex match
