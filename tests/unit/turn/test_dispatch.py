@@ -99,25 +99,31 @@ def test_dispatcher_emits_talker_response_frame(
     assert transcript_passthrough[0] is transcript
 
 
-def test_dispatcher_uses_clarification_prompt_for_low_confidence(
+def test_dispatcher_clarification_short_circuits_talker(
     stt_config: SttConfig,
     mock_talker: MagicMock,
 ) -> None:
-    """Low-confidence transcript → talker.complete called with the clarification prompt.
+    """Low-confidence transcript → emit clarification_prompt verbatim, no Talker call.
 
-    Pins the FR8 closure: the clarification prompt is what reaches
-    Talker on a low-confidence turn, NOT the user's noisy text.
+    Story 3.7 live-test fix: the clarification_prompt IS the response
+    we want Ooppi to say. The original Story 2.4 design fed it
+    through the Talker, but the LLM treated it as user input and
+    answered literally instead of delivering the apology. Bypass:
+    emit the configured prompt as the response, no Talker round-trip.
     """
-    mock_talker.complete.return_value = "Sorry, I missed that — what was it?"
     router = TurnRouter(stt_config, mock_talker)
     dispatcher = TurnDispatchProcessor(router)
-    _drain_pushed(dispatcher)
+    pushed = _drain_pushed(dispatcher)
 
     transcript = TranscriptFrame(text="hjzz mjy?", confidence=0.2, end_to_transcript_ms=42)
     asyncio.run(dispatcher.process_frame(transcript, direction=None))  # type: ignore[arg-type]
 
-    # The Talker sees the clarification prompt, not the noisy "hjzz mjy?".
-    mock_talker.complete.assert_awaited_once_with("please repeat?")
+    # Talker NOT called on the clarification path.
+    mock_talker.complete.assert_not_awaited()
+    # The TalkerResponseFrame carries the configured prompt verbatim.
+    response_frames = [f for f in pushed if isinstance(f, TalkerResponseFrame)]
+    assert len(response_frames) == 1
+    assert response_frames[0].text == "please repeat?"
 
 
 def test_dispatcher_propagates_talker_error(

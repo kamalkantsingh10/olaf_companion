@@ -240,26 +240,39 @@ class TurnDispatchProcessor(FrameProcessor):
         if isinstance(frame, TranscriptFrame):
             decision = self._router.route(frame.text, frame.confidence)
             if decision.target == "talker":
-                started_ns = time.time_ns()
-                response_text = await self._router.talker.complete(decision.text)
-                # ``talker.responded`` carries latency + the
-                # clarification flag so operators can see clarification
-                # turns vs normal turns in the same INFO feed. The
-                # response TEXT is intentionally NOT logged here —
-                # privacy posture (Story 1.3 redaction); the temporary
-                # ``_TalkerResponseLogger`` below logs the text at DEBUG
-                # only, which Story 2.5 will replace with Cartesia
-                # synthesis (and the text never lands in INFO+ logs).
-                latency_ms = (time.time_ns() - started_ns) // 1_000_000
-                log.info(
-                    "talker.responded",
-                    latency_ms=latency_ms,
-                    clarification=decision.clarification,
-                )
-                await self.push_frame(
-                    TalkerResponseFrame(text=response_text),
-                    direction,
-                )
+                if decision.clarification:
+                    # Story 3.7 live-test fix: clarification turns
+                    # short-circuit the Talker. The configured
+                    # ``clarification_prompt`` IS the response we want
+                    # Ooppi to say verbatim — feeding it through the
+                    # LLM made Groq's Llama treat it as a question and
+                    # answer literally ("No worries, I'm right here on
+                    # Kamal's desk"). Bypass: emit the prompt as the
+                    # response directly. Faster (no API round-trip),
+                    # deterministic (no LLM creativity), and matches
+                    # the operator's intent.
+                    log.info(
+                        "talker.responded",
+                        latency_ms=0,
+                        clarification=True,
+                    )
+                    await self.push_frame(
+                        TalkerResponseFrame(text=decision.text),
+                        direction,
+                    )
+                else:
+                    started_ns = time.time_ns()
+                    response_text = await self._router.talker.complete(decision.text)
+                    latency_ms = (time.time_ns() - started_ns) // 1_000_000
+                    log.info(
+                        "talker.responded",
+                        latency_ms=latency_ms,
+                        clarification=False,
+                    )
+                    await self.push_frame(
+                        TalkerResponseFrame(text=response_text),
+                        direction,
+                    )
             else:
                 # Story 4.3 will wire this branch; raising explicitly
                 # makes a misconfiguration scream rather than fall through.

@@ -206,16 +206,27 @@ class StateMachine:
             self._state = "TEXT"
 
     def _step_in_emotion(self, ch: str) -> Iterator[ParseEvent]:
-        # Reading attribute payload + the `/>` close. We accept any
-        # well-formed self-closing form: `<emotion value="X"/>` or
-        # `<emotion value="X" />` (extra whitespace before `/>`).
+        # Reading attribute payload until the close.
+        #
+        # Both close forms are accepted (Story 3.7 live-test
+        # discovery — Groq's llama-3.1-8b-instant inconsistently emits
+        # the non-self-closing form despite a self-closing prompt
+        # example):
+        #
+        #   `<emotion value="X"/>`  — self-closing (XML-ish, ideal)
+        #   `<emotion value="X">`   — non-self-closing (LLM-emitted)
+        #   `<emotion value="X" />` — whitespace before `/>`
+        #
+        # We close on the first `>` after the value's closing quote.
+        # The leading `<emotion ` is fixed; we strip it plus a
+        # possible trailing `/` (and any surrounding whitespace) to
+        # extract the attribute body before parsing.
         self._tag_buf += ch
-        # Detect close.
-        if self._tag_buf.endswith("/>"):
-            # Extract value="..." — Cartesia uses double quotes.
-            # Slice off the leading `<emotion ` (9 chars) and trailing
-            # `/>` (2 chars), then parse the attribute body.
-            body = self._tag_buf[len("<emotion ") : -2].strip()
+        if ch == ">":
+            # Slice off the leading `<emotion ` and trailing `>`.
+            body = self._tag_buf[len("<emotion ") : -1].strip()
+            # Strip optional trailing `/` from the self-closing form.
+            body = body.rstrip("/").rstrip()
             value = _parse_emotion_value(body)
             if value is None:
                 # Malformed attribute — emit accumulated chars as text

@@ -184,6 +184,34 @@ def test_self_closing_tag_with_extra_whitespace() -> None:
     assert events == [EmotionTagEvent("excited"), EndOfStreamEvent()]
 
 
+def test_non_self_closing_emotion_tag_accepted() -> None:
+    """`<emotion value="happy">` (no trailing slash) parses OK.
+
+    Story 3.7 live-test discovery: Groq's llama-3.1-8b-instant emits
+    the non-self-closing form roughly half the time despite the
+    Talker prompt's self-closing examples. Defensive parsing accepts
+    both — same emotion value, same downstream behavior.
+    """
+    machine = StateMachine()
+    events = _drain(machine, '<emotion value="happy"> Hi.')
+    assert events == [
+        EmotionTagEvent("happy"),
+        TextEvent(" Hi."),
+        EndOfStreamEvent(),
+    ]
+
+
+def test_non_self_closing_with_trailing_whitespace() -> None:
+    """`<emotion value="happy" >` (space before bare `>`) parses OK."""
+    machine = StateMachine()
+    events = _drain(machine, '<emotion value="happy" > Hi.')
+    assert events == [
+        EmotionTagEvent("happy"),
+        TextEvent(" Hi."),
+        EndOfStreamEvent(),
+    ]
+
+
 def test_attribute_with_double_quote() -> None:
     """v1 supports `value="X"` (double quote). Single-quote not required."""
     machine = StateMachine()
