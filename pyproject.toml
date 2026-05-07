@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.14.0",
     "structlog>=25.5.0",
     "websockets>=16.0",
+    "pyyaml>=6.0.2",
 ]
 
 [build-system]

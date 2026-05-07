@@ -1,31 +1,212 @@
-schema_version: 1
+# Cartesia tag → speech_emotion payload mapping.
+#
+# Authored in Story 3.1. Schema validated by
+# `voice_agent_pipeline.config.expression_map.load_from_path`.
+#
+# Two ways to add a new emotion (architecture.md §"Extensibility —
+# Adding a New `speech_emotion` Must Stay Simple"):
+#
+#   1. Promote to first-class: add a new entry under `emotions:` with a
+#      non-empty `expression_data:` mapping. The resolver returns it
+#      directly — no fallback resolution. Use this when the emotion
+#      deserves its own pose / LED color / haptic.
+#
+#   2. Fall back to an existing primary: add the tag to the `members:`
+#      list of an existing entry under `fallback_families:`. The
+#      resolver returns the family's `maps_to` payload. Use this when
+#      the new tag is "another flavor of excited" or "another flavor
+#      of sad" and reusing the parent's pose is fine.
+#
+# The `expression_data:` block is **opaque** to the pipeline — values
+# are negotiated with the embodiment project and published verbatim on
+# `speech_emotion.payload.expression_data`. Edit freely; the loader
+# does NOT validate inner shape (only that the mapping is non-empty).
+#
+# Snapshot of Cartesia's emotion-modifier catalog: see
+# https://docs.cartesia.ai/build-with-cartesia/capabilities/voice-control
+# (and `cartesia.types.GenerationConfigParam` for the SDK's enum).
+# Story 5.5 calibration owns reconciling this map with Cartesia's
+# evolving catalog.
 
-# Story 3.1 populates the full mapping:
+schema_version: 2
+
+# ---------------------------------------------------------------------------
+# emotions — first-class entries (6 primary + 6 secondary)
+# ---------------------------------------------------------------------------
 #
-# emotions:
-#   neutral: { ... payload ... }
-#   content: { ... }
-#   excited: { ... }
-#   sad: { ... }
-#   angry: { ... }
-#   scared: { ... }
-#   happy: { ... }
-#   curious: { ... }
-#   sympathetic: { ... }
-#   surprised: { ... }
-#   frustrated: { ... }
-#   melancholic: { ... }
+# Pose values (`yaw`, `pitch`) are degrees from neutral (0,0).
+# `eye_state` ∈ {open, squint, wide, closed}.
+# `led_color` is a hex RGB string the embodiment renderer interprets.
+# `led_intensity` ∈ [0.0, 1.0] (relative brightness).
+emotions:
+
+  # --- Primary (6) ---
+
+  neutral:
+    expression_data:
+      base_pose: { yaw: 0, pitch: 0 }
+      eye_state: open
+      led_color: "#ffffff"
+      led_intensity: 0.4
+
+  content:
+    expression_data:
+      base_pose: { yaw: 0, pitch: 0 }
+      eye_state: open
+      led_color: "#a0e0a0"
+      led_intensity: 0.5
+
+  excited:
+    expression_data:
+      base_pose: { yaw: 0, pitch: 5 }
+      eye_state: wide
+      led_color: "#ffa040"
+      led_intensity: 0.9
+
+  sad:
+    expression_data:
+      base_pose: { yaw: 0, pitch: -10 }
+      eye_state: squint
+      led_color: "#4060a0"
+      led_intensity: 0.3
+
+  angry:
+    expression_data:
+      base_pose: { yaw: 0, pitch: -3 }
+      eye_state: squint
+      led_color: "#a02020"
+      led_intensity: 0.8
+
+  scared:
+    expression_data:
+      base_pose: { yaw: -5, pitch: 0 }
+      eye_state: wide
+      led_color: "#a040a0"
+      led_intensity: 0.7
+
+  # --- Secondary (6) ---
+
+  happy:
+    expression_data:
+      base_pose: { yaw: 0, pitch: 3 }
+      eye_state: open
+      led_color: "#ffd060"
+      led_intensity: 0.7
+
+  curious:
+    expression_data:
+      base_pose: { yaw: 5, pitch: 2 }
+      eye_state: open
+      led_color: "#60c0e0"
+      led_intensity: 0.6
+
+  sympathetic:
+    expression_data:
+      base_pose: { yaw: 0, pitch: -2 }
+      eye_state: open
+      led_color: "#c0a0e0"
+      led_intensity: 0.4
+
+  surprised:
+    expression_data:
+      base_pose: { yaw: 0, pitch: 5 }
+      eye_state: wide
+      led_color: "#ffff80"
+      led_intensity: 0.8
+
+  frustrated:
+    expression_data:
+      base_pose: { yaw: 0, pitch: -2 }
+      eye_state: squint
+      led_color: "#e07040"
+      led_intensity: 0.6
+
+  melancholic:
+    expression_data:
+      base_pose: { yaw: 0, pitch: -8 }
+      eye_state: squint
+      led_color: "#506080"
+      led_intensity: 0.3
+
+# ---------------------------------------------------------------------------
+# vocalizations — Cartesia inline burst tags
+# ---------------------------------------------------------------------------
 #
-# bursts:
-#   laughter: { ... }
-#   sigh: { ... }
-#   gasp: { ... }
-#   clears_throat: { ... }
+# `tts_supported: true`  → keep the literal `[tag]` in the text sent to
+#                          Cartesia (rendered as audio).
+# `tts_supported: false` → strip the literal `[tag]` from the TTS text
+#                          but still publish the vocalization event for
+#                          embodiment.
 #
-# fallback_families:
-#   high_energy_positive: { members: [...], maps_to: excited }
-#   low_energy_negative: { members: [...], maps_to: sad }
-#   ... (7 families total covering all 60+ Cartesia tags)
+# v1 best-effort: laughter is documented as Cartesia-rendered; the
+# other three are conservatively marked `false` until empirically
+# verified on the dev host. Story 5.5 calibration sprint (or a
+# follow-up YAML edit) flips them once measured. Subscribers see the
+# event regardless — only the audio rendering is gated.
+vocalizations:
+  laughter: { tts_supported: true }
+  sigh: { tts_supported: false }
+  gasp: { tts_supported: false }
+  clears_throat: { tts_supported: false }
+
+# ---------------------------------------------------------------------------
+# fallback_families — 7 axes covering Cartesia's broader catalog
+# ---------------------------------------------------------------------------
 #
-# unknown:
-#   maps_to: neutral
+# Every Cartesia tag NOT first-class above lives in exactly one family
+# (or — last resort — falls through to `unknown` below). Adding a tag
+# here is the YAML-only "extension story" the architecture promises.
+#
+# The 7 families come from a 2x2 valence × arousal split for the four
+# primary axes (high/low energy × positive/negative) plus three named
+# axes for the modes that don't cleanly fit the matrix:
+# `curious_inquisitive` (cognitive engagement), `sympathetic_caring`
+# (other-directed warmth), `surprise_alarm` (sudden-onset).
+#
+# Member lists sourced from Cartesia's Sonic-3 emotion-modifier docs;
+# see file-level comment for the URL. Tags listed here that Cartesia
+# later removes still resolve cleanly — the resolver returns the
+# family's `maps_to` regardless.
+fallback_families:
+
+  high_energy_positive:
+    members: [enthusiastic, gleeful, joyful, elated, eager, ecstatic, exuberant, thrilled]
+    maps_to: excited
+
+  low_energy_positive:
+    members: [relaxed, serene, peaceful, satisfied, calm, hopeful, grateful, fond]
+    maps_to: content
+
+  high_energy_negative:
+    members: [furious, irritated, annoyed, aggressive, indignant, enraged, hostile, exasperated]
+    maps_to: angry
+
+  low_energy_negative:
+    members: [melancholy, disappointed, gloomy, regretful, tearful, despondent, weary, defeated, resigned]
+    maps_to: sad
+
+  curious_inquisitive:
+    members: [inquisitive, interested, intrigued, pondering, contemplative, thoughtful, attentive]
+    maps_to: curious
+
+  sympathetic_caring:
+    members: [concerned, apologetic, caring, gentle, tender, compassionate, soothing, reassuring]
+    maps_to: sympathetic
+
+  surprise_alarm:
+    members: [shocked, astonished, startled, alarmed, worried, fearful, anxious, dismayed, taken_aback]
+    maps_to: surprised
+
+# ---------------------------------------------------------------------------
+# unknown — last-resort fallback when no family matches
+# ---------------------------------------------------------------------------
+#
+# Any tag not first-class and not in a family resolves to `neutral`
+# with `resolved_fallback="unknown"` on the wire — and the resolver
+# emits a WARN log every occurrence (FR38). A run that produces these
+# warnings is a signal to extend a family above.
+unknown:
+  maps_to: neutral
+
+# 7 fallback families covering ~57 Cartesia tags + 12 first-class +
+# 4 vocalizations + 1 unknown sentinel.

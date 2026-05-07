@@ -1870,6 +1870,7 @@ dependencies = [
     { name = "pvporcupine" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "structlog" },
     { name = "websockets" },
 ]
@@ -1893,6 +1894,7 @@ requires-dist = [
     { name = "pvporcupine", specifier = ">=4.0.2" },
     { name = "pydantic", specifier = ">=2.13.3" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "structlog", specifier = ">=25.5.0" },
     { name = "websockets", specifier = ">=16.0" },
 ]

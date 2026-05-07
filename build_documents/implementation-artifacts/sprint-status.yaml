@@ -1,5 +1,5 @@
 # generated: 2026-05-05
-# last_updated: 2026-05-06
+# last_updated: 2026-05-07
 # 2026-05-05: Epic 2 stories prepared (Amelia / bmad-agent-dev / bmad-create-story);
 #             epic-2 -> in-progress, all 5 stories -> ready-for-dev.
 # 2026-05-06: bmad-correct-course ran against the spec-triple direction shift
@@ -7,6 +7,8 @@
 #             Restructured Epics 3 + 4 + 5; barge-in moved to v1.5 backlog.
 #             Net v1 story count: 22 -> 30 across 5 epics. Epic 1 + Epic 2
 #             (12 stories at 'review') untouched.
+# 2026-05-07: Stories 3.1-3.7 prepared (Amelia / bmad-agent-dev / bmad-create-story);
+#             epic-3 -> in-progress, all 7 stories -> ready-for-dev.
 # project: olaf_companion
 # project_key: NOKEY
 # tracking_system: file-system
@@ -42,7 +44,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-06
+last_updated: 2026-05-07
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -74,14 +76,14 @@ development_status:
   #   3.1, 3.2, 3.3 carried over (minor revisions). 3.4 NEW (event schema rebuild).
   #   3.5 REBUILT (was old 3.4 — four-topic Ros2EventPublisher + LogEventPublisher).
   #   3.6 NEW (mood module). 3.7 EVOLVED (was old 3.5 — audio-frame metadata + Talker SSML prompt).
-  epic-3: backlog
-  3-1-expression-map-loader: backlog
-  3-2-mapping-resolver-and-cache: backlog
-  3-3-streaming-ssml-state-machine: backlog
-  3-4-event-schema-rebuild: backlog
-  3-5-event-publisher-ros2-and-log-adapter: backlog
-  3-6-mood-module-state-and-controller: backlog
-  3-7-audio-frame-metadata-and-ssml-prompt: backlog
+  epic-3: in-progress
+  3-1-expression-map-loader: review
+  3-2-mapping-resolver-and-cache: ready-for-dev
+  3-3-streaming-ssml-state-machine: ready-for-dev
+  3-4-event-schema-rebuild: ready-for-dev
+  3-5-event-publisher-ros2-and-log-adapter: ready-for-dev
+  3-6-mood-module-state-and-controller: ready-for-dev
+  3-7-audio-frame-metadata-and-ssml-prompt: ready-for-dev
   epic-3-retrospective: optional
 
   # ───────────────── Epic 4: Activity FSM + Tool-Use + Slow Path ─────────────────
