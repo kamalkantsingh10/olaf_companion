@@ -77,6 +77,7 @@ from voice_agent_pipeline.tts.cartesia import CartesiaClient
 from voice_agent_pipeline.tts.client import TTSClient
 from voice_agent_pipeline.turn import build_talker
 from voice_agent_pipeline.turn.beliefs import HttpBeliefStateClient, async_http_client
+from voice_agent_pipeline.turn.orchestrator import HttpOrchestratorClient
 from voice_agent_pipeline.turn.router import TurnRouter
 
 log = structlog.get_logger(__name__)
@@ -665,14 +666,26 @@ async def run_pipeline(config: SetupConfig) -> None:
     # Timeouts are tuned for the daemon's expected response shape; see
     # async_http_client's docstring for the rationale.
     async with async_http_client() as http_client:
-        # Story 4.1: belief-state client. Lifecycle is the http_client's
-        # `async with` scope. Story 4.2 will add HttpOrchestratorClient
-        # against the same http_client (one pool, two consumers — same
-        # daemon origin).
+        # Story 4.1 + 4.2: belief + orchestrator clients share one pool.
+        # The orchestrator daemon and the belief-state endpoint live
+        # behind one origin; ``httpx.AsyncClient``'s connection pool is
+        # keyed by origin so a shared client gives both consumers free
+        # keep-alive across belief-reads + orchestrator dispatches.
         belief_client = HttpBeliefStateClient(http_client, base_url=config.daemon.url)
+        orchestrator_client = HttpOrchestratorClient(http_client, base_url=config.daemon.url)
+
+        # Story 4.2: startup probe — refuse to start unless the daemon's
+        # ``GET /health`` returns 200. Closes architecture.md's
+        # cross-project spec-drift item. Raises StartupValidationError
+        # → __main__'s top-level handler logs + exits non-zero.
+        await orchestrator_client.probe_health()
 
         talker = build_talker(config, beliefs=belief_client)
-        router = TurnRouter(config.stt, talker, orchestrator=None)
+        # Story 4.2: orchestrator client is now wired in for Story 4.7's
+        # slow-path dispatch (TurnRouter target="orchestrator"). Story
+        # 2.4's NotImplementedError stub in TurnDispatchProcessor still
+        # gates the actual call site — Story 4.7 removes it.
+        router = TurnRouter(config.stt, talker, orchestrator=orchestrator_client)
 
         # Story 3.6: mood module. State + controller wired BEFORE
         # publish_initial so the first event lives on the latched topic.

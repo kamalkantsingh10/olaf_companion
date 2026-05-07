@@ -245,7 +245,7 @@ The PRD/brief/distillate alignment pass landed in commit `6f3bfe3` (2026-05-06 s
 
 **Open / pending coordination items** (residual spec-drift, lower priority):
 
-- `/health` endpoint contract on the orchestrator side — coordination point with the orchestrator project; document in cross-project README when first wired
+- `/health` endpoint contract on the orchestrator side — **wired in Story 4.2**: `HttpOrchestratorClient.probe_health()` requires `GET /health` returning 200 at pipeline startup; `StartupValidationError` raised + non-zero exit otherwise. Closes spec-drift item.
 - Mood enum final values — current set in `mood/state.py`'s `Literal` is the architecture's reference, but final user-facing tone is best refined empirically during Phase 3 soak; treat the enum as a code-level decision allowed to evolve under the schema-version umbrella
 - Tertiary emotion mappings (flirtatious, mysterious, sarcastic) currently fall back via family table — v1.1 lifts to first-class
 

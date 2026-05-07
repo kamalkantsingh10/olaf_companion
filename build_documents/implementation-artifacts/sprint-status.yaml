@@ -94,7 +94,7 @@ development_status:
   #   for slow-path wiring + complex-turn integration).
   epic-4: in-progress
   4-1-belief-state-client: review
-  4-2-orchestrator-client-sse: ready-for-dev
+  4-2-orchestrator-client-sse: review
   4-3-activity-fsm-core: ready-for-dev
   4-4-talker-tool-using-upgrade: ready-for-dev
   4-5-wake-greeting: ready-for-dev
