@@ -1,6 +1,6 @@
 # Story 3.6: Mood module — `MoodState` + `MoodController` + cooldown enforcement
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -87,39 +87,39 @@ so that Talker's `set_mood(mood)` tool (Story 4.4) and `activity/greeting.py` (S
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: `MoodState` in `mood/state.py`** (AC: #1, #6)
+- [x] **Task 1: `MoodState` in `mood/state.py`** (AC: #1, #6)
   - [ ] Create `src/voice_agent_pipeline/mood/__init__.py` if not present.
   - [ ] Create `src/voice_agent_pipeline/mood/state.py`. Module docstring per `feedback_code_comments.md` — explain: in-process current-mood cell; v1 lifetime is single-process (cross-restart persistence is v1.5 per `project_v1_scope_fail_fast.md` memory and `architecture.md` §"Deferred to v1.5 / v2"); `current` property is read-only; mutation gated through `MoodController.set()`.
   - [ ] Re-export `Mood` from `mood/state.py` for caller ergonomics.
 
-- [ ] **Task 2: `MoodController` in `mood/controller.py`** (AC: #2, #3, #4, #11)
+- [x] **Task 2: `MoodController` in `mood/controller.py`** (AC: #2, #3, #4, #11)
   - [ ] Create `src/voice_agent_pipeline/mood/controller.py`. Module docstring per `feedback_code_comments.md` — explain: cooldown enforcement at publisher boundary (NFR31); state-mutation order (publish-then-mutate); v1 fail-fast on publisher errors.
   - [ ] `from collections import deque`. `from voice_agent_pipeline.publisher.interface import EventPublisher`. `from voice_agent_pipeline.schemas.mood_event import Mood, MoodEvent, MoodPayload`. `from voice_agent_pipeline.mood.state import MoodState`. `import time` (NOT `from time import monotonic` — see AC #9).
   - [ ] Class implementation per AC #2-#4.
   - [ ] **Function docstring on `set()`** — its behavior is non-obvious enough to deserve one (architecture.md §"Documentation": docstrings only when WHY is non-obvious; the publish-then-mutate ordering + the cooldown invariant qualify).
 
-- [ ] **Task 3: `MoodConfig` in `config/setup.py`** (AC: #5)
+- [x] **Task 3: `MoodConfig` in `config/setup.py`** (AC: #5)
   - [ ] Mirror Story 2.3's `TtsConfig` addition: define `MoodConfig` with `extra="forbid"`, the two fields, and a class docstring per the existing pattern.
   - [ ] `import` `Mood` from `schemas.mood_event` for the `initial: Mood` typing.
   - [ ] Add `mood: MoodConfig = Field(default_factory=MoodConfig)` to `SetupConfig`.
   - [ ] Append the `[mood]` block to `setup.toml` with operator comments.
   - [ ] Update `tests/unit/config/test_setup.py:_VALID_TOML` to include `[mood]` only if the test needs to override defaults; otherwise rely on `default_factory`.
 
-- [ ] **Task 4: Unit tests for `MoodState`** (AC: #7)
+- [x] **Task 4: Unit tests for `MoodState`** (AC: #7)
   - [ ] `tests/unit/mood/__init__.py` if not present.
   - [ ] `tests/unit/mood/test_state.py` — narrow set of state-only tests.
 
-- [ ] **Task 5: Unit tests for `MoodController`** (AC: #8, #9)
+- [x] **Task 5: Unit tests for `MoodController`** (AC: #8, #9)
   - [ ] `tests/unit/mood/test_controller.py` — full cooldown algorithm coverage.
   - [ ] **Use `LogEventPublisher`** (Story 3.5) as the publisher dependency — real adapter, no mock. This validates the controller's call shape against the actual Protocol. For the "publisher fails" test, use `unittest.mock.MagicMock(spec=EventPublisher)` with `publish_mood` set to raise `PublisherError`.
   - [ ] **Time mocking pattern**: `monkeypatch.setattr("voice_agent_pipeline.mood.controller.time.monotonic", clock_now)`. Document in test-file docstring why the patch path is `mood.controller.time.monotonic` (because `controller.py` does `import time; time.monotonic()`).
 
-- [ ] **Task 6: Pass `just check`; verify no regressions** (AC: #12)
+- [x] **Task 6: Pass `just check`; verify no regressions** (AC: #12)
   - [ ] Run incrementally: `uv run pytest tests/unit/mood/ -v`, then `tests/unit/config/test_setup.py`, then full `just check`.
 
-- [ ] **Task 7: Commit + push** (per `feedback_commit_policy.md` + `feedback_push_after_commit.md`)
-  - [ ] Single commit titled `Story 3.6: mood module — MoodState + MoodController + cooldown`.
-  - [ ] `git push` immediately.
+- [x] **Task 7: Commit + push** (per `feedback_commit_policy.md` + `feedback_push_after_commit.md`)
+  - [x] Single commit titled `Story 3.6: mood module — MoodState + MoodController + cooldown`.
+  - [x] `git push` immediately.
 
 ## Dev Notes
 
@@ -253,10 +253,111 @@ It does NOT modify:
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (1M context) — invoked as bmad-agent-dev "Amelia".
 
 ### Debug Log References
 
+- **All 14 tests passed first try.** The story spec's prescriptive
+  ordering (publish-before-mutate, sliding-window math, log levels)
+  removed all ambiguity.
+- **`pyright` flagged ``self._state._current = mood``** as
+  ``reportPrivateUsage``. This is architecturally intentional — the
+  controller is the documented privileged write path (see
+  ``mood/state.py`` module docstring). Suppression with paired
+  ``# pyright: ignore[reportPrivateUsage]`` + inline rationale per
+  architecture.md §"Anti-Patterns" carve-out.
+- **`Generator[_Clock, None, None]`** for the clock fixture — pytest
+  fixtures with ``yield`` need the generator return type for ruff to
+  be happy. Standard pattern.
+- **Time mocking via ``monkeypatch.setattr("voice_agent_pipeline.
+  mood.controller.time.monotonic", clock.now)``**: works because the
+  controller calls ``time.monotonic()`` through the imported module
+  reference, not via a ``from time import monotonic`` local binding.
+  Module docstring documents the deliberate choice.
+- **Boundary test (``test_set_within_window_at_boundary_still_blocks``)**
+  pinned the inclusive-vs-exclusive contract: at t=3599 (3599s after
+  the first publish), the first publish IS still inside the 60-min
+  window (it's 3599 < 3600 seconds ago). Sliding-window math is
+  ``now - ts > 3600.0`` for eviction.
+- **`just check`: 308 unit tests pass** (+14 from this story); ruff
+  + pyright clean. No regression in earlier stories.
+
 ### Completion Notes List
 
+- All 12 ACs satisfied:
+  - AC #1: ``MoodState`` plain class (not pydantic) with default
+    ``initial="calm"``, read-only ``current`` property, underscore-
+    prefixed ``_current`` field as the privileged write path.
+    ``Mood`` Literal re-exported from ``mood/state.py`` for caller
+    ergonomics.
+  - AC #2: ``MoodController`` async ``set()`` with the three-step
+    algorithm: sweep history → check budget → publish-then-mutate.
+    Returns ``bool``.
+  - AC #3: Cooldown algorithm exact per spec — sliding 60-min window
+    via ``time.monotonic()`` deque eviction; rate-limited calls
+    return ``False`` and log WARN.
+  - AC #4: ``publish_initial`` constructs MoodEvent with
+    ``reason="startup"``, counts toward the cooldown budget; logs
+    distinct ``mood.publish_initial`` INFO event.
+  - AC #5: ``MoodConfig`` with ``cooldown_publishes_per_hour:
+    int = Field(default=4, ge=1, le=20)`` and ``initial: Mood
+    = "calm"``. Added to ``[mood]`` block in setup.toml. The mood
+    enum itself is NOT config-overridable (architecture rule).
+  - AC #6: ``current`` property has no setter; the privileged
+    ``_current`` write path is the controller's only legitimate
+    mutation. Test pins via ``with pytest.raises(AttributeError)``.
+  - AC #7: 4 ``MoodState`` tests covering default, override,
+    read-only enforcement, and the privileged-path access contract.
+  - AC #8: 10 ``MoodController`` tests including all cooldown
+    paths (happy, drops, slides, boundary), publisher-failure-no-
+    state-mutation, and ``publish_initial`` semantics.
+  - AC #9: Time mocking via ``monkeypatch.setattr("voice_agent_pipeline.
+    mood.controller.time.monotonic", clock.now)`` — module docstring
+    documents the import-style requirement.
+  - AC #10: ``set()`` signature stays narrow (``mood, reason``) per
+    the architectural decision deferral. Story 4.4's tool dispatch
+    can extend the signature when correlation_id binding becomes
+    concrete.
+  - AC #11: Logging discipline — INFO ``mood.publish`` /
+    ``mood.publish_initial`` (mood + reason fields only); WARN
+    ``mood.publish_dropped`` (attempted_mood, current_mood, reason,
+    provided_reason, history_size). No full-payload logging.
+  - AC #12: ``just check`` exits 0; 308 tests pass; no regression
+    in Stories 1.x / 2.x / 3.1–3.5.
+- **Comments.** Module + class + function docstrings per
+  ``feedback_code_comments.md``. The privileged-write pyright
+  suppression carries inline rationale.
+- **No deviations.** All ACs implemented as written.
+
 ### File List
+
+**New files:**
+- ``src/voice_agent_pipeline/mood/__init__.py`` — package re-exports
+  (Mood, MoodState, MoodController).
+- ``src/voice_agent_pipeline/mood/state.py`` — ``MoodState`` cell;
+  re-exports ``Mood`` from schemas.
+- ``src/voice_agent_pipeline/mood/controller.py`` —
+  ``MoodController`` with ``set()`` + ``publish_initial()`` +
+  ``_sweep_old()`` helper.
+- ``tests/unit/mood/__init__.py``.
+- ``tests/unit/mood/test_state.py`` — 4 tests.
+- ``tests/unit/mood/test_controller.py`` — 10 tests including the
+  ``_Clock`` shim fixture for monotonic-time mocking.
+
+**Modified files:**
+- ``src/voice_agent_pipeline/config/setup.py`` — added
+  ``MoodConfig``; ``SetupConfig.mood`` field with default factory.
+  ``Mood`` imported from schemas for the ``initial: Mood`` typing.
+- ``setup.toml`` — added ``[mood]`` block with operator comment.
+- ``build_documents/implementation-artifacts/3-6-mood-module-state-
+  and-controller.md`` — this file: tasks ticked, dev record populated,
+  status → review.
+- ``build_documents/implementation-artifacts/sprint-status.yaml`` —
+  ``3-6-mood-module-state-and-controller: ready-for-dev →
+  in-progress → review``.
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-07 | Story 3.6 implemented. ``MoodState`` (single mutable cell, read-only ``current`` property) + ``MoodController`` (cooldown-enforcing publish path with sliding 60-min window, ≤4 publishes/hour by default per NFR31). Publish-before-mutate invariant: ``set()`` calls ``publisher.publish_mood`` first; mutates ``MoodState._current`` only on successful publish. Rate-limited calls drop with WARN; publisher errors propagate uncaught (CLAUDE.md rule #4). ``publish_initial()`` fires the startup latched mood event and counts toward the cooldown budget. ``MoodConfig`` exposes ``cooldown_publishes_per_hour`` (1-20) and ``initial`` knobs in setup.toml; the Mood enum itself is code-level. ``time.monotonic`` mocked in tests via module-reference patching (controller imports ``time`` rather than ``from time import monotonic`` to make the patch reach). 14 new tests; ``just check``: 308 unit tests pass; no regression in earlier stories. Status → review. |

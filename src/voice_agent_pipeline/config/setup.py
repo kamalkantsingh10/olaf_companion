@@ -44,6 +44,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_agent_pipeline.config.version import assert_schema_version
 from voice_agent_pipeline.errors import ConfigError
+from voice_agent_pipeline.schemas.mood_event import Mood
 
 # Module-level logger. Test fixtures patch this one specifically when
 # asserting on the loose-perms warning (see tests/unit/config/test_setup.py).
@@ -299,6 +300,33 @@ class TtsConfig(BaseModel):
     speed: float = 0.9
 
 
+class MoodConfig(BaseModel):
+    """Mood module knobs (Story 3.6).
+
+    The mood **enum** itself (the ``Mood`` Literal) is code-level —
+    additions require a code change + Talker prompt update per
+    architecture.md §"Mood enum lifecycle". Only the cooldown rate +
+    initial value are operator-tunable here.
+
+    Attributes:
+        cooldown_publishes_per_hour: Sliding-window publish budget for
+            the ``mood`` topic (NFR31, default 4). Bound to ``[1, 20]``
+            — values outside that range either trivialize the cooldown
+            (>20/hr defeats the rate-limit intent) or starve legitimate
+            mood transitions (<1/hr). Story 5.5 calibration may tune.
+        initial: Mood OLAF starts in. Default ``"calm"`` per the
+            architecture's "neutral baseline" intent. Operators can
+            override per machine, but the value must be one of the
+            ``Mood`` Literal — pydantic rejects unknown values at
+            startup.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cooldown_publishes_per_hour: int = Field(default=4, ge=1, le=20)
+    initial: Mood = "calm"
+
+
 class TopicNames(BaseModel):
     """Per-topic name mapping for the four-topic event publisher (Story 3.5).
 
@@ -394,6 +422,10 @@ class SetupConfig(BaseSettings):
     # Hard Dependencies, Fail-Fast"). Operators set adapter="log" for
     # dev runs without a ROS 2 stack installed.
     publisher: PublisherConfig = Field(default_factory=PublisherConfig)
+    # Story 3.6: mood module knobs. Optional with defaults — operators
+    # don't have to declare [mood] in setup.toml unless they want to
+    # tune the cooldown rate or starting mood.
+    mood: MoodConfig = Field(default_factory=MoodConfig)
 
 
 def load_setup_config(

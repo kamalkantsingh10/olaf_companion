@@ -139,6 +139,15 @@ activity = "/olaf/activity"
 speech_emotion = "/olaf/speech_emotion"
 vocalization = "/olaf/vocalization"
 
+# Story 3.6: mood module. cooldown_publishes_per_hour enforces NFR31
+# (≤4 mood publishes/hour sustained); the controller drops over-rate
+# set_mood calls with a WARN log. ``initial`` must be one of the
+# code-level Mood Literal values (calm, happy, playful, curious,
+# thoughtful, sleepy, grumpy, excited).
+[mood]
+cooldown_publishes_per_hour = 4
+initial = "calm"
+
 # Sections populated by subsequent stories:
 # [talker] -- extended in Story 4.1 (grounded_keys for belief-state)
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
