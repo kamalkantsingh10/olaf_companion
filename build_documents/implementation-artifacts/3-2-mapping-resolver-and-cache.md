@@ -1,6 +1,6 @@
 # Story 3.2: Mapping resolver + last-published cache
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -66,41 +66,41 @@ so that the splitter (Story 3.3) can call one function regardless of whether the
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Land `SpeechEmotionPayload` and `VocalizationPayload` in `splitter/mapping.py`** (AC: #1, #2, #12)
-  - [ ] Create `src/voice_agent_pipeline/splitter/mapping.py` (module + `__init__.py` if not present in `splitter/`).
-  - [ ] Module docstring per `feedback_code_comments.md` — explain: this module owns the tag → payload resolver + per-turn dedup cache for the embodiment channel; payload classes are temp residents until Story 3.4.
-  - [ ] Define `SpeechEmotionPayload`, `VocalizationPayload` per AC #1 / #2. Frozen, `extra="forbid"`, `dict[str, Any]` only on `expression_data` (cite the architecture exception inline).
-  - [ ] Add the 3-line "moves to schemas/ in Story 3.4" pointer at the top.
+- [x] **Task 1: Land `SpeechEmotionPayload` and `VocalizationPayload` in `splitter/mapping.py`** (AC: #1, #2, #12)
+  - [x] Create `src/voice_agent_pipeline/splitter/mapping.py` (module + `__init__.py` if not present in `splitter/`).
+  - [x] Module docstring per `feedback_code_comments.md` — explain: this module owns the tag → payload resolver + per-turn dedup cache for the embodiment channel; payload classes are temp residents until Story 3.4.
+  - [x] Define `SpeechEmotionPayload`, `VocalizationPayload` per AC #1 / #2. Frozen, `extra="forbid"`, `dict[str, Any]` only on `expression_data` (cite the architecture exception inline).
+  - [x] Add the 3-line "moves to schemas/ in Story 3.4" pointer at the top.
 
-- [ ] **Task 2: Implement `resolve` for emotions** (AC: #3, #4, #9)
-  - [ ] `def resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload:`. Three-case branch: first-class → family hit → unknown. Iterate `mapping.fallback_families.items()` for family lookup (insertion order is stable per Python 3.7+).
-  - [ ] Module-private de-dup set: `_FALLBACK_LOG_SEEN: set[tuple[str, str]] = set()`. `(raw_tag, family_name)` as the key. **Why module-level**: the FR38 contract is "DEBUG first occurrence per process," not per call site; module-level state survives the right scope (process lifetime) without the resolver having to thread a `seen_set` arg through every caller.
-  - [ ] Emit logs per AC #9 — DEBUG / WARN level discipline; no `expression_data` in any log; use structlog's `bind_contextvars` if a turn-correlation_id is in scope (it's not, in the resolver — only in segmenter; OK to skip).
-  - [ ] Function-level docstring explaining the three-case resolution + the FR38 log contract.
+- [x] **Task 2: Implement `resolve` for emotions** (AC: #3, #4, #9)
+  - [x] `def resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload:`. Three-case branch: first-class → family hit → unknown. Iterate `mapping.fallback_families.items()` for family lookup (insertion order is stable per Python 3.7+).
+  - [x] Module-private de-dup set: `_FALLBACK_LOG_SEEN: set[tuple[str, str]] = set()`. `(raw_tag, family_name)` as the key. **Why module-level**: the FR38 contract is "DEBUG first occurrence per process," not per call site; module-level state survives the right scope (process lifetime) without the resolver having to thread a `seen_set` arg through every caller.
+  - [x] Emit logs per AC #9 — DEBUG / WARN level discipline; no `expression_data` in any log; use structlog's `bind_contextvars` if a turn-correlation_id is in scope (it's not, in the resolver — only in segmenter; OK to skip).
+  - [x] Function-level docstring explaining the three-case resolution + the FR38 log contract.
 
-- [ ] **Task 3: Implement `resolve_vocalization`** (AC: #7)
-  - [ ] `def resolve_vocalization(tag: str, mapping: ExpressionMapConfig) -> VocalizationPayload:`. Two-case branch: known → unknown.
-  - [ ] WARN log on unknown.
-  - [ ] No de-dup on the WARN — vocalization unknowns are rare enough that suppressing them risks hiding regressions.
+- [x] **Task 3: Implement `resolve_vocalization`** (AC: #7)
+  - [x] `def resolve_vocalization(tag: str, mapping: ExpressionMapConfig) -> VocalizationPayload:`. Two-case branch: known → unknown.
+  - [x] WARN log on unknown.
+  - [x] No de-dup on the WARN — vocalization unknowns are rare enough that suppressing them risks hiding regressions.
 
-- [ ] **Task 4: Implement `LastPublishedCache`** (AC: #5, #6)
-  - [ ] Class with `_last: str | None`. Instance-level state (one cache per pipeline; Story 3.7 owns lifecycle).
-  - [ ] `should_publish(payload)`, `should_publish_vocalization(payload)`, `reset()`.
-  - [ ] **Do NOT** add a `should_publish_polymorphic(payload: SpeechEmotionPayload | VocalizationPayload)` overload — the call-site clarity from two named methods beats the slight duplication.
-  - [ ] One-line class docstring: "Per-turn dedup of `SpeechEmotionEvent`s; vocalizations always publish (FR24)." No function docstrings (architecture.md §"Documentation").
+- [x] **Task 4: Implement `LastPublishedCache`** (AC: #5, #6)
+  - [x] Class with `_last: str | None`. Instance-level state (one cache per pipeline; Story 3.7 owns lifecycle).
+  - [x] `should_publish(payload)`, `should_publish_vocalization(payload)`, `reset()`.
+  - [x] **Do NOT** add a `should_publish_polymorphic(payload: SpeechEmotionPayload | VocalizationPayload)` overload — the call-site clarity from two named methods beats the slight duplication.
+  - [x] One-line class docstring: "Per-turn dedup of `SpeechEmotionEvent`s; vocalizations always publish (FR24)." No function docstrings (architecture.md §"Documentation").
 
-- [ ] **Task 5: Write `tests/unit/splitter/test_mapping.py`** (AC: #8, #10)
-  - [ ] `tests/unit/splitter/__init__.py` if not present.
-  - [ ] `_make_mapping()` helper that returns a small valid `ExpressionMapConfig` (3-4 emotions, 1-2 families, 2 vocalizations) — call `ExpressionMapConfig.model_validate({...})` directly with a Python dict, no YAML round-trip.
-  - [ ] Use Story 1.7's structlog `caplog` capture pattern. If unsure, search `tests/unit/stt/test_whisper_cpu.py` for the existing fixture.
-  - [ ] One behavior per test, named `test_<behavior>`. Run incrementally with `uv run pytest tests/unit/splitter/test_mapping.py -v`.
+- [x] **Task 5: Write `tests/unit/splitter/test_mapping.py`** (AC: #8, #10)
+  - [x] `tests/unit/splitter/__init__.py` if not present.
+  - [x] `_make_mapping()` helper that returns a small valid `ExpressionMapConfig` (3-4 emotions, 1-2 families, 2 vocalizations) — call `ExpressionMapConfig.model_validate({...})` directly with a Python dict, no YAML round-trip.
+  - [x] Use Story 1.7's structlog `caplog` capture pattern. If unsure, search `tests/unit/stt/test_whisper_cpu.py` for the existing fixture.
+  - [x] One behavior per test, named `test_<behavior>`. Run incrementally with `uv run pytest tests/unit/splitter/test_mapping.py -v`.
 
-- [ ] **Task 6: Pass `just check`; fix anything red** (AC: #11)
-  - [ ] Watch for: pyright on `dict[str, Any]` (cite the architecture exception); ruff on import sorting (`from voice_agent_pipeline.config.expression_map import ExpressionMapConfig` should land in the local-first-party group); `tests/unit/config/test_expression_map.py` (Story 3.1) still passing.
+- [x] **Task 6: Pass `just check`; fix anything red** (AC: #11)
+  - [x] Watch for: pyright on `dict[str, Any]` (cite the architecture exception); ruff on import sorting (`from voice_agent_pipeline.config.expression_map import ExpressionMapConfig` should land in the local-first-party group); `tests/unit/config/test_expression_map.py` (Story 3.1) still passing.
 
-- [ ] **Task 7: Commit + push** (per `feedback_commit_policy.md` + `feedback_push_after_commit.md`)
-  - [ ] Single commit titled `Story 3.2: mapping resolver + last-published cache`.
-  - [ ] `git push` immediately after.
+- [x] **Task 7: Commit + push** (per `feedback_commit_policy.md` + `feedback_push_after_commit.md`)
+  - [x] Single commit titled `Story 3.2: mapping resolver + last-published cache`.
+  - [x] `git push` immediately after.
 
 ## Dev Notes
 
@@ -201,10 +201,90 @@ It does NOT modify:
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (1M context) — invoked as bmad-agent-dev "Amelia".
 
 ### Debug Log References
 
+- **Tests RED → GREEN, no iteration needed.** 19-test file built from
+  the AC list, then implementation passed first try. The story spec's
+  prescriptive "what the resolver returns for each case" + "what gets
+  logged at what level" left no ambiguity.
+- **`pydantic.ValidationError` for both frozen-instance mutation and
+  extra-forbid extras.** Pydantic v2 wraps frozen-mutation errors in
+  its own validation hierarchy; bare `Exception` triggered ruff's
+  B017 (blind-exception in pytest.raises). Replaced with the specific
+  type per architecture.md §"Anti-Patterns" — bare ``except Exception``
+  is forbidden; `pytest.raises(Exception)` is the same anti-pattern in
+  test scope.
+- **`_FALLBACK_LOG_SEEN` reset via autouse fixture.** Module-level
+  state survives across tests; without the autouse fixture,
+  `test_resolve_fallback_family_logs_debug_first_time` would depend
+  on test ordering. Architecture's "test isolation" stays intact.
+- **`del payload` in `should_publish_vocalization`** to satisfy ruff
+  on the unused parameter while keeping the type-pin at the call
+  site. The arg's purpose is documentation + future extension space
+  (e.g., per-tag dedup if v1.5 needs it); explicit `del` makes that
+  intent visible.
+- **`just check`: 203 unit tests pass (+19 from this story).** Test
+  count delta vs Story 3.1 (184 → 203) matches the new test file
+  exactly. No regression in earlier stories.
+
 ### Completion Notes List
 
+- All 12 ACs satisfied:
+  - AC #1, #2: ``SpeechEmotionPayload`` + ``VocalizationPayload``
+    landed in ``splitter/mapping.py`` (interim home pre-Story-3.4).
+    Frozen, ``extra="forbid"``, ``audio_frame_id: str | None = None``.
+    ``expression_data: dict[str, Any]`` carries the architectural
+    carve-out comment.
+  - AC #3: ``resolve()`` three-case branching with correct log
+    discipline (no log on first-class; DEBUG once on family fallback;
+    WARN every time on unmapped).
+  - AC #4: First-class priority over family — the
+    ``test_resolve_first_class_takes_priority_over_family`` test
+    pins the architectural extension story.
+  - AC #5, #6: ``LastPublishedCache`` with ``should_publish`` (dedup
+    on emotion change), ``should_publish_vocalization`` (always
+    True), ``reset()``. Vocalization calls do not affect emotion
+    state.
+  - AC #7: ``resolve_vocalization()`` two-case branching; unknown
+    tags get ``tts_supported=False`` safe default + WARN.
+  - AC #8: 19 unit tests covering every AC.
+  - AC #9: Logging discipline — ``speech_emotion.fallback`` (DEBUG,
+    deduped), ``speech_emotion.unmapped`` (WARN, every call),
+    ``vocalization.unmapped`` (WARN, every call). No
+    ``expression_data`` in any log.
+  - AC #10: No mocking of ``ExpressionMapConfig`` — real instances
+    via ``_make_mapping()``.
+  - AC #11: ``just check`` exits 0; 203 tests pass.
+  - AC #12: 3-line "moves to schemas/ in Story 3.4" pointer at the
+    top of the module docstring.
+- **Comments.** Module + class + function docstrings per
+  ``feedback_code_comments.md``. The ``dict[str, Any]`` on
+  ``expression_data`` carries the architectural-exception inline
+  comment.
+- **No deviations.** All ACs implemented as written.
+
 ### File List
+
+**New files:**
+- ``src/voice_agent_pipeline/splitter/mapping.py`` —
+  ``SpeechEmotionPayload``, ``VocalizationPayload``, ``resolve``,
+  ``resolve_vocalization``, ``LastPublishedCache``,
+  ``_FALLBACK_LOG_SEEN`` module-level dedup state.
+- ``tests/unit/splitter/__init__.py`` (empty package marker).
+- ``tests/unit/splitter/test_mapping.py`` — 19 tests covering all
+  12 ACs with ``_make_mapping()`` helper + autouse
+  ``_reset_fallback_log_dedup`` fixture.
+
+**Modified files:**
+- ``build_documents/implementation-artifacts/3-2-mapping-resolver-and-cache.md``
+  — this file: tasks ticked, dev record populated, status → review.
+- ``build_documents/implementation-artifacts/sprint-status.yaml`` —
+  ``3-2-mapping-resolver-and-cache: ready-for-dev → in-progress → review``.
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-07 | Story 3.2 implemented. Resolver layer between Story 3.1's loader and Story 3.3's segmenter: pure-function `resolve(tag, mapping)` with three-case branching (first-class > family > unknown), pure-function `resolve_vocalization(tag, mapping)`, and `LastPublishedCache` for FR24 turn-scoped dedup. Payload classes (`SpeechEmotionPayload` + `VocalizationPayload`) interim-home in `splitter/mapping.py` until Story 3.4 migrates them to `schemas/`. Module-level `_FALLBACK_LOG_SEEN` deduplicates DEBUG `speech_emotion.fallback` per (tag, family) per process (FR38). Two cache methods (`should_publish`, `should_publish_vocalization`) deliberately not polymorphic. 19 unit tests covering all 12 ACs; ruff + pyright + pytest green via `just check` (203 unit tests total, +19 from this story). No regression in Stories 1.x / 2.x / 3.1. Status → review. |

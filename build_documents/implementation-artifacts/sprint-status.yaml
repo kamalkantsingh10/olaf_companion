@@ -78,7 +78,7 @@ development_status:
   #   3.6 NEW (mood module). 3.7 EVOLVED (was old 3.5 — audio-frame metadata + Talker SSML prompt).
   epic-3: in-progress
   3-1-expression-map-loader: review
-  3-2-mapping-resolver-and-cache: ready-for-dev
+  3-2-mapping-resolver-and-cache: review
   3-3-streaming-ssml-state-machine: ready-for-dev
   3-4-event-schema-rebuild: ready-for-dev
   3-5-event-publisher-ros2-and-log-adapter: ready-for-dev
