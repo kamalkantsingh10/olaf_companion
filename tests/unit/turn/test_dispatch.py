@@ -99,18 +99,20 @@ def test_dispatcher_emits_talker_response_frame(
     assert transcript_passthrough[0] is transcript
 
 
-def test_dispatcher_clarification_short_circuits_talker(
+def test_dispatcher_uses_clarification_prompt_for_low_confidence(
     stt_config: SttConfig,
     mock_talker: MagicMock,
 ) -> None:
-    """Low-confidence transcript → emit clarification_prompt verbatim, no Talker call.
+    """Low-confidence transcript → talker.complete called with the clarification prompt.
 
-    Story 3.7 live-test fix: the clarification_prompt IS the response
-    we want Ooppi to say. The original Story 2.4 design fed it
-    through the Talker, but the LLM treated it as user input and
-    answered literally instead of delivering the apology. Bypass:
-    emit the configured prompt as the response, no Talker round-trip.
+    The clarification_prompt is phrased as an INSTRUCTION to the LLM
+    (e.g., "Briefly ask the user to repeat. Under 5 words.") — the
+    LLM follows the instruction and produces a varied short apology
+    rather than answering the prompt as a question (the failure mode
+    Story 3.7's live test surfaced when the prompt was phrased as
+    the apology itself).
     """
+    mock_talker.complete.return_value = "Sorry, missed that?"
     router = TurnRouter(stt_config, mock_talker)
     dispatcher = TurnDispatchProcessor(router)
     pushed = _drain_pushed(dispatcher)
@@ -118,12 +120,12 @@ def test_dispatcher_clarification_short_circuits_talker(
     transcript = TranscriptFrame(text="hjzz mjy?", confidence=0.2, end_to_transcript_ms=42)
     asyncio.run(dispatcher.process_frame(transcript, direction=None))  # type: ignore[arg-type]
 
-    # Talker NOT called on the clarification path.
-    mock_talker.complete.assert_not_awaited()
-    # The TalkerResponseFrame carries the configured prompt verbatim.
+    # Talker called with the clarification prompt (not the noisy text).
+    mock_talker.complete.assert_awaited_once_with("please repeat?")
+    # The TalkerResponseFrame carries the LLM's reply, not the prompt.
     response_frames = [f for f in pushed if isinstance(f, TalkerResponseFrame)]
     assert len(response_frames) == 1
-    assert response_frames[0].text == "please repeat?"
+    assert response_frames[0].text == "Sorry, missed that?"
 
 
 def test_dispatcher_propagates_talker_error(

@@ -58,7 +58,13 @@ end_threshold = 0.35
 # and torch installed; "auto" probes torch.cuda.is_available() at startup.
 [stt]
 backend = "whisper-cpu"
-model = "small"
+# Story 3.7 calibration: bumped from "small" to distil-whisper's
+# distil-large-v3 — ~6× faster than full large-v3 with WER within
+# ~1%, designed for faster-whisper / CTranslate2. Substantially more
+# accurate than small on the v1 dev PC. First run downloads ~750 MB
+# to ~/.cache/huggingface/. v2 Pi 5 port (Story 5.x) will swap the
+# entire backend, so this model choice is dev-PC-only.
+model = "distil-whisper/distil-large-v3"
 compute_type = "int8"
 device = "auto"
 low_confidence_threshold = 0.5
@@ -66,7 +72,13 @@ low_confidence_threshold = 0.5
 # TurnRouter substitutes this prompt for the user's (noisy) text and
 # routes it to the Talker — so the bot asks for a repeat instead of
 # guessing. Edit to taste.
-clarification_prompt = "Sorry, I didn't catch that — could you say it again?"
+# Story 3.7 live-test pattern: this is an INSTRUCTION sent to the
+# Talker LLM (not the user-facing apology itself). The LLM produces a
+# varied short apology each time, capped by the explicit length limit.
+# Earlier "Sorry, I didn't catch that — could you say it again?" got
+# treated as a question by Groq Llama 8B and answered literally
+# ("No worries, I'm right here on Kamal's desk").
+clarification_prompt = "Briefly ask the user to repeat themselves. Use under 5 words. No greeting, no preamble — just the question."
 
 # Talker (Story 2.2). Fast-path LLM for short conversational replies.
 # Three providers wired out of the box — all reach the same `openai`
