@@ -83,7 +83,7 @@ development_status:
   3-4-event-schema-rebuild: review
   3-5-event-publisher-ros2-and-log-adapter: review
   3-6-mood-module-state-and-controller: review
-  3-7-audio-frame-metadata-and-ssml-prompt: in-progress
+  3-7-audio-frame-metadata-and-ssml-prompt: review
   epic-3-retrospective: optional
 
   # ───────────────── Epic 4: Activity FSM + Tool-Use + Slow Path ─────────────────

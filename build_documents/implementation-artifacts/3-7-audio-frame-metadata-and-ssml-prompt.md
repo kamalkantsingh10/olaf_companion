@@ -1,6 +1,6 @@
 # Story 3.7: Audio-frame metadata threading + Talker SSML prompt + embodiment alignment integration test
 
-Status: in-progress
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -153,9 +153,12 @@ so that Sprint 3 delivers visible (on-bus) embodiment in lockstep with audio acr
   - [ ] Update `run_pipeline(config)` per AC #9.
   - [ ] Add the post-`connect()` `await mood_controller.publish_initial()` call. Test it with `LogEventPublisher` capturing the initial event.
 
-- [ ] **Task 6: Update Talker system prompt** (AC: #7)
+- [x] **Task 6: Update Talker system prompt** (AC: #7)
   - [x] Append the SSML-emission section to `prompts/talker_system.md`.
-  - [ ] **PENDING USER (per `feedback_no_skip_user_tasks.md`)** — Live-test on the dev host (with a real Talker provider — Groq per `setup.toml`): does the LLM actually emit `<emotion value="..."/>` tags? Prompt iteration may be required. Document the final prompt + provider behavior in the dev record.
+  - [x] **Live-tested on dev host with Groq llama-3.1-8b-instant.** First-pass discovery: Groq emitted both `<emotion value="happy"/>` (correct) and `<emotion value="happy">` (no slash) and `<happy>` (shorthand) inconsistently. Two fixes applied:
+    - State machine made lenient — accepts the no-slash form too. Genuine truncated tags still raise `SplitterError`.
+    - Prompt tightened with explicit "wrong examples" section calling out the three failure modes.
+    - Live-confirmed: `/olaf/speech_emotion` events landing on the wire across multiple turns.
 
 - [x] **Task 7: Embodiment-alignment integration test** (AC: #11)
   - [ ] `tests/integration/test_embodiment_alignment.py`.
@@ -168,20 +171,19 @@ so that Sprint 3 delivers visible (on-bus) embodiment in lockstep with audio acr
   - [ ] In the same file or a sibling. Asserts on event ordering + content for a hand-crafted Talker response.
   - [ ] Use Story 3.1's `expression_map.yaml` (real, not mocked) so fallback resolution exercises the production map.
 
-- [ ] **Task 9: Live smoke (manual)** (AC: #16) — **PENDING USER (per `feedback_no_skip_user_tasks.md`)**
-  - [ ] Source ROS 2 (`source /opt/ros/jazzy/setup.bash` or equivalent).
-  - [ ] In one terminal: `ros2 topic echo /olaf/speech_emotion`.
-  - [ ] In another: `just run`. Speak a "tell me a joke" prompt.
-  - [ ] Observe `speech_emotion` events flowing in lockstep with phrases. Record the experience (timing, count, any anomalies) in the dev record + commit message.
+- [x] **Task 9: Live smoke (manual)** (AC: #16)
+  - [x] Source ROS 2 (`source /opt/ros/jazzy/setup.bash`) — Jazzy installed.
+  - [x] In one terminal: `ros2 topic echo /olaf/speech_emotion`.
+  - [x] In another: `just run`. Spoke a "tell me a joke" prompt across multiple turns.
+  - [x] **CONFIRMED**: 6+ `SpeechEmotionEvent` envelopes flowed on `/olaf/speech_emotion` across the session. Wire format matches the architecture: `schema_version: 2`, ISO8601 UTC timestamp, fresh `correlation_id` per turn, `source: "voice_agent_pipeline"`. Epic 3 capstone signal achieved — the full chain (LLM SSML → splitter → resolver → segmenter → synthesizer → publisher → DDS) works end-to-end.
 
 - [x] **Task 10: Pass `just check`; verify all earlier stories' tests still green** (AC: #15)
   - [ ] `uv run pytest tests/unit -v` — full unit suite passes.
   - [ ] `uv run pytest tests/integration -v` — integration suite (including Story 2.5's `test_simple_turn.py`) still passes; new alignment tests pass.
 
-- [ ] **Task 11: Commit + push** (per `feedback_commit_policy.md` + `feedback_push_after_commit.md`)
-  - [ ] Single commit titled `Story 3.7: audio-frame metadata + Talker SSML + embodiment alignment integration (Epic 3 capstone)`.
-  - [ ] Body: list the metadata strategy chosen (A/B/C), the integration-test p95 numbers, the live smoke result, and any deviations.
-  - [ ] `git push` immediately.
+- [x] **Task 11: Commit + push** (per `feedback_commit_policy.md` + `feedback_push_after_commit.md`)
+  - [x] Three commits landed: `58dc9d6` (Story 3.7 implementation), `cdf3618` (live-test fixes: lenient SSML parser + clarification short-circuit), and the present commit closing the story to `review`.
+  - [x] `git push` after each.
 
 ## Dev Notes
 
@@ -468,4 +470,6 @@ claude-opus-4-7 (1M context) — invoked as bmad-agent-dev "Amelia".
 
 | Date | Change |
 |---|---|
-| 2026-05-07 | Story 3.7 implementation work landed (Tasks 1-5, 7, 8, 10). Epic 3 capstone wires the streaming SSML splitter, four-topic event publisher, mood module, and per-turn correlation-id binding into the live pipeline. New stages: ``SegmenterProcessor`` (drives the state machine + segmenter, resets on UtteranceCapturedFrame), updated ``CartesiaSynthesisProcessor`` (segment-driven; first chunk carries ``EmbodimentAudioFrame`` metadata), ``_PrePublishProcessor`` (publishes before forwarding to ``transport.output()``). Audio-frame metadata via Option A subclass; no architecture deviation needed. Talker system prompt updated with 12 emotion values + 4 vocalization tags. ``run_pipeline`` builds publisher + mood + segmenter; ``mood_controller.publish_initial()`` fires after publisher.connect(). 4 new integration tests (NFR5 publish-before-send invariant, event-ordering correctness, correlation_id-shared-across-topics, privacy). 10 unit tests in ``tests/unit/test_pipeline.py`` rewritten for the new constructor. ``just check``: 312 unit tests pass; ``just test``: 7 integration tests pass. **Tasks 6 (Talker prompt live-test) + 9 (live ROS 2 smoke) PENDING USER verification per `feedback_no_skip_user_tasks.md`.** Status remains ``in-progress`` until those land. |
+| 2026-05-07 | Story 3.7 implementation work landed (Tasks 1-5, 7, 8, 10). Epic 3 capstone wires the streaming SSML splitter, four-topic event publisher, mood module, and per-turn correlation-id binding into the live pipeline. New stages: ``SegmenterProcessor`` (drives the state machine + segmenter, resets on UtteranceCapturedFrame), updated ``CartesiaSynthesisProcessor`` (segment-driven; first chunk carries ``EmbodimentAudioFrame`` metadata), ``_PrePublishProcessor`` (publishes before forwarding to ``transport.output()``). Audio-frame metadata via Option A subclass; no architecture deviation needed. Talker system prompt updated with 12 emotion values + 4 vocalization tags. ``run_pipeline`` builds publisher + mood + segmenter; ``mood_controller.publish_initial()`` fires after publisher.connect(). 4 new integration tests (NFR5 publish-before-send invariant, event-ordering correctness, correlation_id-shared-across-topics, privacy). 10 unit tests in ``tests/unit/test_pipeline.py`` rewritten for the new constructor. ``just check``: 312 unit tests pass; ``just test``: 7 integration tests pass. Commit `58dc9d6`. |
+| 2026-05-07 | Live-test fixes (commit `cdf3618`). Two issues surfaced during the dev-host run against Groq llama-3.1-8b-instant: (1) Groq emitted `<emotion value="happy">` without the trailing slash, crashing the strict state machine with `SplitterError`. Fix: parser made lenient — closes on `>` and accepts an optional trailing `/`. Both forms now valid; genuinely truncated tags still raise. (2) Story 2.4's clarification flow fed the `clarification_prompt` to the Talker, which Groq treated as a question and answered literally instead of delivering. Fix: dispatcher short-circuits on `decision.clarification` — emits the prompt verbatim, no Talker round-trip. Talker system prompt also iterated with explicit "wrong examples" section calling out the three observed failure modes. ``just check``: 314 unit tests pass. |
+| 2026-05-07 | Live ROS 2 smoke confirmed (Task 9). `ros2 topic echo /olaf/speech_emotion` showed 6+ `SpeechEmotionEvent` envelopes across multiple turns with correct `schema_version: 2`, ISO8601 UTC timestamps, fresh per-turn `correlation_id`, and `source: "voice_agent_pipeline"`. Epic 3 capstone signal achieved — full chain works end-to-end. Status → review. |
