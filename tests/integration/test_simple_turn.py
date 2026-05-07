@@ -1,10 +1,14 @@
 """Integration test for Journey 1 (PRD): the simple-turn loop.
 
 Drives 30 simulated turns through the post-STT pipeline chain
-(SttProcessor → TurnDispatchProcessor → CartesiaSynthesisProcessor)
-with mocks at the three external-service Protocol seams (STT, Talker,
-TTS). Measures end-of-speech → first ``OutputAudioRawFrame`` and
-reports p50/p95/max as the NFR1 baseline.
+(SttProcessor → TurnDispatchProcessor → SegmenterProcessor →
+CartesiaSynthesisProcessor) with mocks at the three external-service
+Protocol seams (STT, Talker, TTS). Measures end-of-speech → first
+``OutputAudioRawFrame`` and reports p50/p95/max as the NFR1 baseline.
+
+Story 3.7 added the SegmenterProcessor stage between the dispatcher
+and the synthesizer; the integration test was updated to insert it
+in the chain.
 
 Why post-STT, not full pipeline: the wake-word + VAD + audio transport
 stages need real audio hardware (or a substantially mocked Pipecat
@@ -31,15 +35,57 @@ import pytest
 from pipecat.frames.frames import Frame, OutputAudioRawFrame
 
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame
+from voice_agent_pipeline.config.expression_map import (
+    EmotionEntry,
+    ExpressionMapConfig,
+    FallbackFamily,
+    UnknownEntry,
+    VocalizationEntry,
+)
 from voice_agent_pipeline.config.setup import SttConfig
 from voice_agent_pipeline.pipeline import (
     CartesiaSynthesisProcessor,
+    SegmenterProcessor,
     SttProcessor,
     TurnDispatchProcessor,
     _SttResultLogger,
 )
+from voice_agent_pipeline.splitter.mapping import LastPublishedCache
+from voice_agent_pipeline.splitter.segmenter import Segmenter
 from voice_agent_pipeline.stt.backend import TranscriptionResult
 from voice_agent_pipeline.turn.router import TurnRouter
+
+
+def _make_mapping() -> ExpressionMapConfig:
+    """Minimal ExpressionMapConfig for the integration chain."""
+    return ExpressionMapConfig(
+        schema_version=2,
+        emotions={
+            "neutral": EmotionEntry(expression_data={"led_color": "#fff"}),
+            "content": EmotionEntry(expression_data={"led_color": "#a0e0a0"}),
+        },
+        vocalizations={"laughter": VocalizationEntry(tts_supported=True)},
+        fallback_families={
+            "high_energy_positive": FallbackFamily(members=["enthusiastic"], maps_to="content"),
+        },
+        unknown=UnknownEntry(maps_to="neutral"),
+    )
+
+
+def _build_synthesizer_chain() -> tuple[SegmenterProcessor, CartesiaSynthesisProcessor]:
+    """Build the Story 3.7 segmenter + synthesizer pair sharing a cache.
+
+    Tests drive ``segmenter_processor.process_frame(...)`` then chain
+    its push_frame to the synthesizer's process_frame.
+    """
+    cache = LastPublishedCache()
+    segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
+    synthesizer = CartesiaSynthesisProcessor(
+        _make_mock_tts(),
+        cache,
+        segmenter_processor,
+    )
+    return segmenter_processor, synthesizer
 
 
 class _StubSTTBackend:
@@ -131,19 +177,17 @@ async def _drive_one_turn(
     stt: SttProcessor,
     stt_logger: _SttResultLogger,
     dispatcher: TurnDispatchProcessor,
+    segmenter_processor: SegmenterProcessor,
     synthesizer: CartesiaSynthesisProcessor,
     sink: _AudioSink,
     end_ns: int,
 ) -> None:
     """Push an UtteranceCapturedFrame through the chain manually.
 
-    Each processor's ``push_frame`` is wired to the next stage's
-    ``process_frame``. Final stage pushes to the sink. This is a
-    minimal Pipecat-free harness — enough to verify the integration
-    of the three Story-2.4/2.5 processors plus Story 1.7's
-    ``_SttResultLogger`` (in the chain so privacy assertions can
-    verify it doesn't leak transcript text into INFO logs) without
-    standing up the full PipelineRunner.
+    Story 3.7 chain order: stt → stt_logger → dispatcher → segmenter
+    → synthesizer → sink. Each processor's ``push_frame`` wires to
+    the next stage. Minimal Pipecat-free harness — enough to verify
+    the integration without standing up the full PipelineRunner.
     """
 
     # Wire stt → stt_logger
@@ -158,16 +202,24 @@ async def _drive_one_turn(
 
     stt_logger.push_frame = _logger_push  # type: ignore[method-assign]
 
-    # Wire dispatcher → synthesizer
+    # Wire dispatcher → segmenter_processor
     async def _dispatcher_push(f: Frame, d: Any = None) -> None:
-        await synthesizer.process_frame(f, d)
+        await segmenter_processor.process_frame(f, d)
 
     dispatcher.push_frame = _dispatcher_push  # type: ignore[method-assign]
+
+    # Wire segmenter_processor → synthesizer
+    async def _segmenter_push(f: Frame, d: Any = None) -> None:
+        await synthesizer.process_frame(f, d)
+
+    segmenter_processor.push_frame = _segmenter_push  # type: ignore[method-assign]
 
     # Wire synthesizer → sink
     synthesizer.push_frame = sink.receive  # type: ignore[method-assign]
 
-    # Drive the turn.
+    # Drive the turn. The UtteranceCapturedFrame triggers
+    # segmenter_processor.reset() inside the segmenter — Story 3.7's
+    # turn-boundary proxy.
     utterance = UtteranceCapturedFrame(
         audio=b"x" * 1000,
         start_ns=end_ns - 1_000_000_000,
@@ -204,7 +256,9 @@ async def test_simple_turn_p95_baseline_30_turns(tmp_path: Path) -> None:
     stt_processor = SttProcessor(stt_backend)  # type: ignore[arg-type]
     stt_logger = _SttResultLogger(stt_config.low_confidence_threshold)
     dispatcher = TurnDispatchProcessor(router)
-    synthesizer = CartesiaSynthesisProcessor(tts)
+    cache = LastPublishedCache()
+    segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
+    synthesizer = CartesiaSynthesisProcessor(tts, cache, segmenter_processor)
 
     sink = _AudioSink()
 
@@ -216,6 +270,7 @@ async def test_simple_turn_p95_baseline_30_turns(tmp_path: Path) -> None:
             stt_processor,
             stt_logger,
             dispatcher,
+            segmenter_processor,
             synthesizer,
             sink,
             end_ns,
@@ -276,7 +331,9 @@ async def test_strict_field_names_still_redacted_at_info(tmp_path: Path) -> None
     stt_processor = SttProcessor(stt_backend)  # type: ignore[arg-type]
     stt_logger = _SttResultLogger(stt_config.low_confidence_threshold)
     dispatcher = TurnDispatchProcessor(router)
-    synthesizer = CartesiaSynthesisProcessor(tts)
+    cache = LastPublishedCache()
+    segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
+    synthesizer = CartesiaSynthesisProcessor(tts, cache, segmenter_processor)
     sink = _AudioSink()
 
     with structlog.testing.capture_logs() as captured:
@@ -286,6 +343,7 @@ async def test_strict_field_names_still_redacted_at_info(tmp_path: Path) -> None
                 stt_processor,
                 stt_logger,
                 dispatcher,
+                segmenter_processor,
                 synthesizer,
                 sink,
                 time.time_ns(),
@@ -332,7 +390,9 @@ async def test_no_audio_field_names_in_logs(tmp_path: Path) -> None:
     stt_processor = SttProcessor(stt_backend)  # type: ignore[arg-type]
     stt_logger = _SttResultLogger(stt_config.low_confidence_threshold)
     dispatcher = TurnDispatchProcessor(router)
-    synthesizer = CartesiaSynthesisProcessor(tts)
+    cache = LastPublishedCache()
+    segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
+    synthesizer = CartesiaSynthesisProcessor(tts, cache, segmenter_processor)
     sink = _AudioSink()
 
     with structlog.testing.capture_logs() as captured:
@@ -342,6 +402,7 @@ async def test_no_audio_field_names_in_logs(tmp_path: Path) -> None:
                 stt_processor,
                 stt_logger,
                 dispatcher,
+                segmenter_processor,
                 synthesizer,
                 sink,
                 time.time_ns(),
