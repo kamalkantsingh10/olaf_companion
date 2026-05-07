@@ -100,6 +100,11 @@ clarification_prompt = "Briefly ask the user to repeat themselves. Use under 5 w
 provider = "groq"
 max_tokens = 512
 system_prompt_path = "prompts/talker_system.md"
+# Story 4.1: belief-state grounding. List of keys to fetch from the
+# orchestrator daemon at the start of each Talker turn (Story 4.4
+# wires the call). Empty list ≡ no grounding (v1 default). Example:
+#   grounded_keys = ["time", "calendar_today"]
+grounded_keys = []
 
 # Per-provider model identifiers. Only the active provider's sub-block
 # is consumed; the others stay declared so swapping is a single edit
@@ -163,10 +168,18 @@ vocalization = "/olaf/vocalization"
 cooldown_publishes_per_hour = 4
 initial = "calm"
 
+# Story 4.1 / 4.2: orchestrator daemon HTTP endpoint. The pipeline
+# reads belief-state for grounded fast-path responses (Story 4.1)
+# and dispatches complex turns over SSE (Story 4.2) against this
+# URL. v1 ships with localhost-only; LAN-reachable URLs require
+# the Story 5.3 shared-secret / mTLS hardening before they're
+# accepted at startup. Trailing slash is stripped at parse time.
+[daemon]
+url = "http://localhost:8001"
+
 # Sections populated by subsequent stories:
-# [talker] -- extended in Story 4.1 (grounded_keys for belief-state)
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
 # [router]         -- Story 4.3 (slow_path_patterns, default)
-# [daemon]         -- Story 4.1/4.2 (url) + Story 5.3 (bearer_token_env, mtls)
+# [daemon]         -- extended in Story 5.3 (bearer_token_env, mtls)
 # [barge_in]       -- Story 5.1 (sustained_ms, energy_threshold)
 # [logging]        -- Story 5.3 (max_file_size_mb, retention_days, console_mirror)

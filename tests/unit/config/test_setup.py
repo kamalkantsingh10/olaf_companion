@@ -614,6 +614,147 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     assert "setup.toml" in msg
 
 
+# ---------------------------------------------------------------------------
+# Story 4.1: ``[daemon]`` block + ``TalkerConfig.grounded_keys``.
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_defaults_to_localhost_8001(tmp_path: Path) -> None:
+    """Story 4.1: omitting ``[daemon]`` falls back to the v1 default URL.
+
+    Operators without an opinion get a localhost daemon endpoint that
+    matches the architecture's "v1 ships localhost-only" stance.
+    """
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.daemon.url == "http://localhost:8001"
+
+
+def test_daemon_url_explicit_override(tmp_path: Path) -> None:
+    """Story 4.1: an explicit ``[daemon] url`` overrides the default."""
+    toml_with_daemon = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[daemon]\n"
+        'url = "http://localhost:9000"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_daemon)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.daemon.url == "http://localhost:9000"
+
+
+def test_daemon_url_unknown_field_raises(tmp_path: Path) -> None:
+    """Story 4.1: ``extra='forbid'`` on DaemonConfig catches typos at startup.
+
+    A typo like ``urll = ...`` should fail loudly so the operator fixes
+    it before the pipeline tries to call the (missing) daemon.
+    """
+    toml_with_typo = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[daemon]\n"
+        'urll = "http://localhost:8001"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_typo)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "urll" in str(exc_info.value)
+
+
+def test_daemon_url_must_start_with_http(tmp_path: Path) -> None:
+    """Story 4.1: a URL without a scheme is rejected by the field validator.
+
+    httpx silently accepts schemeless strings as relative URLs, which
+    would surface as a confusing 400 / connection refused at runtime
+    rather than a clean ConfigError at startup. Catch it here.
+    """
+    toml_with_bad_url = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[daemon]\n"
+        'url = "localhost:8001"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_url)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+def test_daemon_url_strips_trailing_slash(tmp_path: Path) -> None:
+    """Story 4.1: the field validator normalizes trailing-slash URLs.
+
+    The HttpBeliefStateClient also rstrips defensively, but normalizing
+    at parse time keeps the stored value canonical for log readability.
+    """
+    toml_with_trailing = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[daemon]\n"
+        'url = "http://localhost:8001/"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_trailing)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.daemon.url == "http://localhost:8001"
+
+
+def test_talker_grounded_keys_defaults_to_empty_list(tmp_path: Path) -> None:
+    """Story 4.1: ``[talker] grounded_keys`` defaults to an empty list (no grounding)."""
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.talker.grounded_keys == []
+
+
+def test_talker_grounded_keys_explicit(tmp_path: Path) -> None:
+    """Story 4.1: an explicit ``[talker] grounded_keys`` list parses through.
+
+    Story 4.4 will read this list to drive the per-turn belief-state
+    fetch. Story 4.1 only validates the field shape lands.
+    """
+    toml_with_grounded = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[talker]\n"
+        'grounded_keys = ["time", "calendar_today"]\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_grounded)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.talker.grounded_keys == ["time", "calendar_today"]
+
+
+# ---------------------------------------------------------------------------
+# Loose-perms warning (Story 1.2 / NFR23). End of file.
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX perms only")
 def test_loose_env_perms_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """A ``.env`` with looser-than-0600 perms emits a WARN but does NOT raise.

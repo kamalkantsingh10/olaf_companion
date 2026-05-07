@@ -39,7 +39,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_agent_pipeline.config.version import assert_schema_version
@@ -204,6 +204,13 @@ class TalkerConfig(BaseModel):
         openai / groq / gemini: Per-provider model identifiers. Only
             the active provider's sub-block is consumed; the others
             stay around as ready-to-swap configurations.
+        grounded_keys: Story 4.1 — list of belief-state keys the Talker
+            requests via :class:`BeliefStateClient` at the start of each
+            turn for grounded fast-path responses. Story 4.4 wires the
+            actual call site (``complete_with_tools``); Story 4.1 ships
+            the field. Empty list ≡ no grounding (v1 default). Operators
+            opt in by setting e.g. ``grounded_keys = ["time",
+            "calendar_today"]`` in ``setup.toml``'s ``[talker]`` block.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -214,6 +221,12 @@ class TalkerConfig(BaseModel):
     openai: _OpenAITalkerSection = Field(default_factory=_OpenAITalkerSection)
     groq: _GroqTalkerSection = Field(default_factory=_GroqTalkerSection)
     gemini: _GeminiTalkerSection = Field(default_factory=_GeminiTalkerSection)
+    # Story 4.1: belief-state grounded keys. See class docstring above.
+    # Story 4.4 plumbs ``BeliefStateClient.read(grounded_keys)`` into
+    # ``complete_with_tools``; Story 4.1 only exposes the config field
+    # so 4.4's wiring is purely a code change at the call site, no
+    # config refactor.
+    grounded_keys: list[str] = Field(default_factory=list)
 
 
 class SttConfig(BaseModel):
@@ -372,6 +385,51 @@ class PublisherConfig(BaseModel):
     topics: TopicNames = Field(default_factory=TopicNames)
 
 
+class DaemonConfig(BaseModel):
+    """Orchestrator daemon endpoint config (Story 4.1).
+
+    The pipeline reads belief-state from the daemon (``GET /beliefs``,
+    Story 4.1) and dispatches complex turns over SSE (``POST /turn``,
+    Story 4.2) against this URL. v1 ships with localhost-only;
+    LAN-reachable URLs require Story 5.3's shared-secret / mTLS
+    hardening before the pipeline accepts them at startup.
+
+    The :class:`field_validator` enforces:
+
+    - Scheme is ``http://`` or ``https://`` (no other transports).
+    - Trailing ``/`` is stripped at parse time so callers can write
+      ``f"{config.daemon.url}/beliefs"`` without worrying about
+      double-slashes.
+
+    Why ``str`` not :class:`pydantic.HttpUrl`: ``HttpUrl`` enforces a
+    trailing slash on serialization and stringifies awkwardly (URL
+    object vs str), which makes ``f"{base}/beliefs"`` formatting
+    surprising. A small ``field_validator`` gives the same checks
+    with cleaner ergonomics.
+
+    Attributes:
+        url: Base URL of the orchestrator daemon. v1 default
+            ``http://localhost:8001``; operators override per-machine.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = "http://localhost:8001"
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str) -> str:
+        # Reject anything that's not http/https — file:// or arbitrary
+        # schemes would silently break httpx; the operator should see a
+        # clean ConfigError at startup instead.
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError(f"daemon.url must start with http:// or https://; got {v!r}")
+        # Strip a single trailing slash. Story 4.1's HttpBeliefStateClient
+        # also rstrips defensively, but normalising at parse time keeps
+        # the stored value canonical (helps tests + log readability).
+        return v.rstrip("/")
+
+
 class SetupConfig(BaseSettings):
     """Typed top-level configuration for the voice-agent pipeline.
 
@@ -426,6 +484,12 @@ class SetupConfig(BaseSettings):
     # don't have to declare [mood] in setup.toml unless they want to
     # tune the cooldown rate or starting mood.
     mood: MoodConfig = Field(default_factory=MoodConfig)
+    # Story 4.1: orchestrator daemon endpoint. Optional with defaults
+    # (localhost:8001). Story 4.1 wires the BeliefStateClient against
+    # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer
+    # against the same URL. Operators only override [daemon] when the
+    # daemon runs on a non-default host/port.
+    daemon: DaemonConfig = Field(default_factory=DaemonConfig)
 
 
 def load_setup_config(

@@ -44,7 +44,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-07
+last_updated: 2026-05-07  # Epic 4 stories 4.1–4.7 contexted (ready-for-dev) on 2026-05-07
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -92,14 +92,14 @@ development_status:
   #   lifecycle with 7-state + deferred-sleep). 4.4 NEW (Talker tool-using upgrade).
   #   4.5 NEW (wake greeting). 4.6 NEW (mic-mode flip). 4.7 EVOLVED (merges old 4.3 + 4.5
   #   for slow-path wiring + complex-turn integration).
-  epic-4: backlog
-  4-1-belief-state-client: backlog
-  4-2-orchestrator-client-sse: backlog
-  4-3-activity-fsm-core: backlog
-  4-4-talker-tool-using-upgrade: backlog
-  4-5-wake-greeting: backlog
-  4-6-mic-mode-flip: backlog
-  4-7-turn-router-slow-path-and-complex-turn: backlog
+  epic-4: in-progress
+  4-1-belief-state-client: review
+  4-2-orchestrator-client-sse: ready-for-dev
+  4-3-activity-fsm-core: ready-for-dev
+  4-4-talker-tool-using-upgrade: ready-for-dev
+  4-5-wake-greeting: ready-for-dev
+  4-6-mic-mode-flip: ready-for-dev
+  4-7-turn-router-slow-path-and-complex-turn: ready-for-dev
   epic-4-retrospective: optional
 
   # ───────────────── Epic 5: Production Hardening ─────────────────

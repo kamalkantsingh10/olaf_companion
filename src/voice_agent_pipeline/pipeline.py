@@ -76,6 +76,7 @@ from voice_agent_pipeline.stt import STTBackend, build_stt_backend
 from voice_agent_pipeline.tts.cartesia import CartesiaClient
 from voice_agent_pipeline.tts.client import TTSClient
 from voice_agent_pipeline.turn import build_talker
+from voice_agent_pipeline.turn.beliefs import HttpBeliefStateClient, async_http_client
 from voice_agent_pipeline.turn.router import TurnRouter
 
 log = structlog.get_logger(__name__)
@@ -600,23 +601,31 @@ async def run_pipeline(config: SetupConfig) -> None:
     the streaming SSML splitter + segmenter, the mood module, and
     the pre-publish stage that fires events anticipating audio.
 
+    Story 4.1 — wraps the body in ``async with httpx.AsyncClient(...)``
+    so a single keep-alive pool serves both the belief-state read
+    (Story 4.1) and the orchestrator slow-path SSE consumer
+    (Story 4.2). Same daemon origin → same connection pool.
+
     Steps:
 
     1. Resolve audio devices via the regex patterns in ``config.audio``.
     2. Build the input/output transport (PyAudio-backed).
     3. Build the wake-word processor + VAD processor.
     4. Pre-load the STT backend.
-    5. Build the Talker + TurnRouter.
-    6. Build the Cartesia TTS client.
-    7. Load ``expression_map.yaml`` (Story 3.1).
-    8. **Build the EventPublisher and connect** (fail-fast on connect
+    5. **Build the EventPublisher and connect** (fail-fast on connect
        failure — broadcast bus is a hard dep).
-    9. **Build the mood module**: ``MoodState`` + ``MoodController``.
-    10. **Publish initial mood** as the latched startup event (all
-        four-topic subscribers learn the boot mood at connect).
-    11. Build the segmenter + cache + segmenter processor +
+    6. **Open the persistent ``httpx.AsyncClient``** (Story 4.1).
+       Lifetime is bound to the rest of ``run_pipeline``; both
+       ``HttpBeliefStateClient`` (this story) and Story 4.2's
+       ``HttpOrchestratorClient`` share this client.
+    7. Build the Talker (with belief-state client) + TurnRouter.
+    8. Build the Cartesia TTS client.
+    9. Load ``expression_map.yaml`` (Story 3.1).
+    10. **Build the mood module**: ``MoodState`` + ``MoodController``.
+    11. **Publish initial mood** as the latched startup event.
+    12. Build the segmenter + cache + segmenter processor +
         Cartesia synthesis processor + pre-publish processor.
-    12. Assemble + run.
+    13. Assemble + run.
     """
     indices = resolve_audio_devices(
         input_pattern=config.audio.input_device_name,
@@ -636,9 +645,6 @@ async def run_pipeline(config: SetupConfig) -> None:
     stt_backend = build_stt_backend(config.stt)
     await stt_backend.load()
 
-    talker = build_talker(config)
-    router = TurnRouter(config.stt, talker, orchestrator=None)
-
     cartesia_client = CartesiaClient(config.tts, config.cartesia_api_key)
 
     # Story 3.1: load the production expression map. Validates at
@@ -652,62 +658,78 @@ async def run_pipeline(config: SetupConfig) -> None:
     event_publisher = build_publisher(config.publisher)
     await event_publisher.connect()
 
-    # Story 3.6: mood module. State + controller wired BEFORE
-    # publish_initial so the first event lives on the latched topic.
-    mood_state = MoodState(initial=config.mood.initial)
-    mood_controller = MoodController(
-        mood_state,
-        event_publisher,
-        cooldown_publishes_per_hour=config.mood.cooldown_publishes_per_hour,
-    )
-    await mood_controller.publish_initial()
+    # Story 4.1: open the persistent httpx.AsyncClient via the factory
+    # in turn/beliefs.py. The factory keeps ``import httpx`` confined to
+    # the two adapter files (turn/beliefs.py + turn/orchestrator.py)
+    # per the architecture's "External adapter boundaries" invariant.
+    # Timeouts are tuned for the daemon's expected response shape; see
+    # async_http_client's docstring for the rationale.
+    async with async_http_client() as http_client:
+        # Story 4.1: belief-state client. Lifecycle is the http_client's
+        # `async with` scope. Story 4.2 will add HttpOrchestratorClient
+        # against the same http_client (one pool, two consumers — same
+        # daemon origin).
+        belief_client = HttpBeliefStateClient(http_client, base_url=config.daemon.url)
 
-    # Story 3.2 + 3.3 + 3.7: segmenter + cache, then the processors
-    # that drive them in the Pipecat pipeline.
-    segmenter = Segmenter(mapping)
-    cache = LastPublishedCache()
-    segmenter_processor = SegmenterProcessor(segmenter, cache)
+        talker = build_talker(config, beliefs=belief_client)
+        router = TurnRouter(config.stt, talker, orchestrator=None)
 
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            wakeword,
-            vad,
-            SttProcessor(stt_backend),
-            _SttResultLogger(config.stt.low_confidence_threshold),
-            _WakewordEventLogger(),
-            TurnDispatchProcessor(router),
-            # Story 3.7: SegmenterProcessor consumes TalkerResponseFrame
-            # and emits SegmentFrame per boundary.
-            segmenter_processor,
-            # Story 3.7: CartesiaSynthesisProcessor consumes SegmentFrame
-            # and emits EmbodimentAudioFrame (first chunk of each segment)
-            # with speech_emotion + vocalization metadata attached.
-            CartesiaSynthesisProcessor(
-                cartesia_client,
-                cache,
+        # Story 3.6: mood module. State + controller wired BEFORE
+        # publish_initial so the first event lives on the latched topic.
+        mood_state = MoodState(initial=config.mood.initial)
+        mood_controller = MoodController(
+            mood_state,
+            event_publisher,
+            cooldown_publishes_per_hour=config.mood.cooldown_publishes_per_hour,
+        )
+        await mood_controller.publish_initial()
+
+        # Story 3.2 + 3.3 + 3.7: segmenter + cache, then the processors
+        # that drive them in the Pipecat pipeline.
+        segmenter = Segmenter(mapping)
+        cache = LastPublishedCache()
+        segmenter_processor = SegmenterProcessor(segmenter, cache)
+
+        pipeline = Pipeline(
+            [
+                transport.input(),
+                wakeword,
+                vad,
+                SttProcessor(stt_backend),
+                _SttResultLogger(config.stt.low_confidence_threshold),
+                _WakewordEventLogger(),
+                TurnDispatchProcessor(router),
+                # Story 3.7: SegmenterProcessor consumes TalkerResponseFrame
+                # and emits SegmentFrame per boundary.
                 segmenter_processor,
-            ),
-            # Story 3.7: pre-publish stage — publishes embodiment events
-            # before each EmbodimentAudioFrame reaches the speaker.
-            _PrePublishProcessor(event_publisher),
-            _FrameCounter(),
-            transport.output(),
-        ]
-    )
-    task = PipelineTask(pipeline)
-    runner = PipelineRunner()
+                # Story 3.7: CartesiaSynthesisProcessor consumes SegmentFrame
+                # and emits EmbodimentAudioFrame (first chunk of each segment)
+                # with speech_emotion + vocalization metadata attached.
+                CartesiaSynthesisProcessor(
+                    cartesia_client,
+                    cache,
+                    segmenter_processor,
+                ),
+                # Story 3.7: pre-publish stage — publishes embodiment events
+                # before each EmbodimentAudioFrame reaches the speaker.
+                _PrePublishProcessor(event_publisher),
+                _FrameCounter(),
+                transport.output(),
+            ]
+        )
+        task = PipelineTask(pipeline)
+        runner = PipelineRunner()
 
-    log.info("pipeline.started")
-    try:
-        await runner.run(task)
-    finally:
-        # Story 3.5: disconnect the publisher cleanly on shutdown
-        # (idempotent; safe even if connect failed).
+        log.info("pipeline.started")
         try:
-            await event_publisher.disconnect()
-        except Exception as e:
-            # Disconnect failures are non-fatal — we're shutting down
-            # anyway. Log + continue to the rest of the cleanup.
-            log.warning("publisher.disconnect_warning", error=str(e))
-        log.info("pipeline.stopped")
+            await runner.run(task)
+        finally:
+            # Story 3.5: disconnect the publisher cleanly on shutdown
+            # (idempotent; safe even if connect failed).
+            try:
+                await event_publisher.disconnect()
+            except Exception as e:
+                # Disconnect failures are non-fatal — we're shutting down
+                # anyway. Log + continue to the rest of the cleanup.
+                log.warning("publisher.disconnect_warning", error=str(e))
+            log.info("pipeline.stopped")

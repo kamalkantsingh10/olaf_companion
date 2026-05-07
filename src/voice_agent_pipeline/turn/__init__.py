@@ -83,7 +83,10 @@ def _resolve(config: SetupConfig) -> tuple[SecretStr, str, str | None]:
     raise ConfigError(stage="talker", provider=provider, reason="unsupported provider")
 
 
-def build_talker(config: SetupConfig) -> Talker:
+def build_talker(
+    config: SetupConfig,
+    beliefs: BeliefStateClient | None = None,
+) -> Talker:
     """Construct the configured Talker — provider dispatch lives here.
 
     Story 2.2 supports ``"openai"`` / ``"groq"`` / ``"gemini"`` —
@@ -94,6 +97,11 @@ def build_talker(config: SetupConfig) -> Talker:
 
     Args:
         config: Validated :class:`SetupConfig` from the loader.
+        beliefs: Optional :class:`BeliefStateClient` for Story 4.1's
+            grounded fast-path responses. v1 ``Talker.complete()`` does
+            not yet consume it — Story 4.4 wires the call site in
+            ``complete_with_tools``. Story 4.1 plumbs the reference
+            through so 4.4's change is purely at the call site.
 
     Returns:
         A constructed :class:`Talker` ready to call ``complete(...)``.
@@ -109,6 +117,7 @@ def build_talker(config: SetupConfig) -> Talker:
         model=model,
         base_url=base_url,
         max_tokens_param=PROVIDER_MAX_TOKENS_PARAM[config.talker.provider],
+        beliefs=beliefs,
     )
 
 
