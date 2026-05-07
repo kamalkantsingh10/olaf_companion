@@ -15,7 +15,15 @@ from voice_agent_pipeline.errors import SchemaVersionError
 
 # Bump only on breaking changes. When you bump, update every .toml/.yaml that
 # references a schema_version in lockstep.
-SUPPORTED_SCHEMA_VERSION: int = 1
+#
+# Story 3.4 (2026-05-07): bumped 1 → 2 for the Epic 3 event-topology
+# rebuild. The single ``OlafAction`` channel split into four typed
+# topics (mood / activity / speech_emotion / vocalization) sharing a
+# common :class:`EventEnvelope`. ``setup.toml`` and the new event
+# schemas all carry ``schema_version=2``. ``expression_map.yaml`` was
+# already at 2 (Story 3.1 introduced the local
+# ``EXPRESSION_MAP_SCHEMA_VERSION`` pre-bump).
+SUPPORTED_SCHEMA_VERSION: int = 2
 
 
 def assert_schema_version(

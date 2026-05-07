@@ -324,7 +324,7 @@ def test_synthesize_logs_first_frame_ttfb(
 def setup_config(tmp_path: Path, tts_config: TtsConfig) -> SetupConfig:
     """A SetupConfig good enough for the credentials probe."""
     return SetupConfig.model_construct(
-        schema_version=1,
+        schema_version=2,
         picovoice_access_key=SecretStr("stub-pico"),
         cartesia_api_key=SecretStr("stub-cartesia"),
         audio=AudioConfig(input_device_name="m", output_device_name="s"),

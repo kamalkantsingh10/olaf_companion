@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 
 # Mic input + speaker output devices — regexes matched (case-insensitive)
 # against PyAudio's enumerated device names. Tune to your hardware; if a

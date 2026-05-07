@@ -17,7 +17,7 @@ from voice_agent_pipeline.config.setup import load_setup_config
 from voice_agent_pipeline.errors import ConfigError, SchemaVersionError
 
 _VALID_TOML = (
-    "schema_version = 1\n"
+    "schema_version = 2\n"
     "[audio]\n"
     'input_device_name = "USB.*Mic.*"\n'
     'output_device_name = "USB.*Speaker.*"\n'
@@ -80,7 +80,7 @@ def test_load_happy_path(tmp_path: Path) -> None:
     """
     toml_path, env_path = _write_files(tmp_path)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
-    assert config.schema_version == 1
+    assert config.schema_version == 2
     # SecretStr requires explicit unwrap — that's the whole point of using it.
     # If you ever see a test asserting on `str(config.picovoice_access_key)`,
     # that's a bug: SecretStr renders as `**********` in str/repr by design.
@@ -127,7 +127,7 @@ def test_wakeword_block_extra_key_rejected(tmp_path: Path) -> None:
     loader wraps it as ConfigError per the project's error hierarchy.
     """
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         "[wakeword]\n"
@@ -155,7 +155,7 @@ def test_wakeword_sensitivity_out_of_range_rejected(tmp_path: Path) -> None:
     cryptic native-code error message instead of a clean ConfigError.
     """
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         "[wakeword]\n"
@@ -178,7 +178,7 @@ def test_wakeword_sensitivity_default(tmp_path: Path) -> None:
     they only override when Story 5.5's soak says so.
     """
     toml_with_default = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         # Story 2.1: output_device_name is now required.
@@ -203,7 +203,7 @@ def test_missing_wakeword_block_rejected(tmp_path: Path) -> None:
     a future "headless" mode lands, this assertion needs to flip.
     """
     toml_no_wakeword = (
-        'schema_version = 1\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+        'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
         # No [wakeword] block at all.
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=toml_no_wakeword)
@@ -217,7 +217,7 @@ def test_missing_wakeword_block_rejected(tmp_path: Path) -> None:
 def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
     """Story 1.5 AC #3: `extra='forbid'` applies to the nested AudioConfig too."""
     bad_toml = (
-        'schema_version = 1\n[audio]\ninput_device_name = "USB.*Mic.*"\nunknown_audio_field = 42\n'
+        'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\nunknown_audio_field = 42\n'
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
     with pytest.raises(ConfigError) as exc_info:
@@ -227,7 +227,7 @@ def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
 
 def test_audio_block_missing_input_name_rejected(tmp_path: Path) -> None:
     """Story 1.5 AC #3: `input_device_name` is required."""
-    bad_toml = "schema_version = 1\n[audio]\n"
+    bad_toml = "schema_version = 2\n[audio]\n"
     toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
@@ -242,7 +242,7 @@ def test_talker_block_overrides_loaded(tmp_path: Path) -> None:
     including the per-provider model sub-blocks.
     """
     toml_with_talker = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -286,7 +286,7 @@ def test_talker_max_tokens_must_be_positive(tmp_path: Path) -> None:
     Anthropic call with a 400.
     """
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -305,7 +305,7 @@ def test_talker_max_tokens_must_be_positive(tmp_path: Path) -> None:
 def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
     """Story 2.2: ``extra='forbid'`` applies to the nested TalkerConfig too."""
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -337,7 +337,7 @@ def test_stt_clarification_prompt_default(tmp_path: Path) -> None:
 def test_stt_clarification_prompt_override(tmp_path: Path) -> None:
     """Story 2.4: an explicit [stt] clarification_prompt overrides the default."""
     toml_with_clarification = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -362,7 +362,7 @@ def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
     operator pastes the GUID into setup.toml.
     """
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -379,7 +379,7 @@ def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
 def test_tts_block_extra_key_rejected(tmp_path: Path) -> None:
     """Story 2.3: ``extra='forbid'`` applies to TtsConfig too."""
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -438,7 +438,7 @@ def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:
     onward — a config without a speaker regex cannot start.
     """
     bad_toml = (
-        "schema_version = 1\n"
+        "schema_version = 2\n"
         "[audio]\n"
         # Note: input present, output deliberately missing.
         'input_device_name = "USB.*Mic.*"\n'
@@ -453,7 +453,7 @@ def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:
 
 def test_missing_audio_block_rejected(tmp_path: Path) -> None:
     """Omitting the `[audio]` block entirely raises ConfigError naming it."""
-    toml_path, env_path = _write_files(tmp_path, toml_body="schema_version = 1\n")
+    toml_path, env_path = _write_files(tmp_path, toml_body="schema_version = 2\n")
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "audio" in str(exc_info.value).lower()
@@ -471,7 +471,7 @@ def test_extra_key_raises(tmp_path: Path) -> None:
     """An unknown TOML key raises ConfigError naming the offender (extra='forbid')."""
     toml_path, env_path = _write_files(
         tmp_path,
-        toml_body="schema_version = 1\nunknown_key = 42\n",
+        toml_body="schema_version = 2\nunknown_key = 42\n",
     )
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
@@ -521,8 +521,12 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     # blocks *first* and we never get to the schema_version policy check.
     # Each new story that lands a required nested block must extend this
     # TOML to keep the test focused on its contract (schema_version policy).
+    # Use a fully valid TOML except for the deliberately-wrong
+    # schema_version (99 — clearly not supported). Story 3.4 bumped
+    # SUPPORTED_SCHEMA_VERSION 1 → 2; this test drives 99 to keep the
+    # assertion forward-compatible across future bumps.
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 99\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         # Story 2.1 made output_device_name required; include it so
@@ -542,8 +546,8 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     # The error message must surface BOTH versions and the source name —
     # this is the AC #8 contract from Story 1.2 and survives every later
     # story that touches the loader.
+    assert "99" in msg
     assert "2" in msg
-    assert "1" in msg
     assert "setup.toml" in msg
 
 

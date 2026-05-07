@@ -26,10 +26,14 @@ def test_mismatched_version_raises_with_both_versions_and_source() -> None:
     Why we assert on the rendered string rather than the context dict: this
     is the only thing the operator sees in stderr / logs, so we test what
     they actually read.
+
+    Story 3.4 bumped ``SUPPORTED_SCHEMA_VERSION`` from 1 → 2; the test
+    now drives ``found=1`` to assert the rejected-on-mismatch contract
+    against the new supported version.
     """
     with pytest.raises(SchemaVersionError) as exc_info:
-        assert_schema_version(2, source="setup.toml")
+        assert_schema_version(1, source="setup.toml")
     msg = str(exc_info.value)
-    assert "2" in msg
     assert "1" in msg
+    assert "2" in msg
     assert "setup.toml" in msg

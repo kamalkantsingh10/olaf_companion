@@ -22,26 +22,23 @@ Stateful helper:
   :meth:`LastPublishedCache.should_publish_vocalization` so calling
   conventions stay clear at every site.
 
-NOTE — interim home for payload classes
----------------------------------------
+Payload classes (Story 3.4 migration)
+-------------------------------------
 
-Story 3.2 introduces :class:`SpeechEmotionPayload` and
-:class:`VocalizationPayload` here as a **temporary** measure. Story 3.4
-(event-schema rebuild) will move them to
-``schemas/speech_emotion_event.py`` and
-``schemas/vocalization_event.py``, wrap them in :class:`EventEnvelope`,
-and update every import site. Until then, this module is the canonical
-home — the class definitions and field sets stay stable across the
-move. **Do not** dual-export from ``schemas/`` until the Story 3.4
-migration runs.
+Story 3.2 introduced :class:`SpeechEmotionPayload` and
+:class:`VocalizationPayload` here as an interim home. Story 3.4 moved
+them to ``schemas/speech_emotion_event.py`` and
+``schemas/vocalization_event.py`` (where they're now wrapped in
+:class:`EventEnvelope`). This module re-exports the classes from their
+canonical home so existing imports keep working without code changes
+elsewhere.
 """
 
 import logging
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict
 
 from voice_agent_pipeline.config.expression_map import ExpressionMapConfig
+from voice_agent_pipeline.schemas.speech_emotion_event import SpeechEmotionPayload
+from voice_agent_pipeline.schemas.vocalization_event import VocalizationPayload
 
 # Module logger. Test fixtures pin this name via
 # ``caplog.at_level(..., logger="voice_agent_pipeline.splitter.mapping")``;
@@ -49,77 +46,15 @@ from voice_agent_pipeline.config.expression_map import ExpressionMapConfig
 log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Payload classes — interim home until Story 3.4
-# ---------------------------------------------------------------------------
-
-
-class SpeechEmotionPayload(BaseModel):
-    """Inner payload of the eventual :class:`SpeechEmotionEvent` (Story 3.4).
-
-    Architecture.md §"Stable contracts" — the field set is the wire
-    contract. Adding a field is forward-compat (subscribers ignore
-    unknowns); renaming or removing requires a ``schema_version`` bump.
-
-    Attributes:
-        emotion: Resolved first-class emotion name (always one of the
-            keys in ``mapping.emotions``). For a fallback-family hit,
-            this is the family's ``maps_to``; for unmapped, this is
-            ``mapping.unknown.maps_to``.
-        source_tag: The original tag the splitter parsed from the LLM
-            stream — same as ``raw_tag`` for first-class hits, the
-            family member name for fallback hits, the bogus tag for
-            unmapped.
-        audio_frame_id: Pipecat audio-frame id this event aligns to.
-            Story 3.7 populates it; the resolver leaves it None.
-        raw_tag: The verbatim tag the LLM emitted, for audit trail.
-            FR20 — consumers see what was asked AND what was rendered.
-        resolved_fallback: ``None`` for first-class hits; the family
-            name for fallback hits; ``"unknown"`` for the unmapped
-            fall-through. FR21.
-        expression_data: Opaque dict copied from
-            ``ExpressionMapConfig.emotions[<emotion>].expression_data``.
-            ``Any``-typed inner values are the documented extensibility
-            seam (CLAUDE.md rule #3 carve-out).
-    """
-
-    # frozen=True → safe across async tasks; mutation raises.
-    # extra="forbid" → typo at construction time fails loudly.
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    emotion: str
-    source_tag: str
-    audio_frame_id: str | None = None
-    raw_tag: str
-    resolved_fallback: str | None
-    # The single architecturally-allowed Any seam (architecture.md
-    # §"Type System Conventions"). New fields ship via expression_map.yaml
-    # edits + this dict — no schema_version bump required.
-    expression_data: dict[str, Any]
-
-
-class VocalizationPayload(BaseModel):
-    """Inner payload of the eventual :class:`VocalizationEvent` (Story 3.4).
-
-    Vocalizations are flatter than emotions — no fallback families in
-    v1. The ``tts_supported`` flag drives Story 3.3's segmenter:
-    ``True`` → keep the literal ``[tag]`` in the TTS text (Cartesia
-    renders the audio); ``False`` → strip from TTS, still publish for
-    embodiment.
-
-    Attributes:
-        tag: The vocalization name (e.g. ``"laughter"``, ``"sigh"``).
-        audio_frame_id: Story 3.7 populates; resolver leaves None.
-        tts_supported: Whether Cartesia renders audio for this tag,
-            sourced from ``mapping.vocalizations[<tag>].tts_supported``.
-            Unknown tags get ``False`` (safe default — strip).
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tag: str
-    audio_frame_id: str | None = None
-    tts_supported: bool
+# Re-export for callers who still import from here. The canonical
+# home is now ``schemas/`` per Story 3.4's migration.
+__all__ = [
+    "LastPublishedCache",
+    "SpeechEmotionPayload",
+    "VocalizationPayload",
+    "resolve",
+    "resolve_vocalization",
+]
 
 
 # ---------------------------------------------------------------------------
