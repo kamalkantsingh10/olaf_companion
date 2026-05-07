@@ -58,13 +58,16 @@ end_threshold = 0.35
 # and torch installed; "auto" probes torch.cuda.is_available() at startup.
 [stt]
 backend = "whisper-cpu"
-# Story 3.7 calibration: bumped from "small" to distil-whisper's
-# distil-large-v3 — ~6× faster than full large-v3 with WER within
-# ~1%, designed for faster-whisper / CTranslate2. Substantially more
-# accurate than small on the v1 dev PC. First run downloads ~750 MB
-# to ~/.cache/huggingface/. v2 Pi 5 port (Story 5.x) will swap the
-# entire backend, so this model choice is dev-PC-only.
-model = "distil-whisper/distil-large-v3"
+# Story 3.7 calibration: bumped from "small" to the SYSTRAN-published
+# CTranslate2 conversion of distil-whisper/distil-large-v3.
+# faster-whisper needs the CT2 model.bin format; the original
+# distil-whisper repo only ships safetensors. The Systran/faster-
+# distil-whisper-large-v3 repo is the canonical CT2 variant.
+# ~6× faster than full large-v3 with WER within ~1%; substantially
+# more accurate than small on the v1 dev PC. First run downloads
+# ~750 MB to ~/.cache/huggingface/. v2 Pi 5 port (Story 5.x) will
+# swap the entire backend, so this model choice is dev-PC-only.
+model = "Systran/faster-distil-whisper-large-v3"
 compute_type = "int8"
 device = "auto"
 low_confidence_threshold = 0.5
