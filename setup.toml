@@ -174,8 +174,17 @@ initial = "calm"
 # URL. v1 ships with localhost-only; LAN-reachable URLs require
 # the Story 5.3 shared-secret / mTLS hardening before they're
 # accepted at startup. Trailing slash is stripped at parse time.
+#
+# `enabled` is a dev-mode escape hatch. When `false`, the pipeline
+# skips the startup /health probe, builds no orchestrator/belief
+# clients, and the Talker runs without belief-state grounding.
+# Useful when the sibling orchestrator project isn't running and
+# you only want to exercise the simple-turn loop. Production
+# deployments leave this at `true` so missing-daemon failures
+# surface at startup (CLAUDE.md rule #4 fail-fast posture).
 [daemon]
 url = "http://localhost:8001"
+enabled = false
 
 # Sections populated by subsequent stories:
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)

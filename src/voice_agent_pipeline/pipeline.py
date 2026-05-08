@@ -766,31 +766,54 @@ async def run_pipeline(
     # per the architecture's "External adapter boundaries" invariant.
     # Timeouts are tuned for the daemon's expected response shape; see
     # async_http_client's docstring for the rationale.
+    #
+    # Dev-mode escape hatch — ``[daemon] enabled = false``: skip the
+    # whole HTTP-client + belief + orchestrator block. The Talker
+    # receives ``beliefs=None`` (Story 4.4 already handles that path
+    # by skipping the belief-grounding system-prompt section); the
+    # ``TurnRouter`` is constructed with ``orchestrator=None``;
+    # ``TurnDispatchProcessor`` keeps its existing NotImplementedError
+    # stub for ``target="orchestrator"`` so a misrouted turn fails
+    # loudly. Production deployments leave ``enabled = true`` so the
+    # CLAUDE.md rule #4 fail-fast posture stands.
     async with async_http_client() as http_client:
-        # Story 4.1 + 4.2: belief + orchestrator clients share one pool.
-        # The orchestrator daemon and the belief-state endpoint live
-        # behind one origin; ``httpx.AsyncClient``'s connection pool is
-        # keyed by origin so a shared client gives both consumers free
-        # keep-alive across belief-reads + orchestrator dispatches.
-        belief_client = HttpBeliefStateClient(http_client, base_url=config.daemon.url)
-        orchestrator_client = HttpOrchestratorClient(http_client, base_url=config.daemon.url)
+        if config.daemon.enabled:
+            # Story 4.1 + 4.2: belief + orchestrator clients share one pool.
+            # The orchestrator daemon and the belief-state endpoint live
+            # behind one origin; ``httpx.AsyncClient``'s connection pool is
+            # keyed by origin so a shared client gives both consumers free
+            # keep-alive across belief-reads + orchestrator dispatches.
+            belief_client = HttpBeliefStateClient(http_client, base_url=config.daemon.url)
+            orchestrator_client = HttpOrchestratorClient(
+                http_client,
+                base_url=config.daemon.url,
+            )
 
-        # Story 4.2: startup probe — refuse to start unless the daemon's
-        # ``GET /health`` returns 200. Closes architecture.md's
-        # cross-project spec-drift item. Raises StartupValidationError
-        # → __main__'s top-level handler logs + exits non-zero. Wrapped
-        # in a reporter stage so the failure renders cleanly with
-        # ``stage='orchestrator'`` / ``reason=...`` / ``url=...`` from
-        # the exception's ``context`` dict.
-        async with rep.stage("orchestrator", "orchestrator daemon"):
-            await orchestrator_client.probe_health()
+            # Story 4.2: startup probe — refuse to start unless the daemon's
+            # ``GET /health`` returns 200. Closes architecture.md's
+            # cross-project spec-drift item. Raises StartupValidationError
+            # → __main__'s top-level handler logs + exits non-zero. Wrapped
+            # in a reporter stage so the failure renders cleanly with
+            # ``stage='orchestrator'`` / ``reason=...`` / ``url=...`` from
+            # the exception's ``context`` dict.
+            async with rep.stage("orchestrator", "orchestrator daemon"):
+                await orchestrator_client.probe_health()
 
-        talker = build_talker(config, beliefs=belief_client)
-        # Story 4.2: orchestrator client is now wired in for Story 4.7's
-        # slow-path dispatch (TurnRouter target="orchestrator"). Story
-        # 2.4's NotImplementedError stub in TurnDispatchProcessor still
-        # gates the actual call site — Story 4.7 removes it.
-        router = TurnRouter(config.stt, talker, orchestrator=orchestrator_client)
+            talker = build_talker(config, beliefs=belief_client)
+            # Story 4.2: orchestrator client is now wired in for Story 4.7's
+            # slow-path dispatch (TurnRouter target="orchestrator"). Story
+            # 2.4's NotImplementedError stub in TurnDispatchProcessor still
+            # gates the actual call site — Story 4.7 removes it.
+            router = TurnRouter(config.stt, talker, orchestrator=orchestrator_client)
+        else:
+            # Dev mode: no daemon coupling. Belief reads are skipped
+            # (Story 4.4: ``beliefs=None`` → plain system prompt); the
+            # orchestrator branch in ``TurnDispatchProcessor`` is gated
+            # by its own NotImplementedError, which is the right error
+            # if a turn somehow routes there with the daemon disabled.
+            log.info("daemon.disabled", reason="[daemon] enabled = false")
+            talker = build_talker(config, beliefs=None)
+            router = TurnRouter(config.stt, talker, orchestrator=None)
 
         # Story 3.6: mood module. State + controller wired BEFORE
         # publish_initial so the first event lives on the latched topic.

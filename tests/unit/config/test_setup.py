@@ -630,6 +630,43 @@ def test_daemon_defaults_to_localhost_8001(tmp_path: Path) -> None:
     assert config.daemon.url == "http://localhost:8001"
 
 
+def test_daemon_enabled_defaults_to_true(tmp_path: Path) -> None:
+    """``[daemon] enabled`` defaults to True (production fail-fast posture).
+
+    Omitting the field gives the architecture's CLAUDE.md rule #4 default:
+    a missing daemon at startup is a hard failure, not a silently-skipped
+    optional dep. Operators opt INTO the dev-skip with explicit ``false``.
+    """
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.daemon.enabled is True
+
+
+def test_daemon_enabled_false_explicit(tmp_path: Path) -> None:
+    """``[daemon] enabled = false`` parses cleanly — dev-mode escape hatch.
+
+    Used by ``run_pipeline`` to skip the orchestrator probe and pass
+    ``beliefs=None`` to the Talker. Story 4.4 already handles the
+    None-beliefs path; this test only verifies the config parse.
+    """
+    toml_with_disabled = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[daemon]\n"
+        'url = "http://localhost:8001"\n'
+        "enabled = false\n"
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_disabled)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.daemon.enabled is False
+
+
 def test_daemon_url_explicit_override(tmp_path: Path) -> None:
     """Story 4.1: an explicit ``[daemon] url`` overrides the default."""
     toml_with_daemon = (

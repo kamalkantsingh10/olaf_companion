@@ -410,11 +410,25 @@ class DaemonConfig(BaseModel):
     Attributes:
         url: Base URL of the orchestrator daemon. v1 default
             ``http://localhost:8001``; operators override per-machine.
+        enabled: Dev-mode escape hatch. When ``False``, the pipeline
+            skips the startup ``/health`` probe, constructs no
+            orchestrator client, and passes ``beliefs=None`` to the
+            Talker — which Story 4.4 already handles by skipping the
+            belief-grounding section of the system prompt. Useful when
+            the sibling orchestrator project isn't running locally and
+            the operator only wants to exercise the simple-turn loop
+            (Stories 1-3 + 4.4 / 4.5 / 4.6 paths). Story 4.7's slow-
+            path branch raises a clear ``ConfigError`` if a turn ever
+            escalates to the orchestrator with this flag off; until
+            4.7 lands the existing ``NotImplementedError`` already
+            gates that branch. Defaults to ``True`` so production
+            deployments fail-fast per CLAUDE.md rule #4.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     url: str = "http://localhost:8001"
+    enabled: bool = True
 
     @field_validator("url")
     @classmethod
