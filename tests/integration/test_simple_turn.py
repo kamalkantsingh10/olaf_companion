@@ -54,6 +54,7 @@ from voice_agent_pipeline.splitter.mapping import LastPublishedCache
 from voice_agent_pipeline.splitter.segmenter import Segmenter
 from voice_agent_pipeline.stt.backend import TranscriptionResult
 from voice_agent_pipeline.turn.router import TurnRouter
+from voice_agent_pipeline.turn.tools import ToolRegistry
 
 
 def _make_mapping() -> ExpressionMapConfig:
@@ -123,14 +124,31 @@ _TTS_CHUNKS = [b"chunk-1" * 32, b"chunk-2" * 32, b"chunk-3" * 32]
 
 
 def _make_mock_talker() -> MagicMock:
-    """Mock TalkerClient — returns the canned response instantly."""
+    """Mock TalkerClient — returns the canned response instantly.
+
+    Story 4.4: production calls ``complete_with_tools``. The mock
+    serves both the legacy ``complete`` (for any tests still on
+    Story 2.2's surface) and the new ``complete_with_tools``
+    (returning a text-only :class:`TalkerResponse`, no tool calls —
+    keeps the simple-turn integration's assertion shape intact).
+    """
+    from voice_agent_pipeline.turn.talker import TalkerResponse
+
     talker = MagicMock()
 
     async def _complete(transcript: str, context: dict[str, Any] | None = None) -> str:
         del transcript, context
         return _TALKER_RESPONSE
 
+    async def _complete_with_tools(prompt: str, tool_registry: Any) -> TalkerResponse:
+        del prompt, tool_registry
+        # Text-only response keeps Story 2.5's simple-turn assertions
+        # working unchanged — no tool calls means no FSM / mood side
+        # effects, just text → splitter → TTS.
+        return TalkerResponse(text=_TALKER_RESPONSE, tool_calls=[])
+
     talker.complete = _complete
+    talker.complete_with_tools = _complete_with_tools
     return talker
 
 
@@ -255,7 +273,11 @@ async def test_simple_turn_p95_baseline_30_turns(tmp_path: Path) -> None:
 
     stt_processor = SttProcessor(stt_backend)  # type: ignore[arg-type]
     stt_logger = _SttResultLogger(stt_config.low_confidence_threshold)
-    dispatcher = TurnDispatchProcessor(router)
+    # Story 4.4: dispatcher requires a ToolRegistry. Empty registry
+    # keeps Story 2.5's simple-turn assertions unchanged (the mock
+    # Talker's complete_with_tools returns no tool calls, so no FSM/
+    # mood side effects fire).
+    dispatcher = TurnDispatchProcessor(router, ToolRegistry([]))
     cache = LastPublishedCache()
     segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
     synthesizer = CartesiaSynthesisProcessor(tts, cache, segmenter_processor)
@@ -330,7 +352,11 @@ async def test_strict_field_names_still_redacted_at_info(tmp_path: Path) -> None
     router = TurnRouter(stt_config, talker)
     stt_processor = SttProcessor(stt_backend)  # type: ignore[arg-type]
     stt_logger = _SttResultLogger(stt_config.low_confidence_threshold)
-    dispatcher = TurnDispatchProcessor(router)
+    # Story 4.4: dispatcher requires a ToolRegistry. Empty registry
+    # keeps Story 2.5's simple-turn assertions unchanged (the mock
+    # Talker's complete_with_tools returns no tool calls, so no FSM/
+    # mood side effects fire).
+    dispatcher = TurnDispatchProcessor(router, ToolRegistry([]))
     cache = LastPublishedCache()
     segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
     synthesizer = CartesiaSynthesisProcessor(tts, cache, segmenter_processor)
@@ -389,7 +415,11 @@ async def test_no_audio_field_names_in_logs(tmp_path: Path) -> None:
     router = TurnRouter(stt_config, talker)
     stt_processor = SttProcessor(stt_backend)  # type: ignore[arg-type]
     stt_logger = _SttResultLogger(stt_config.low_confidence_threshold)
-    dispatcher = TurnDispatchProcessor(router)
+    # Story 4.4: dispatcher requires a ToolRegistry. Empty registry
+    # keeps Story 2.5's simple-turn assertions unchanged (the mock
+    # Talker's complete_with_tools returns no tool calls, so no FSM/
+    # mood side effects fire).
+    dispatcher = TurnDispatchProcessor(router, ToolRegistry([]))
     cache = LastPublishedCache()
     segmenter_processor = SegmenterProcessor(Segmenter(_make_mapping()), cache)
     synthesizer = CartesiaSynthesisProcessor(tts, cache, segmenter_processor)

@@ -818,3 +818,58 @@ def test_correct_env_perms_does_not_warn(tmp_path: Path, caplog: pytest.LogCaptu
         load_setup_config(toml_path=toml_path, env_path=env_path)
     matching = [r for r in caplog.records if r.message == "config.env.permissions_loose"]
     assert not matching
+
+
+# ---------------------------------------------------------------------------
+# Story 4.4: ToolsConfig tests
+# ---------------------------------------------------------------------------
+
+
+def test_tools_defaults_both_enabled(tmp_path: Path) -> None:
+    """Omitting ``[tools]`` defaults to both flags True (production posture)."""
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tools.enable_go_to_sleep is True
+    assert config.tools.enable_set_mood is True
+
+
+def test_tools_one_disabled(tmp_path: Path) -> None:
+    """``[tools] enable_go_to_sleep = false`` parses correctly."""
+    toml_with_partial = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[tools]\n"
+        "enable_go_to_sleep = false\n"
+        "enable_set_mood = true\n"
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_partial)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tools.enable_go_to_sleep is False
+    assert config.tools.enable_set_mood is True
+
+
+def test_tools_both_disabled(tmp_path: Path) -> None:
+    """Both flags false → tool registry will be empty at construction."""
+    toml_with_both_off = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[tools]\n"
+        "enable_go_to_sleep = false\n"
+        "enable_set_mood = false\n"
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_both_off)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tools.enable_go_to_sleep is False
+    assert config.tools.enable_set_mood is False

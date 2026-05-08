@@ -23,6 +23,13 @@ from voice_agent_pipeline.turn.talker import (
     PROVIDER_MAX_TOKENS_PARAM,
     Talker,
     TalkerClient,
+    TalkerResponse,
+)
+from voice_agent_pipeline.turn.tools import (
+    ToolCall,
+    ToolRegistry,
+    ToolSpec,
+    build_tool_registry,
 )
 
 
@@ -156,6 +163,11 @@ __all__ = [
     "OrchestratorClient",
     "Talker",
     "TalkerClient",
+    "TalkerResponse",
+    "ToolCall",
+    "ToolRegistry",
+    "ToolSpec",
     "build_talker",
+    "build_tool_registry",
     "validate_credentials",
 ]

@@ -444,6 +444,41 @@ class DaemonConfig(BaseModel):
         return v.rstrip("/")
 
 
+class ToolsConfig(BaseModel):
+    """Toggle Talker's individual tools on/off (Story 4.4).
+
+    The Talker tool registry surfaces a small fixed set of tools to the
+    LLM via the openai SDK's ``tools=`` parameter. Operators sometimes
+    want to disable a tool — e.g., during early dev when the
+    ``go_to_sleep`` deferred-sleep chain isn't fully wired, or while
+    iterating on the mood enum. Toggling here removes the tool from
+    ``ToolRegistry.as_openai_tools_param()`` so the LLM never sees it
+    and can never emit a tool call for it.
+
+    Both default ``True``: production wants the full surface live.
+    The architecture's tool registry (architecture.md §"Tool registry")
+    intentionally exposes ``go_to_sleep`` and ``set_mood`` as the v1
+    set; this config flag is operational, not architectural.
+
+    Attributes:
+        enable_go_to_sleep: When ``False``, the registry omits the
+            ``go_to_sleep`` tool. The LLM cannot trigger the FR46
+            deferred-sleep chain via natural-language goodbye. Useful
+            for testing the simple-turn loop without sleep
+            interactions.
+        enable_set_mood: When ``False``, the registry omits the
+            ``set_mood`` tool. Mood transitions can still happen
+            through other paths (calibration commits, future story
+            hooks); only the LLM's natural-language mood-shift hook
+            is gated off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enable_go_to_sleep: bool = True
+    enable_set_mood: bool = True
+
+
 class SetupConfig(BaseSettings):
     """Typed top-level configuration for the voice-agent pipeline.
 
@@ -498,6 +533,10 @@ class SetupConfig(BaseSettings):
     # don't have to declare [mood] in setup.toml unless they want to
     # tune the cooldown rate or starting mood.
     mood: MoodConfig = Field(default_factory=MoodConfig)
+    # Story 4.4: Talker tool registry toggles. Optional with defaults
+    # (both tools enabled). Operators disable individual tools to remove
+    # them from the LLM's openai-tools surface.
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     # Story 4.1: orchestrator daemon endpoint. Optional with defaults
     # (localhost:8001). Story 4.1 wires the BeliefStateClient against
     # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer

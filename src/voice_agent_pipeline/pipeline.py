@@ -39,6 +39,7 @@ Future epics layer onto this without changing the assembly order:
 - Story 5.1 adds barge-in (VAD-during-SPEAKING).
 """
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -79,10 +80,11 @@ from voice_agent_pipeline.splitter.segmenter import Segment, Segmenter
 from voice_agent_pipeline.stt import STTBackend, build_stt_backend
 from voice_agent_pipeline.tts.cartesia import CartesiaClient
 from voice_agent_pipeline.tts.client import TTSClient
-from voice_agent_pipeline.turn import build_talker
+from voice_agent_pipeline.turn import build_talker, build_tool_registry
 from voice_agent_pipeline.turn.beliefs import HttpBeliefStateClient, async_http_client
 from voice_agent_pipeline.turn.orchestrator import HttpOrchestratorClient
 from voice_agent_pipeline.turn.router import TurnRouter
+from voice_agent_pipeline.turn.tools import ToolRegistry
 
 log = structlog.get_logger(__name__)
 
@@ -221,26 +223,58 @@ class TurnDispatchProcessor(FrameProcessor):
     stays synchronously unit-testable while the processor handles
     Pipecat's async lifecycle.
 
-    v1 dispatch table:
+    v1 dispatch table (post-Story-4.4):
 
-    - ``decision.target == "talker"`` -> ``await router.talker.complete(...)``
-      -> emit :class:`TalkerResponseFrame`.
+    - ``decision.target == "talker"`` -> ``await router.talker
+      .complete_with_tools(...)`` -> push :class:`TalkerResponseFrame`
+      with the text immediately, then kick off
+      ``self._tool_registry.dispatch(tc)`` per tool call as
+      ``asyncio.create_task`` (fire-and-forget). **Text-first** is
+      the architectural rule (FR45 / FR46): the user hears the
+      goodbye before the FSM's deferred-sleep flag fires.
     - ``decision.target == "orchestrator"`` -> ``NotImplementedError``
-      (Story 4.3 wires the orchestrator path; the explicit raise is
+      (Story 4.7 wires the orchestrator path; the explicit raise is
       the wall, not silent fall-through).
 
-    Errors from ``talker.complete`` propagate as
+    Tool-dispatch error policy (architecture.md §"Tool-call validation"):
+
+    - Validation failures (bad arguments) are caught inside
+      :meth:`ToolRegistry.dispatch` and dropped with WARN. The text
+      response still flows.
+    - Internal sink failures (e.g., :class:`PublisherError` from
+      :class:`MoodController.set`) propagate to the background
+      ``asyncio.Task``. The done-callback :meth:`_log_tool_done`
+      captures the exception via ``log.exception`` so it lands in
+      logs rather than disappearing into asyncio's silent-task
+      black hole. **Process does NOT crash mid-utterance** — the
+      v1 trade-off documented in the story spec; v2 may revisit
+      with a smarter retry / surface.
+
+    Errors from ``talker.complete_with_tools`` propagate as
     :class:`TalkerError` (CLAUDE.md rule #4 forbids catching
     ExternalServiceError downstream — process crashes, systemd
     restarts).
     """
 
-    def __init__(self, router: TurnRouter) -> None:
+    def __init__(self, router: TurnRouter, tool_registry: ToolRegistry) -> None:
         super().__init__()  # pyright: ignore[reportUnknownMemberType]
         self._router = router
+        self._tool_registry = tool_registry
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        """On TranscriptFrame: route, dispatch, emit TalkerResponseFrame."""
+        """On TranscriptFrame: route, dispatch, emit TalkerResponseFrame.
+
+        Text-first ordering (FR45 / FR46):
+
+        1. Talker returns text + tool calls.
+        2. Push :class:`TalkerResponseFrame` downstream — the splitter
+           starts segmenting and Cartesia starts synthesizing
+           immediately.
+        3. Kick off each tool dispatch via ``asyncio.create_task``.
+           Tasks run alongside TTS; the dispatcher's
+           ``process_frame`` returns AFTER pushing the text frame
+           but BEFORE tools complete.
+        """
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptFrame):
@@ -254,27 +288,74 @@ class TurnDispatchProcessor(FrameProcessor):
                 # answering it as a question. See setup.toml's [stt]
                 # ``clarification_prompt`` for the prompt shape.
                 started_ns = time.time_ns()
-                response_text = await self._router.talker.complete(decision.text)
+                response = await self._router.talker.complete_with_tools(
+                    decision.text,
+                    self._tool_registry,
+                )
                 latency_ms = (time.time_ns() - started_ns) // 1_000_000
                 log.info(
                     "talker.responded",
                     latency_ms=latency_ms,
                     clarification=decision.clarification,
+                    tool_call_count=len(response.tool_calls),
                 )
+                # Step 1: push the text frame IMMEDIATELY. Splitter
+                # and Cartesia start working before any tool dispatch
+                # has a chance to run. Empty text is fine — the
+                # frame still marks the turn boundary for downstream
+                # observers.
                 await self.push_frame(
-                    TalkerResponseFrame(text=response_text),
+                    TalkerResponseFrame(text=response.text),
                     direction,
                 )
+                # Step 2: fire-and-forget each tool dispatch. We do
+                # NOT use ``asyncio.gather`` — gather would await,
+                # serializing the dispatcher's process_frame on tool
+                # work. ``create_task`` schedules the dispatch on
+                # the event loop and returns immediately; the
+                # done-callback is the catch boundary for any
+                # internal-sink exception.
+                for tool_call in response.tool_calls:
+                    task = asyncio.create_task(
+                        self._tool_registry.dispatch(tool_call),
+                    )
+                    task.add_done_callback(self._log_tool_done)
             else:
-                # Story 4.3 will wire this branch; raising explicitly
-                # makes a misconfiguration scream rather than fall through.
+                # Story 4.7 wires the orchestrator branch; raising
+                # explicitly makes a misconfiguration scream rather
+                # than fall through.
                 raise NotImplementedError(
-                    "orchestrator path is wired in Epic 4 (Story 4.3); "
+                    "orchestrator path is wired in Epic 4 (Story 4.7); "
                     f"got target={decision.target!r}"
                 )
 
         # Pass the original frame through so future stages can observe.
         await self.push_frame(frame, direction)
+
+    def _log_tool_done(self, task: asyncio.Task[None]) -> None:
+        """Done-callback for fire-and-forget ``tool_registry.dispatch`` tasks.
+
+        ``asyncio`` swallows uncaught task exceptions silently — the
+        callback re-raises by accessing ``task.result()`` inside a
+        try/except, and ``log.exception`` captures the traceback to
+        the JSON log. **The pipeline does not crash** even though
+        CLAUDE.md rule #4 superficially suggests it should: the
+        registry already catches ``ValidationError`` (the only
+        "expected" failure mode); anything propagating past it is a
+        first-party programming bug. The v1 trade-off — log + continue
+        rather than mid-utterance crash — is the better UX (the user
+        hears the goodbye partway and the mic flips early on systemd
+        restart, vs. the user hears the goodbye fully and an error
+        lands in logs). v2 may revisit with a smarter strategy.
+        """
+        try:
+            task.result()
+        except Exception:
+            # log.exception captures the traceback. The lack of
+            # context fields (tool name, etc.) is intentional —
+            # the registry's WARN logs already named the tool;
+            # this callback's job is to surface the traceback.
+            log.exception("tool.dispatch_background_error")
 
 
 @dataclass
@@ -843,6 +924,18 @@ async def run_pipeline(
         activity_fsm = ActivityFSM(publisher=event_publisher)
         await activity_fsm.start()
 
+        # Story 4.4: Talker tool registry — single construction site.
+        # Captures the FSM and mood_controller references into closures
+        # inside the tool dispatch callables, so the registry stays
+        # decoupled from those types at the call site. Disabled tools
+        # (via [tools] config) are simply omitted from the registry —
+        # the LLM never sees them through ``as_openai_tools_param``.
+        tool_registry = build_tool_registry(
+            config.tools,
+            activity_fsm,
+            mood_controller,
+        )
+
         # Story 3.2 + 3.3 + 3.7: segmenter + cache, then the processors
         # that drive them in the Pipecat pipeline.
         segmenter = Segmenter(mapping)
@@ -859,7 +952,11 @@ async def run_pipeline(
                 _WakewordEventLogger(),
                 # Story 4.3: drive FSM transitions from wake + VAD frames.
                 _FsmEventBridge(activity_fsm),
-                TurnDispatchProcessor(router),
+                # Story 4.4: dispatcher now needs the tool registry
+                # to fire ``go_to_sleep`` / ``set_mood`` from Talker
+                # tool-call responses. Text-first ordering (FR45/46)
+                # is enforced inside the processor itself.
+                TurnDispatchProcessor(router, tool_registry),
                 # Story 3.7: SegmenterProcessor consumes TalkerResponseFrame
                 # and emits SegmentFrame per boundary.
                 segmenter_processor,

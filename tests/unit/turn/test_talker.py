@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import structlog
 from pydantic import SecretStr
 
 from voice_agent_pipeline.config.setup import TalkerConfig
@@ -375,3 +376,398 @@ def test_complete_skips_token_log_when_usage_missing(
     assert result == "hi"
     matching = [r for r in captured if r.get("event") == "talker.completion"]
     assert not matching
+
+
+# ---------------------------------------------------------------------------
+# Story 4.4: complete_with_tools tests
+# ---------------------------------------------------------------------------
+#
+# These exercise the tool-using surface added in Story 4.4. The fake
+# openai module gains support for tool_calls in the response; the
+# tests assert on belief grounding, tool-call parsing, JSON-error
+# drop, content=None coercion, and the ``tool_call_count`` log field.
+
+
+@dataclass
+class _StubFunction:
+    """Mirror ``ChatCompletionMessageFunctionToolCall.function`` from openai."""
+
+    name: str
+    arguments: str
+
+
+@dataclass
+class _StubToolCall:
+    """Mirror ``ChatCompletionMessageFunctionToolCall``.
+
+    The Talker's ``isinstance`` check uses
+    ``ChatCompletionMessageFunctionToolCall`` from the openai SDK,
+    which we can't easily fake — so the patched-in stub here uses
+    monkeypatch to also redirect that isinstance class at the same
+    module level. See ``_make_fake_openai_with_tools`` below.
+    """
+
+    id: str
+    type: str
+    function: _StubFunction
+
+
+def _make_fake_openai_with_tools(
+    response_text: str | None = "",
+    tool_calls: list[_StubToolCall] | None = None,
+    raise_error: Exception | None = None,
+    capture_kwargs: dict[str, Any] | None = None,
+    usage: _StubUsage | None = None,
+) -> MagicMock:
+    """Build a fake openai module that supports tool_calls in the response.
+
+    Extends :func:`_make_fake_openai` for the tool-using surface. The
+    Talker filters tool_calls by ``isinstance(tc,
+    ChatCompletionMessageFunctionToolCall)``; we monkey-patch that
+    class to :class:`_StubToolCall` in the test so the isinstance
+    check accepts our stubs.
+    """
+    fake_client = MagicMock()
+
+    async def _create(**kwargs: Any) -> _StubResponse:
+        if capture_kwargs is not None:
+            capture_kwargs.update(kwargs)
+        if raise_error is not None:
+            raise raise_error
+        message = _StubMessage(content=response_text)
+        # ``tool_calls`` is the openai SDK's name on
+        # ``ChatCompletionMessage``; assigning the list directly is
+        # what the Talker reads.
+        message.tool_calls = tool_calls or []  # type: ignore[attr-defined]
+        return _StubResponse(choices=[_StubChoice(message=message)], usage=usage)
+
+    fake_client.chat.completions.create = _create
+
+    def _construct_client(**init_kwargs: Any) -> Any:
+        del init_kwargs
+        return fake_client
+
+    fake_module = MagicMock()
+    fake_module.AsyncOpenAI = _construct_client
+    fake_module.APIError = _FakeAPIError
+    return fake_module
+
+
+def _patch_tool_call_class(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Monkey-patch ``ChatCompletionMessageFunctionToolCall`` to ``_StubToolCall``.
+
+    The Talker filters incoming tool_calls via ``isinstance(tc,
+    ChatCompletionMessageFunctionToolCall)``. Tests construct
+    :class:`_StubToolCall`; redirecting the isinstance reference
+    inside the talker module lets the stubs flow through.
+    """
+    monkeypatch.setattr(
+        talker_module,
+        "ChatCompletionMessageFunctionToolCall",
+        _StubToolCall,
+    )
+
+
+class _StubToolRegistry:
+    """Stand-in for :class:`ToolRegistry` — only ``as_openai_tools_param`` is used.
+
+    The Talker calls ``as_openai_tools_param()`` to build the openai
+    SDK's ``tools=`` payload, then never touches the registry again
+    (dispatch happens downstream in :class:`TurnDispatchProcessor`).
+    These tests don't need a real registry — a stub returning a
+    fixed list is enough.
+    """
+
+    def __init__(self, tools_param: list[dict[str, Any]] | None = None) -> None:
+        self._tools_param: list[dict[str, Any]] = tools_param or []
+
+    def as_openai_tools_param(self) -> list[dict[str, Any]]:
+        return self._tools_param
+
+
+def test_complete_with_tools_passes_tools_to_openai_sdk(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``tools=`` kwarg matches ``registry.as_openai_tools_param()``; ``tool_choice="auto"``."""
+    captured: dict[str, Any] = {}
+    fake_openai = _make_fake_openai_with_tools(
+        response_text="hi",
+        capture_kwargs=captured,
+    )
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    sentinel_tools = [{"type": "function", "function": {"name": "stub"}}]
+    registry = _StubToolRegistry(sentinel_tools)
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    asyncio.run(talker.complete_with_tools("hello", registry))  # type: ignore[arg-type]
+
+    assert captured["tools"] == sentinel_tools
+    assert captured["tool_choice"] == "auto"
+
+
+def test_complete_with_tools_returns_text_only_when_no_tool_calls(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text-only response: ``TalkerResponse(text=..., tool_calls=[])``."""
+    fake_openai = _make_fake_openai_with_tools(response_text="hi there")
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    response = asyncio.run(
+        talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+    )
+
+    assert response.text == "hi there"
+    assert response.tool_calls == []
+
+
+def test_complete_with_tools_returns_text_and_tool_calls(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text + tool_calls: parse openai's stub into a ``ToolCall`` list."""
+    tool_calls = [
+        _StubToolCall(
+            id="t1",
+            type="function",
+            function=_StubFunction(name="go_to_sleep", arguments="{}"),
+        ),
+    ]
+    fake_openai = _make_fake_openai_with_tools(
+        response_text="goodnight",
+        tool_calls=tool_calls,
+    )
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    response = asyncio.run(
+        talker.complete_with_tools("goodnight olaf", _StubToolRegistry()),  # type: ignore[arg-type]
+    )
+
+    assert response.text == "goodnight"
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].id == "t1"
+    assert response.tool_calls[0].name == "go_to_sleep"
+    # Empty arguments string was coerced to {} inside the Talker.
+    assert response.tool_calls[0].arguments == {}
+
+
+def test_complete_with_tools_handles_none_content(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``message.content = None`` (tools-only) → ``TalkerResponse.text == ""`` (not None)."""
+    tool_calls = [
+        _StubToolCall(
+            id="t1",
+            type="function",
+            function=_StubFunction(name="go_to_sleep", arguments="{}"),
+        ),
+    ]
+    fake_openai = _make_fake_openai_with_tools(
+        response_text=None,  # openai returns None when only tools are emitted
+        tool_calls=tool_calls,
+    )
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    response = asyncio.run(
+        talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+    )
+
+    assert response.text == ""  # coerced from None
+    assert len(response.tool_calls) == 1
+
+
+def test_complete_with_tools_invalid_arguments_json_drops_call_warns(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bad-JSON tool arguments → drop that call, log WARN, others flow through."""
+    tool_calls = [
+        # Malformed JSON — gets dropped with WARN.
+        _StubToolCall(
+            id="t1",
+            type="function",
+            function=_StubFunction(name="set_mood", arguments="not-json"),
+        ),
+        # Valid JSON — flows through.
+        _StubToolCall(
+            id="t2",
+            type="function",
+            function=_StubFunction(name="go_to_sleep", arguments="{}"),
+        ),
+    ]
+    fake_openai = _make_fake_openai_with_tools(
+        response_text="ok",
+        tool_calls=tool_calls,
+    )
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    with structlog.testing.capture_logs() as captured:
+        response = asyncio.run(
+            talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+        )
+
+    # Only the valid tool call survived.
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].id == "t2"
+    # WARN log surfaces (with raw_length, never the malformed string).
+    matching = [r for r in captured if r.get("event") == "talker.tool_call_invalid_json"]
+    assert len(matching) == 1
+    assert matching[0].get("tool") == "set_mood"
+    assert matching[0].get("raw_length") == len("not-json")
+
+
+def test_complete_with_tools_belief_grounding_when_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Beliefs + grounded_keys configured → system prompt gets ``## Belief state`` section."""
+    captured: dict[str, Any] = {}
+    fake_openai = _make_fake_openai_with_tools(
+        response_text="ok",
+        capture_kwargs=captured,
+    )
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    # System prompt file
+    sp = tmp_path / "talker_system.md"
+    sp.write_text("You are OLAF.", encoding="utf-8")
+    config = TalkerConfig(
+        provider="openai",
+        max_tokens=128,
+        system_prompt_path=sp,
+        grounded_keys=["time", "calendar_today"],
+    )
+
+    # Mock BeliefStateClient with an AsyncMock-style read.
+    class _StubBeliefs:
+        async def read(self, keys: list[str]) -> dict[str, Any]:
+            assert keys == ["time", "calendar_today"]
+            return {"time": "08:47", "calendar_today": []}
+
+    talker = Talker(
+        config,
+        SecretStr("stub-key"),
+        model="gpt-5.4-nano",
+        beliefs=_StubBeliefs(),  # type: ignore[arg-type]
+    )
+    asyncio.run(
+        talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+    )
+
+    # The system message should now include the belief context block.
+    system_msg = captured["messages"][0]
+    assert system_msg["role"] == "system"
+    assert "## Belief state" in system_msg["content"]
+    assert "08:47" in system_msg["content"]
+
+
+def test_complete_with_tools_skips_belief_grounding_when_no_keys(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``grounded_keys=[]`` → BeliefStateClient.read NOT called; plain system prompt."""
+    fake_openai = _make_fake_openai_with_tools(response_text="ok")
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    read_called = []
+
+    class _StubBeliefs:
+        async def read(self, keys: list[str]) -> dict[str, Any]:
+            read_called.append(keys)
+            return {}
+
+    talker = Talker(
+        talker_config,
+        SecretStr("stub-key"),
+        model="gpt-5.4-nano",
+        beliefs=_StubBeliefs(),  # type: ignore[arg-type]
+    )
+    asyncio.run(
+        talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+    )
+
+    assert read_called == []  # no read; grounded_keys is empty
+
+
+def test_complete_with_tools_skips_belief_grounding_when_beliefs_none(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``beliefs=None`` → no NPE, no read; plain system prompt."""
+    fake_openai = _make_fake_openai_with_tools(response_text="ok")
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(
+        talker_config,
+        SecretStr("stub-key"),
+        model="gpt-5.4-nano",
+        beliefs=None,  # explicit none — daemon disabled
+    )
+    # Just exercising the call — no exception means the None-check works.
+    asyncio.run(
+        talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+    )
+
+
+def test_complete_with_tools_logs_completion_with_tool_call_count(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``talker.completion`` log gains ``tool_call_count`` field."""
+    tool_calls = [
+        _StubToolCall(
+            id="t1",
+            type="function",
+            function=_StubFunction(name="go_to_sleep", arguments="{}"),
+        ),
+    ]
+    usage = _StubUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+    fake_openai = _make_fake_openai_with_tools(
+        response_text="goodnight",
+        tool_calls=tool_calls,
+        usage=usage,
+    )
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    with structlog.testing.capture_logs() as captured:
+        asyncio.run(
+            talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+        )
+
+    matching = [r for r in captured if r.get("event") == "talker.completion"]
+    assert len(matching) == 1
+    assert matching[0].get("tool_call_count") == 1
+
+
+def test_complete_with_tools_openai_error_raises_talker_error(
+    talker_config: TalkerConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``openai.APIError`` → wrapped as :class:`TalkerError`."""
+    boom = _FakeAPIError("rate limited")
+    fake_openai = _make_fake_openai_with_tools(raise_error=boom)
+    monkeypatch.setattr(talker_module, "openai", fake_openai)
+    _patch_tool_call_class(monkeypatch)
+
+    talker = Talker(talker_config, SecretStr("stub-key"), model="gpt-5.4-nano")
+    with pytest.raises(TalkerError) as exc_info:
+        asyncio.run(
+            talker.complete_with_tools("hi", _StubToolRegistry()),  # type: ignore[arg-type]
+        )
+    assert exc_info.value.__cause__ is boom

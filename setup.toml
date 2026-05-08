@@ -186,6 +186,22 @@ initial = "calm"
 url = "http://localhost:8001"
 enabled = false
 
+# Story 4.4: Talker tool registry toggles. Both default `true`. Set
+# either to `false` to remove the tool from the LLM's openai-tools
+# surface — the registry won't include it in `as_openai_tools_param`,
+# so the LLM literally cannot emit a tool call for it.
+#
+# go_to_sleep: triggers FR46 deferred-sleep on natural-language
+# goodbye ("goodnight olaf"). Disable to test the simple-turn loop
+# without sleep interactions.
+#
+# set_mood: surfaces the mood-shift hook to the LLM. Disable when
+# iterating on the mood enum or to keep mood transitions limited
+# to startup / calibration paths.
+[tools]
+enable_go_to_sleep = true
+enable_set_mood = true
+
 # Sections populated by subsequent stories:
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
 # [router]         -- Story 4.3 (slow_path_patterns, default)
