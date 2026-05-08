@@ -56,6 +56,7 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voice_agent_pipeline.activity.machine import ActivityFSM
+from voice_agent_pipeline.audio._silence import suppress_native_stderr
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
 from voice_agent_pipeline.audio.transport import build_audio_transport
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
@@ -723,12 +724,20 @@ async def run_pipeline(
     # surfaces but writes nothing.
     rep = reporter if reporter is not None else _NULL_REPORTER
 
+    # Both PyAudio entry points (device enumeration + transport build)
+    # spew ALSA/JACK probe diagnostics directly to fd 2 from native
+    # code — it bypasses Python logging entirely. Wrap them in
+    # ``suppress_native_stderr`` so the StartupReporter's checklist
+    # stays clean. The wrapper is restored before the stage's
+    # ``__aexit__`` writes the [ ✓ ] / [ ✗ ] line, so the reporter
+    # output still reaches stderr normally.
     async with rep.stage("audio_devices", "audio devices"):
-        indices = resolve_audio_devices(
-            input_pattern=config.audio.input_device_name,
-            output_pattern=config.audio.output_device_name,
-        )
-    transport = build_audio_transport(config, indices)
+        with suppress_native_stderr():
+            indices = resolve_audio_devices(
+                input_pattern=config.audio.input_device_name,
+                output_pattern=config.audio.output_device_name,
+            )
+            transport = build_audio_transport(config, indices)
 
     wakeword = WakewordProcessor(
         keyword_paths=[config.wakeword.model_path],
