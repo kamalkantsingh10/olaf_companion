@@ -35,6 +35,7 @@ import structlog
 from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
+from voice_agent_pipeline.logging.startup import StartupReporter
 from voice_agent_pipeline.pipeline import run_pipeline
 from voice_agent_pipeline.tts.cartesia import (
     validate_credentials as validate_cartesia_credentials,
@@ -74,85 +75,129 @@ async def _validate_wakeword_credentials(config: SetupConfig) -> None:
 
 
 async def main() -> int:
-    """Run the bootstrap sequence; return a process exit code."""
-    # Stage 1: load configuration. We catch the project's own error
-    # hierarchy specifically so unexpected exceptions still produce a stack
-    # trace (a bug deserves visibility, not a swallowed message).
-    try:
-        config = load_setup_config()
-    except VoiceAgentError as e:
-        # Logging is not yet configured at this point — write directly to
-        # stderr. systemd and a human at the terminal both surface stderr.
-        print(f"startup.failed: {e}", file=sys.stderr)
-        return 1
+    """Run the bootstrap sequence; return a process exit code.
 
-    # Stage 2: wire logging once config is known good. Subsequent stories
-    # will consume `config` here for log rotation / retention knobs.
-    configure_logging(config)
-    log = structlog.get_logger(__name__)
-    log.info("startup.completed", schema_version=config.schema_version)
+    Wraps the full startup phase in a :class:`StartupReporter` so the
+    operator sees a clean stderr checklist (``[ ✓ ] config loaded
+    (2ms)`` ...) instead of having to read JSON. Files still capture
+    every ``startup.validated.X`` event in JSON for post-mortem.
+    """
+    # The reporter spans every startup step — including config load,
+    # before logging is even configured. Open it FIRST so the banner
+    # prints immediately and a config-load failure renders as a proper
+    # ``[ ✗ ] config loaded ...`` line rather than a bare stderr print.
+    async with StartupReporter() as reporter:
+        # Stage 1: load configuration. We catch the project's own error
+        # hierarchy specifically so unexpected exceptions still produce a
+        # stack trace (a bug deserves visibility, not a swallowed message).
+        try:
+            async with reporter.stage("config", "config loaded"):
+                config = load_setup_config()
+        except VoiceAgentError:
+            # Reporter already rendered the [ ✗ ] line and will print
+            # the closing rule on __aexit__. Logging is not configured
+            # yet so there's no JSON sink to write to.
+            return 1
 
-    # Stage 3: external-dependency probes. Picovoice is the only one for
-    # now; future stories add Anthropic, Cartesia, ROS 2, orchestrator,
-    # belief-state. Each probe must wrap its native error in
-    # StartupValidationError so the catch-all below stays clean.
-    try:
-        await _validate_wakeword_credentials(config)
-        log.info("startup.validated.wakeword")
-        # Story 2.2: probe the active Talker provider (openai/groq/gemini)
-        # before opening audio. Bad key / removed model / wrong base_url
-        # surfaces here, not on the first turn.
-        await validate_talker_credentials(config)
-        log.info("startup.validated.talker", provider=config.talker.provider)
-        # Story 2.3: probe Cartesia. Bad key / service outage surfaces
-        # here rather than on the first synthesis call.
-        await validate_cartesia_credentials(config)
-        log.info("startup.validated.cartesia")
-    except VoiceAgentError as e:
-        log.critical(
-            "startup.failed",
-            error=str(e),
-            error_class=type(e).__name__,
+        # Stage 2: wire logging once config is known good. Subsequent
+        # stories will consume `config` here for log rotation /
+        # retention knobs.
+        configure_logging(config)
+        log = structlog.get_logger(__name__)
+        # Re-quiet newly-attached console handlers — ``configure_logging``
+        # may have just added the LOG_CONSOLE stdout StreamHandler that
+        # didn't exist when ``StartupReporter.__aenter__`` ran. Without
+        # this, the operator would see structlog's pretty-printed
+        # ``startup.validated.X`` events on stdout interleaved with the
+        # checklist on stderr.
+        reporter.refresh_console_suppression()
+        log.info("startup.completed", schema_version=config.schema_version)
+
+        # Stage 3: external-dependency probes. Each probe must wrap its
+        # native error in StartupValidationError so the catch-all below
+        # stays clean (CLAUDE.md rule #4 — never catch ExternalServiceError).
+        try:
+            async with reporter.stage("wakeword", "wakeword validated"):
+                await _validate_wakeword_credentials(config)
+            log.info("startup.validated.wakeword")
+
+            # Story 2.2: probe the active Talker provider before opening
+            # audio. Bad key / removed model / wrong base_url surfaces
+            # here, not on the first turn. The provider name is in the
+            # description so the operator sees which backend was probed.
+            async with reporter.stage(
+                "talker",
+                f"talker validated   ({config.talker.provider})",
+            ):
+                await validate_talker_credentials(config)
+            log.info("startup.validated.talker", provider=config.talker.provider)
+
+            # Story 2.3: probe Cartesia. Bad key / service outage
+            # surfaces here rather than on the first synthesis call.
+            async with reporter.stage("cartesia", "cartesia validated"):
+                await validate_cartesia_credentials(config)
+            log.info("startup.validated.cartesia")
+        except VoiceAgentError as e:
+            # Unpack the exception's structured context (stage, reason,
+            # url, ...) into top-level log fields so they're individually
+            # searchable in the JSON file. ``error`` + ``error_class``
+            # stay for backward compat with existing log queries.
+            log.critical(
+                "startup.failed",
+                error=str(e),
+                error_class=type(e).__name__,
+                **getattr(e, "context", {}),
+            )
+            return 1
+
+        # Stage 4: install SIGTERM handler. ``shutdown`` is an
+        # asyncio.Event we await alongside the pipeline task; whichever
+        # finishes first wins. SIGINT (Ctrl-C) is handled separately as
+        # KeyboardInterrupt at the outer try/except below — that's the
+        # asyncio-friendly pattern.
+        shutdown = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, shutdown.set)
+
+        # Hand the reporter into ``run_pipeline`` — it owns the
+        # remaining startup stages (audio devices, STT model load,
+        # publisher connect, orchestrator probe, ...) and calls
+        # ``reporter.mark_startup_complete()`` itself once the
+        # checklist is done, BEFORE the pipecat runner takes over.
+        pipeline_task = asyncio.create_task(run_pipeline(config, reporter=reporter))
+        shutdown_task = asyncio.create_task(shutdown.wait())
+        _, pending = await asyncio.wait(
+            [pipeline_task, shutdown_task],
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        return 1
 
-    # Stage 4: install SIGTERM handler. ``shutdown`` is an asyncio.Event we
-    # await alongside the pipeline task; whichever finishes first wins.
-    # SIGINT (Ctrl-C) is handled separately as KeyboardInterrupt at the
-    # outer try/except below — that's the asyncio-friendly pattern.
-    shutdown = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGTERM, shutdown.set)
+        # Cancel whichever task didn't complete (typically the pipeline
+        # when SIGTERM landed first; or shutdown_task when the pipeline
+        # crashed).
+        for t in pending:
+            t.cancel()
 
-    pipeline_task = asyncio.create_task(run_pipeline(config))
-    shutdown_task = asyncio.create_task(shutdown.wait())
-    _, pending = await asyncio.wait(
-        [pipeline_task, shutdown_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+        try:
+            # Await the pipeline task to surface any exceptions that
+            # landed during shutdown — including legitimate failure
+            # modes like a USB device disappearing mid-run.
+            await pipeline_task
+        except asyncio.CancelledError:
+            # Expected on the SIGTERM path — not an error.
+            pass
+        except VoiceAgentError as e:
+            # Same context-unpacking as the Stage 3 catch above so
+            # JSON consumers get searchable fields regardless of which
+            # phase the failure originated in.
+            log.critical(
+                "startup.failed",
+                error=str(e),
+                error_class=type(e).__name__,
+                **getattr(e, "context", {}),
+            )
+            return 1
 
-    # Cancel whichever task didn't complete (typically the pipeline when
-    # SIGTERM landed first; or shutdown_task when the pipeline crashed).
-    for t in pending:
-        t.cancel()
-
-    try:
-        # Await the pipeline task to surface any exceptions that landed
-        # during shutdown — including legitimate failure modes like a USB
-        # device disappearing mid-run.
-        await pipeline_task
-    except asyncio.CancelledError:
-        # Expected on the SIGTERM path — not an error.
-        pass
-    except VoiceAgentError as e:
-        log.critical(
-            "startup.failed",
-            error=str(e),
-            error_class=type(e).__name__,
-        )
-        return 1
-
-    return 0
+        return 0
 
 
 if __name__ == "__main__":

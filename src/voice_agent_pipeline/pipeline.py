@@ -40,6 +40,7 @@ Future epics layer onto this without changing the assembly order:
 """
 
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 # Pathlib for the production expression_map.yaml. Imported separately
@@ -61,6 +62,7 @@ from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame, WakewordProcessor
 from voice_agent_pipeline.config.expression_map import load_from_path
 from voice_agent_pipeline.config.setup import SetupConfig
+from voice_agent_pipeline.logging.startup import StartupReporter
 from voice_agent_pipeline.mood.controller import MoodController
 from voice_agent_pipeline.mood.state import MoodState
 from voice_agent_pipeline.publisher import build_publisher
@@ -665,7 +667,11 @@ class _FsmEventBridge(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-async def run_pipeline(config: SetupConfig) -> None:
+async def run_pipeline(
+    config: SetupConfig,
+    *,
+    reporter: StartupReporter | None = None,
+) -> None:
     """Build and run the full pipeline with embodiment + mood publishing.
 
     Story 3.7 — Epic 3 capstone. Adds the four-topic event publisher,
@@ -676,6 +682,18 @@ async def run_pipeline(config: SetupConfig) -> None:
     so a single keep-alive pool serves both the belief-state read
     (Story 4.1) and the orchestrator slow-path SSE consumer
     (Story 4.2). Same daemon origin → same connection pool.
+
+    Args:
+        config: Loaded :class:`SetupConfig`.
+        reporter: Optional :class:`StartupReporter` from ``__main__``.
+            When provided, every startup-phase step is wrapped in a
+            ``reporter.stage(...)`` so the operator sees the
+            ``[ ✓ ] / [ ✗ ]`` checklist on stderr. Right before the
+            pipecat runner starts, ``reporter.mark_startup_complete()``
+            is called so the closing rule prints before any runtime
+            log noise. ``None`` is accepted for tests / callers that
+            don't need the operator UX (the function still works,
+            just without checklist output).
 
     Steps:
 
@@ -698,10 +716,18 @@ async def run_pipeline(config: SetupConfig) -> None:
         Cartesia synthesis processor + pre-publish processor.
     13. Assemble + run.
     """
-    indices = resolve_audio_devices(
-        input_pattern=config.audio.input_device_name,
-        output_pattern=config.audio.output_device_name,
-    )
+    # Use a no-op fallback when no reporter was passed — keeps the
+    # call sites below uniform without sprinkling ``if reporter is
+    # not None`` everywhere. ``_NullStartupReporter`` mirrors
+    # ``StartupReporter``'s ``stage()`` and ``mark_startup_complete()``
+    # surfaces but writes nothing.
+    rep = reporter if reporter is not None else _NULL_REPORTER
+
+    async with rep.stage("audio_devices", "audio devices"):
+        indices = resolve_audio_devices(
+            input_pattern=config.audio.input_device_name,
+            output_pattern=config.audio.output_device_name,
+        )
     transport = build_audio_transport(config, indices)
 
     wakeword = WakewordProcessor(
@@ -712,22 +738,27 @@ async def run_pipeline(config: SetupConfig) -> None:
 
     vad = VadProcessor(config.vad)
 
-    # Build + pre-load the STT backend.
-    stt_backend = build_stt_backend(config.stt)
-    await stt_backend.load()
+    # Build + pre-load the STT backend. The model load is the slowest
+    # startup step (multi-second cold load on first run, sub-second
+    # afterwards), so it gets its own checklist line.
+    async with rep.stage("stt_model", "stt model loaded"):
+        stt_backend = build_stt_backend(config.stt)
+        await stt_backend.load()
 
     cartesia_client = CartesiaClient(config.tts, config.cartesia_api_key)
 
     # Story 3.1: load the production expression map. Validates at
     # startup; ConfigError propagates to __main__'s top-level
     # handler if the YAML is malformed (FR31).
-    mapping = load_from_path(Path("expression_map.yaml"))
+    async with rep.stage("expression_map", "expression map loaded"):
+        mapping = load_from_path(Path("expression_map.yaml"))
 
     # Story 3.5: build the four-topic event publisher and connect.
     # connect() raises StartupValidationError on failure; the
     # __main__ handler logs startup.failed CRITICAL and exits.
-    event_publisher = build_publisher(config.publisher)
-    await event_publisher.connect()
+    async with rep.stage("publisher", "publisher connected"):
+        event_publisher = build_publisher(config.publisher)
+        await event_publisher.connect()
 
     # Story 4.1: open the persistent httpx.AsyncClient via the factory
     # in turn/beliefs.py. The factory keeps ``import httpx`` confined to
@@ -747,8 +778,12 @@ async def run_pipeline(config: SetupConfig) -> None:
         # Story 4.2: startup probe — refuse to start unless the daemon's
         # ``GET /health`` returns 200. Closes architecture.md's
         # cross-project spec-drift item. Raises StartupValidationError
-        # → __main__'s top-level handler logs + exits non-zero.
-        await orchestrator_client.probe_health()
+        # → __main__'s top-level handler logs + exits non-zero. Wrapped
+        # in a reporter stage so the failure renders cleanly with
+        # ``stage='orchestrator'`` / ``reason=...`` / ``url=...`` from
+        # the exception's ``context`` dict.
+        async with rep.stage("orchestrator", "orchestrator daemon"):
+            await orchestrator_client.probe_health()
 
         talker = build_talker(config, beliefs=belief_client)
         # Story 4.2: orchestrator client is now wired in for Story 4.7's
@@ -814,6 +849,13 @@ async def run_pipeline(config: SetupConfig) -> None:
         task = PipelineTask(pipeline)
         runner = PipelineRunner()
 
+        # All startup probes have passed — close the operator-facing
+        # checklist before the pipecat runner starts firing runtime
+        # log lines. After this call the structlog console handler is
+        # un-quieted, so ``pipeline.started`` and subsequent runtime
+        # events render normally.
+        rep.mark_startup_complete()
+
         log.info("pipeline.started")
         try:
             await runner.run(task)
@@ -827,3 +869,27 @@ async def run_pipeline(config: SetupConfig) -> None:
                 # anyway. Log + continue to the rest of the cleanup.
                 log.warning("publisher.disconnect_warning", error=str(e))
             log.info("pipeline.stopped")
+
+
+class _NullStartupReporter:
+    """No-op stand-in for :class:`StartupReporter` when none is supplied.
+
+    Used when ``run_pipeline`` is invoked without a reporter (tests,
+    embedded-use callers). Mirrors the public surface ``stage()`` +
+    ``mark_startup_complete()`` so the call sites stay uniform.
+    """
+
+    @asynccontextmanager
+    async def stage(self, code: str, description: str):  # type: ignore[no-untyped-def]
+        """No-op replacement — yields immediately and discards args."""
+        del code, description
+        yield
+
+    def mark_startup_complete(self) -> None:
+        """No-op — there's no checklist to close."""
+
+
+# Module-level singleton so ``run_pipeline`` doesn't allocate a fresh
+# null-reporter on every invocation. Safe because the null reporter
+# holds no state.
+_NULL_REPORTER = _NullStartupReporter()
