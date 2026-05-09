@@ -777,48 +777,57 @@ class _GreetingInjectorProcessor(FrameProcessor):
 
 
 class _FsmAudioFlightBridge(FrameProcessor):
-    """Drive ``ActivityFSM`` ``on_first_audio_frame`` / ``on_last_audio_frame`` from the audio flow.
+    """Drive FSM ``on_first/last_audio_frame`` from the audio flow + pause VAD during speaking.
 
     Story 4.3 deferred wiring these two FSM transitions to "Story 4.6 /
     4.7 with concrete signal sources." Without them, the FSM gets
-    stuck in ``working[thinking]`` forever after the first turn —
-    nothing transitions ``working → speaking → listening``, so the
-    pipeline appears to "stop responding after one turn." This
+    stuck in ``working[thinking]`` forever after the first turn. This
     processor closes that gap.
 
-    Mechanism:
+    State-aware (the 2026-05-09 refit):
 
-    1. **First audio frame** detection: when a downstream-bound
-       :class:`OutputAudioRawFrame` flows through and audio is not
-       currently in flight, fire ``await fsm.on_first_audio_frame()``
-       (FSM transitions ``working → speaking``).
-    2. **Last audio frame** detection: there's no clean "end of
-       audio" signal in Pipecat's frame stream — Cartesia emits
-       chunks until the SSE closes, and ``transport.output()``
-       buffers them for the speaker. We use a timer reset: every
-       audio frame cancels any pending "last frame" task and
-       schedules a new one at +``last_frame_idle_ms``. When the
-       timer fires (no audio for that long), call
-       ``fsm.on_last_audio_frame()`` (FSM transitions
-       ``speaking → listening``).
+    The bridge sees audio frames from THREE distinct sources:
+    1. **Greeting audio** — plays during ``waking`` state. NOT a
+       turn; FSM stays in ``waking`` until the user starts speaking.
+    2. **Bot reply audio** (the linchpin case) — plays during
+       ``working`` (then ``speaking``). This is what the FSM
+       transitions for: ``working → speaking → listening``.
+    3. **Echo / feedback** — bot's own audio bouncing off the
+       speaker into the mic. Without an explicit gate, VAD captures
+       it, STT transcribes the bot's own words, Talker responds to
+       itself, infinite babble loop. The bridge prevents this by
+       setting ``vad._active = False`` when entering ``speaking``
+       and ``vad._active = True`` when entering ``listening``.
 
-    Both calls happen as background tasks — the audio frame keeps
-    flowing downstream without waiting on the FSM transition. Errors
-    in the FSM call are logged via ``log.exception`` (matches the
-    same pattern as Story 4.5's greeting callback). The pipeline
-    doesn't crash mid-utterance.
+    The bridge fires FSM transitions ONLY when the FSM is in the
+    correct preceding state (``on_first_audio_frame`` only when in
+    ``working``; ``on_last_audio_frame`` only when in ``speaking``).
+    Other audio frames pass through silently. This was the bug in
+    the first attempt — greeting audio fired ``on_first_audio_frame``
+    from ``waking`` state and triggered illegal-transition errors.
 
-    Trade-off: the timer-based "last frame" signal is heuristic. A
-    longer idle window (500ms default) is safer (won't fire
-    prematurely during a Cartesia stall mid-segment) but adds that
-    much delay before the FSM enters ``listening`` and the next
-    user turn can be captured. Story 5.4 calibrates the actual
-    audio-buffer drain time on the dev host.
+    Last-frame detection:
+
+    Cartesia emits multiple SSE streams per turn (one per segment),
+    with gaps of 200-500ms between them. The idle window must be
+    longer than that gap or the timer fires prematurely BETWEEN
+    segments and the FSM transitions to ``listening`` mid-utterance.
+    1500ms is the default; tunable via the constructor.
     """
 
-    def __init__(self, fsm: ActivityFSM, last_frame_idle_ms: int = 500) -> None:
+    def __init__(
+        self,
+        fsm: ActivityFSM,
+        vad: VadProcessor,
+        last_frame_idle_ms: int = 1500,
+    ) -> None:
         super().__init__()  # pyright: ignore[reportUnknownMemberType]
         self._fsm = fsm
+        # Reference to VAD for the self-feedback gate. The bridge
+        # flips ``vad._active`` directly when transitioning between
+        # speaking and listening — keeps the audio loop closed
+        # without introducing a new pubsub seam.
+        self._vad = vad
         self._idle_seconds = last_frame_idle_ms / 1000.0
         # Audio-in-flight flag: True between on_first_audio_frame and
         # on_last_audio_frame. Prevents duplicate ``first`` firings
@@ -843,10 +852,11 @@ class _FsmAudioFlightBridge(FrameProcessor):
                 self._last_frame_task.cancel()
 
             if not self._in_flight:
-                # First frame of a new turn's audio — fire the FSM
-                # transition as a background task (don't block the
-                # audio frame from reaching the speaker).
                 self._in_flight = True
+                # Fire the FSM transition as a background task. The
+                # state check happens inside ``_fire_first_audio_frame``
+                # so we don't block the audio frame from reaching the
+                # speaker even if the FSM is in an unexpected state.
                 fire_first = asyncio.create_task(self._fire_first_audio_frame())
                 fire_first.add_done_callback(self._log_fsm_done)
 
@@ -858,21 +868,54 @@ class _FsmAudioFlightBridge(FrameProcessor):
         await self.push_frame(frame, direction)
 
     async def _fire_first_audio_frame(self) -> None:
-        """Background task — call ``fsm.on_first_audio_frame``; log + swallow errors."""
+        """Fire ``fsm.on_first_audio_frame`` only if FSM is in ``working``.
+
+        Greeting audio plays during ``waking`` state — the FSM doesn't
+        want a transition there. Echo audio during ``listening`` /
+        ``speaking`` similarly doesn't transition. Silently skip in
+        those cases.
+        """
+        if self._fsm.current_state != "working":
+            # Greeting (waking) or feedback echo (listening / speaking)
+            # — the FSM doesn't transition on this audio. The
+            # ``_in_flight`` flag stays True; the timer-driven
+            # ``_fire_last_audio_frame_after_idle`` clears it.
+            return
         try:
             await self._fsm.on_first_audio_frame()
+            # FSM is now in ``speaking``. Pause VAD to break the
+            # self-feedback loop — without this, the bot's audio
+            # plays out the speaker, hits the mic, VAD captures it,
+            # STT transcribes bot's voice, Talker responds to
+            # itself, infinite babble. Story 5.1's barge-in feature
+            # will reverse this gate selectively.
+            self._vad._active = False  # pyright: ignore[reportPrivateUsage]
+            log.info("fsm.audio_flight.entered_speaking")
         except Exception:
             log.exception("fsm.first_audio_frame_error")
 
     async def _fire_last_audio_frame_after_idle(self) -> None:
-        """Background task — sleep for the idle window, then fire ``on_last_audio_frame``.
+        """Sleep for the idle window, then fire ``on_last_audio_frame`` if FSM in ``speaking``.
 
-        Cancellation by the next audio frame is the normal path.
+        Cancellation by the next audio frame is the normal path. After
+        firing, re-arm VAD so the user's reply gets captured.
         """
         try:
             await asyncio.sleep(self._idle_seconds)
             self._in_flight = False
+            if self._fsm.current_state != "speaking":
+                # Race: FSM transitioned via another path (e.g.,
+                # deferred-sleep mid-stream), or the audio was a
+                # greeting that never put us in ``speaking``. Skip.
+                return
             await self._fsm.on_last_audio_frame()
+            # FSM is now in ``listening``. Re-arm VAD so the next
+            # user utterance gets captured. Reset state too — any
+            # half-buffered echo audio from speaker bleed into the
+            # mic gets dropped.
+            self._vad._active = True  # pyright: ignore[reportPrivateUsage]
+            self._vad.reset_state()
+            log.info("fsm.audio_flight.entered_listening")
         except asyncio.CancelledError:
             # Expected — a new audio frame arrived; the next scheduled
             # task takes over.
@@ -1380,11 +1423,12 @@ async def run_pipeline(
                 # the FSM gets stuck in working[thinking] forever
                 # after the first turn — Story 4.3 deferred this
                 # signal-source wiring and the deferral was never
-                # closed in 4.6 / 4.7. Sits BEFORE _PrePublishProcessor
-                # so the FSM transition fires before any embodiment
-                # event publish (the order matters for downstream
-                # subscribers).
-                _FsmAudioFlightBridge(activity_fsm),
+                # closed in 4.6 / 4.7. Also pauses VAD during
+                # ``speaking`` to break the self-feedback loop (bot
+                # transcribing its own audio echo). Sits BEFORE
+                # _PrePublishProcessor so the FSM transition fires
+                # before any embodiment event publish.
+                _FsmAudioFlightBridge(activity_fsm, vad),
                 # Story 3.7: pre-publish stage — publishes embodiment events
                 # before each EmbodimentAudioFrame reaches the speaker.
                 _PrePublishProcessor(event_publisher),
