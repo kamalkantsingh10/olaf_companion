@@ -776,6 +776,120 @@ class _GreetingInjectorProcessor(FrameProcessor):
         await self.push_frame(TalkerResponseFrame(text=text), self._direction)
 
 
+class _FsmAudioFlightBridge(FrameProcessor):
+    """Drive ``ActivityFSM`` ``on_first_audio_frame`` / ``on_last_audio_frame`` from the audio flow.
+
+    Story 4.3 deferred wiring these two FSM transitions to "Story 4.6 /
+    4.7 with concrete signal sources." Without them, the FSM gets
+    stuck in ``working[thinking]`` forever after the first turn —
+    nothing transitions ``working → speaking → listening``, so the
+    pipeline appears to "stop responding after one turn." This
+    processor closes that gap.
+
+    Mechanism:
+
+    1. **First audio frame** detection: when a downstream-bound
+       :class:`OutputAudioRawFrame` flows through and audio is not
+       currently in flight, fire ``await fsm.on_first_audio_frame()``
+       (FSM transitions ``working → speaking``).
+    2. **Last audio frame** detection: there's no clean "end of
+       audio" signal in Pipecat's frame stream — Cartesia emits
+       chunks until the SSE closes, and ``transport.output()``
+       buffers them for the speaker. We use a timer reset: every
+       audio frame cancels any pending "last frame" task and
+       schedules a new one at +``last_frame_idle_ms``. When the
+       timer fires (no audio for that long), call
+       ``fsm.on_last_audio_frame()`` (FSM transitions
+       ``speaking → listening``).
+
+    Both calls happen as background tasks — the audio frame keeps
+    flowing downstream without waiting on the FSM transition. Errors
+    in the FSM call are logged via ``log.exception`` (matches the
+    same pattern as Story 4.5's greeting callback). The pipeline
+    doesn't crash mid-utterance.
+
+    Trade-off: the timer-based "last frame" signal is heuristic. A
+    longer idle window (500ms default) is safer (won't fire
+    prematurely during a Cartesia stall mid-segment) but adds that
+    much delay before the FSM enters ``listening`` and the next
+    user turn can be captured. Story 5.4 calibrates the actual
+    audio-buffer drain time on the dev host.
+    """
+
+    def __init__(self, fsm: ActivityFSM, last_frame_idle_ms: int = 500) -> None:
+        super().__init__()  # pyright: ignore[reportUnknownMemberType]
+        self._fsm = fsm
+        self._idle_seconds = last_frame_idle_ms / 1000.0
+        # Audio-in-flight flag: True between on_first_audio_frame and
+        # on_last_audio_frame. Prevents duplicate ``first`` firings
+        # for chunks of the same audio stream.
+        self._in_flight = False
+        # Pending "last frame" task — re-scheduled on every audio
+        # frame; fires when audio truly stops.
+        self._last_frame_task: asyncio.Task[None] | None = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Track audio frames flowing downstream; fire FSM transitions on edges."""
+        await super().process_frame(frame, direction)
+
+        # Only count downstream-bound output audio frames. Input audio
+        # (``InputAudioRawFrame`` / ``_ModeStampedAudioFrame``) flows
+        # through this processor too, but those don't represent
+        # bot speech and shouldn't drive FSM transitions.
+        if isinstance(frame, OutputAudioRawFrame):
+            # Cancel any pending "last frame" task — a new audio frame
+            # extends the in-flight window.
+            if self._last_frame_task is not None and not self._last_frame_task.done():
+                self._last_frame_task.cancel()
+
+            if not self._in_flight:
+                # First frame of a new turn's audio — fire the FSM
+                # transition as a background task (don't block the
+                # audio frame from reaching the speaker).
+                self._in_flight = True
+                fire_first = asyncio.create_task(self._fire_first_audio_frame())
+                fire_first.add_done_callback(self._log_fsm_done)
+
+            # (Re-)schedule the "last frame" timer.
+            self._last_frame_task = asyncio.create_task(self._fire_last_audio_frame_after_idle())
+            self._last_frame_task.add_done_callback(self._log_fsm_done)
+
+        # Always pass the frame through unchanged.
+        await self.push_frame(frame, direction)
+
+    async def _fire_first_audio_frame(self) -> None:
+        """Background task — call ``fsm.on_first_audio_frame``; log + swallow errors."""
+        try:
+            await self._fsm.on_first_audio_frame()
+        except Exception:
+            log.exception("fsm.first_audio_frame_error")
+
+    async def _fire_last_audio_frame_after_idle(self) -> None:
+        """Background task — sleep for the idle window, then fire ``on_last_audio_frame``.
+
+        Cancellation by the next audio frame is the normal path.
+        """
+        try:
+            await asyncio.sleep(self._idle_seconds)
+            self._in_flight = False
+            await self._fsm.on_last_audio_frame()
+        except asyncio.CancelledError:
+            # Expected — a new audio frame arrived; the next scheduled
+            # task takes over.
+            raise
+        except Exception:
+            log.exception("fsm.last_audio_frame_error")
+
+    @staticmethod
+    def _log_fsm_done(task: asyncio.Task[None]) -> None:
+        """Done-callback — surface any unexpected exception via log.exception."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None and not isinstance(exc, asyncio.CancelledError):
+            log.exception("fsm.audio_flight_bridge_error", exc_info=exc)
+
+
 class _PrePublishProcessor(FrameProcessor):
     """Publishes embodiment events before each :class:`EmbodimentAudioFrame` is sent.
 
@@ -1134,6 +1248,12 @@ async def run_pipeline(
         # frame seam). Sub-millisecond — no LLM, no I/O. Logged via
         # ``trigger_greeting``'s own ``greeting.picked`` event.
         async def _on_sleeping_to_waking() -> None:
+            # Story 4.6 calibration (2026-05-09): 200ms pause before the
+            # greeting fires. Without it, Ooppi replies the instant the
+            # wake word is detected — feels jarringly fast, like the bot
+            # is interrupting. The brief pause lets the user finish
+            # saying "hey OLAF" before the greeting starts.
+            await asyncio.sleep(0.2)
             mood = mood_state.current
             text = trigger_greeting(mood, config.greeting.greetings_by_mood)
             await greeting_injector.inject_greeting(text)
@@ -1255,6 +1375,16 @@ async def run_pipeline(
                     cache,
                     segmenter_processor,
                 ),
+                # Story 4.6 (calibration 2026-05-09): drive FSM
+                # transitions on the audio-flight edges. Without this,
+                # the FSM gets stuck in working[thinking] forever
+                # after the first turn — Story 4.3 deferred this
+                # signal-source wiring and the deferral was never
+                # closed in 4.6 / 4.7. Sits BEFORE _PrePublishProcessor
+                # so the FSM transition fires before any embodiment
+                # event publish (the order matters for downstream
+                # subscribers).
+                _FsmAudioFlightBridge(activity_fsm),
                 # Story 3.7: pre-publish stage — publishes embodiment events
                 # before each EmbodimentAudioFrame reaches the speaker.
                 _PrePublishProcessor(event_publisher),

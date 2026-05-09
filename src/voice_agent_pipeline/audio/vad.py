@@ -243,12 +243,18 @@ class VadProcessor(FrameProcessor):
         )
         if speech_ms < self._cfg.min_speech_duration_ms:
             # Too short — drop silently. Probably a cough or false wake.
+            # Story 4.6 (continuous-conversation fix): clear per-utterance
+            # state but stay ``_active = True`` so the next utterance
+            # gets captured without needing a new wake-word.
             log.debug(
                 "vad.utterance.dropped_short",
                 duration_ms=speech_ms,
                 min_speech_duration_ms=self._cfg.min_speech_duration_ms,
             )
-            self._active = False
+            self._utterance_buffer.clear()
+            self._vad_frame_buffer.clear()
+            self._silence_run_ms = 0
+            self._speech_seen = False
             return
 
         end_ns = time.time_ns()
@@ -263,9 +269,20 @@ class VadProcessor(FrameProcessor):
             duration_ms=speech_ms,
             silence_run_ms=self._silence_run_ms,
         )
-        # Deactivate BEFORE pushing so a re-entrant push_frame can't
-        # accidentally consume more audio while we're emitting.
-        self._active = False
+        # Story 4.6 (continuous-conversation fix): keep ``_active = True``
+        # after emission so subsequent utterances are captured without a
+        # new wake-word. Per-utterance state (buffers, silence counter,
+        # speech_seen) resets so the NEXT utterance starts fresh; the
+        # mic_mode stamp is the gate that turns VAD off (when the FSM
+        # transitions to ``sleeping`` and mic_mode flips back to
+        # ``wake_word_only``). Pre-Story-4.6 this set ``_active = False``
+        # which broke continuous conversation — turn 2 was never captured.
         self._utterance_buffer.clear()
         self._vad_frame_buffer.clear()
+        self._silence_run_ms = 0
+        self._speech_seen = False
+        # Anchor the next utterance's start at "now" so latency
+        # measurements are per-utterance (otherwise turn 2's
+        # start_ns would still be turn 1's wake timestamp).
+        self._utterance_start_ns = end_ns
         await self.push_frame(utterance, direction)
