@@ -59,7 +59,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import structlog
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import Frame, InputAudioRawFrame
 from pipecat.processors.frame_processor import (
     FrameDirection,
     FrameProcessor,
@@ -74,9 +74,17 @@ log = structlog.get_logger(__name__)
 # NOT frozen — pipecat's Frame base is non-frozen, dataclass machinery
 # refuses to make a frozen subclass of a non-frozen parent. By
 # convention nothing mutates these instances after construction.
+#
+# Subclass :class:`InputAudioRawFrame` (not the bare
+# :class:`AudioRawFrame` mixin): pipecat's actual frame-with-Frame-
+# internals is ``InputAudioRawFrame(SystemFrame, AudioRawFrame)``.
+# ``AudioRawFrame`` alone is just the audio-bytes mixin without
+# Frame's ``id`` / ``transport_destination`` — observers downstream
+# crash without those. This was the bug in the first attempt:
+# subclassing the mixin lost the Frame internals.
 @dataclass
-class _ModeStampedAudioFrame(AudioRawFrame):
-    """:class:`AudioRawFrame` carrying the active mic mode (Story 4.6).
+class _ModeStampedAudioFrame(InputAudioRawFrame):
+    """:class:`InputAudioRawFrame` carrying the active mic mode (Story 4.6).
 
     Wakeword and VAD processors check this stamp before processing.
     The single-stream invariant (FR47) is enforced by the stamp:
@@ -184,14 +192,15 @@ class MicModeRouter(FrameProcessor):
         """
         await super().process_frame(frame, direction)
 
-        # Only wrap plain AudioRawFrame instances. ``isinstance`` plus
-        # the explicit not-already-stamped guard handles three cases:
-        # 1. Plain ``AudioRawFrame`` from ``transport.input()`` → wrap.
-        # 2. ``_ModeStampedAudioFrame`` (test harness pre-stamping) →
-        #    pass through (don't double-wrap).
-        # 3. Any other ``AudioRawFrame`` subclass that future stories
-        #    introduce → also pass through to be safe.
-        if isinstance(frame, AudioRawFrame) and not isinstance(frame, _ModeStampedAudioFrame):
+        # Only wrap plain ``InputAudioRawFrame`` instances (the type
+        # ``transport.input()`` actually emits). The explicit
+        # not-already-stamped guard handles:
+        # 1. Plain ``InputAudioRawFrame`` from input transport → wrap.
+        # 2. ``_ModeStampedAudioFrame`` (test harness pre-stamping or
+        #    accidental double-pass) → pass through unchanged.
+        # 3. ``OutputAudioRawFrame`` / other audio subclasses
+        #    (downstream Cartesia frames) → pass through unchanged.
+        if isinstance(frame, InputAudioRawFrame) and not isinstance(frame, _ModeStampedAudioFrame):
             stamped = _ModeStampedAudioFrame(
                 audio=frame.audio,
                 sample_rate=frame.sample_rate,

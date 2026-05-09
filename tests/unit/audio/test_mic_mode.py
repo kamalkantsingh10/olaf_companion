@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import Frame, InputAudioRawFrame
 from pipecat.processors.frame_processor import FrameDirection
 
 from voice_agent_pipeline.activity.machine import MicMode
@@ -123,13 +123,17 @@ async def test_idempotent_same_mode_signal_skipped() -> None:
 
 @pytest.mark.asyncio
 async def test_process_frame_stamps_audio_with_current_mode() -> None:
-    """``AudioRawFrame`` → ``_ModeStampedAudioFrame`` carrying current mode."""
+    """``InputAudioRawFrame`` → ``_ModeStampedAudioFrame`` carrying current mode."""
     router, queue = _make_router()
     pushed = _capture_pushed(router)
     await router.setup(_StubSetup())  # type: ignore[arg-type]
     try:
         # Initial wake_word_only stamp.
-        frame = AudioRawFrame(audio=b"\x00\x00", sample_rate=16000, num_channels=1)
+        frame = InputAudioRawFrame(
+            audio=b"\x00\x00",
+            sample_rate=16000,
+            num_channels=1,
+        )
         await router.process_frame(frame, FrameDirection.DOWNSTREAM)
         assert len(pushed) == 1
         stamped = pushed[0]
