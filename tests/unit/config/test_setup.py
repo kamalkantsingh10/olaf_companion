@@ -35,8 +35,13 @@ _GREETING_BLOCK = (
 # Tests that don't define their own [stt] section append this.
 _STT_BLOCK = '[stt]\nclarification_prompts = ["huh?"]\n'
 
+# 2026-05-09: goodbye block is required (phrases non-empty). Same
+# pattern as greeting/stt — string data lives in setup.toml, tests
+# building custom TOMLs append a minimal block.
+_GOODBYE_BLOCK = '[goodbye]\nphrases = ["bye"]\n'
+
 # Combined snippet — most custom-TOML tests use this.
-_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK
+_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK + _GOODBYE_BLOCK
 
 
 _VALID_TOML = (
@@ -425,7 +430,7 @@ def test_stt_clarification_prompts_explicit_override(tmp_path: Path) -> None:
         'voice_id = "v"\n'
     )
     toml_path, env_path = _write_files(
-        tmp_path, toml_body=toml_with_clarification + _GREETING_BLOCK
+        tmp_path, toml_body=toml_with_clarification + _GREETING_BLOCK + _GOODBYE_BLOCK
     )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.stt.clarification_prompts == ["huh?", "say again?"]
@@ -449,7 +454,9 @@ def test_stt_clarification_prompts_empty_raises(tmp_path: Path) -> None:
         "[tts]\n"
         'voice_id = "v"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_empty + _GREETING_BLOCK)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_empty + _GREETING_BLOCK + _GOODBYE_BLOCK
+    )
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)
 
@@ -478,9 +485,12 @@ def test_greeting_missing_mood_raises(tmp_path: Path) -> None:
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
         "[tts]\n"
-        'voice_id = "v"\n' + _STT_BLOCK + "[greeting.greetings_by_mood]\n"
+        'voice_id = "v"\n'
+        + _STT_BLOCK
+        + _GOODBYE_BLOCK
+        + "[greeting.greetings_by_mood]\n"
         # Only "calm" — missing the other 7 mood keys.
-        'calm = ["hi"]\n'
+        + 'calm = ["hi"]\n'
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_missing_mood)
     with pytest.raises(ConfigError) as exc_info:
@@ -598,7 +608,9 @@ def test_stt_old_singular_clarification_prompt_rejected(tmp_path: Path) -> None:
         "[tts]\n"
         'voice_id = "v"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_old_field + _GREETING_BLOCK)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_old_field + _GREETING_BLOCK + _GOODBYE_BLOCK
+    )
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)
 

@@ -18,7 +18,7 @@ inside ``model_construct`` calls, where pytest fixtures aren't in
 scope. A regular Python module fits both.
 """
 
-from voice_agent_pipeline.config.setup import GreetingConfig, SttConfig
+from voice_agent_pipeline.config.setup import GoodbyeConfig, GreetingConfig, SttConfig
 from voice_agent_pipeline.schemas.mood_event import Mood
 
 
@@ -51,3 +51,14 @@ def minimal_greeting_config(**overrides: object) -> GreetingConfig:
     """Build a :class:`GreetingConfig` with one greeting per mood."""
     overrides.setdefault("greetings_by_mood", minimal_greetings_by_mood())
     return GreetingConfig(**overrides)  # type: ignore[arg-type]
+
+
+def minimal_goodbye_phrases() -> list[str]:
+    """Return a one-entry goodbye list — the smallest valid value."""
+    return ["bye"]
+
+
+def minimal_goodbye_config(**overrides: object) -> GoodbyeConfig:
+    """Build a :class:`GoodbyeConfig` with a single dummy goodbye."""
+    overrides.setdefault("phrases", minimal_goodbye_phrases())
+    return GoodbyeConfig(**overrides)  # type: ignore[arg-type]

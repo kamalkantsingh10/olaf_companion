@@ -313,6 +313,41 @@ excited = [
 slow_path_patterns = []
 default = "talker"
 
+# 2026-05-09: hardcoded goodbye phrases. When the LLM dispatches the
+# `go_to_sleep` tool, the bot first plays its LLM-generated reply,
+# then plays one of these as a predictable signoff. Same static-random
+# pattern as greetings — picked uniformly at random per call. Tone:
+# casual, friendly, Ooppi's voice. Each phrase is the actual spoken
+# text. Must be non-empty.
+[goodbye]
+phrases = [
+    "goodnight",
+    "sleep well",
+    "bye for now",
+    "see you later",
+    "catch you next time",
+    "goodnight, sweet dreams",
+    "talk soon",
+    "bye bye",
+    "see you in a bit",
+    "until next time",
+    "rest well",
+    "later",
+    "ciao for now",
+    "see ya",
+    "goodnight then",
+    "see you when I see you",
+    "be well",
+    "alright, bye",
+    "going quiet now",
+    "talk soon, friend",
+    "bye, sleep tight",
+    "have a good one",
+    "alright, see you",
+    "off I go",
+    "okay, off to rest",
+]
+
 # Sections populated by subsequent stories:
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
 # [daemon]         -- extended in Story 5.3 (bearer_token_env, mtls)

@@ -272,6 +272,21 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                     except Exception:
                         log.exception("tool.dispatch_error")
 
+                # If go_to_sleep was dispatched in this turn,
+                # ``fsm.sleep_pending`` is now True. Play a hardcoded
+                # goodbye phrase before letting the FSM transition
+                # — the LLM's reply was already spoken, but we want
+                # a CONSISTENT signoff (the user requested this:
+                # the LLM's goodbye varies; the hardcoded phrase is
+                # the audible "I'm going quiet" cue). Same static-
+                # random pattern as the wake greeting.
+                if fsm.sleep_pending:
+                    goodbye_text = random.choice(  # noqa: S311
+                        config.goodbye.phrases,
+                    )
+                    log.info("goodbye.picked", text=goodbye_text)
+                    await _speak(pa, indices, tts, goodbye_text)
+
                 # Bot finishes (speaking → listening, OR via deferred-
                 # sleep chain → going_to_sleep → sleeping if a
                 # ``go_to_sleep`` tool call set ``sleep_pending``).

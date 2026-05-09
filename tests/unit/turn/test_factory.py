@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import SecretStr
 
-from tests._factories import minimal_greeting_config, minimal_stt_config
+from tests._factories import minimal_goodbye_config, minimal_greeting_config, minimal_stt_config
 from voice_agent_pipeline import turn as turn_module
 from voice_agent_pipeline.config.setup import (
     AudioConfig,
@@ -64,6 +64,7 @@ def _build_setup(
         # doesn't trip on validation.
         stt=minimal_stt_config(),
         greeting=minimal_greeting_config(),
+        goodbye=minimal_goodbye_config(),
         talker=TalkerConfig(
             provider=provider,  # type: ignore[arg-type]
             max_tokens=128,

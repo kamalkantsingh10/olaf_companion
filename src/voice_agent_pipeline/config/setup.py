@@ -476,6 +476,41 @@ class DaemonConfig(BaseModel):
         return v.rstrip("/")
 
 
+class GoodbyeConfig(BaseModel):
+    """Hardcoded goodbye phrases — played before the bot sleeps (Story 4.6+).
+
+    When the LLM dispatches the ``go_to_sleep`` tool, the bot first
+    plays its LLM-generated reply (which usually IS a goodbye-shaped
+    phrase already), then plays one entry from this list as a
+    predictable, deterministic signoff. Same static-random pattern as
+    the wake greetings and clarification prompts — operator-authored
+    text in setup.toml, picked at random per call.
+
+    Why bolt on a hardcoded phrase when the LLM already said
+    goodbye: the user wants a CONSISTENT signoff. The LLM's reply
+    varies; the hardcoded phrase is the audible "I'm now going
+    quiet" cue. Slight redundancy acceptable — both phrases are
+    short.
+
+    Validation: list must be non-empty (random.choice would
+    crash). The model_validator catches that at startup.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    phrases: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_phrases_non_empty(self) -> "GoodbyeConfig":
+        """Reject ``phrases = []`` — random.choice would crash."""
+        if len(self.phrases) == 0:
+            raise ValueError(
+                "goodbye.phrases must contain at least one entry. "
+                "Populate the [goodbye] phrases list in setup.toml.",
+            )
+        return self
+
+
 class RouterConfig(BaseModel):
     """TurnRouter routing configuration (Story 4.7).
 
@@ -679,6 +714,10 @@ class SetupConfig(BaseSettings):
     # original behavior). Operators add patterns to enable orchestrator
     # escalation.
     router: RouterConfig = Field(default_factory=RouterConfig)
+    # 2026-05-09: hardcoded goodbye phrases played before the bot
+    # sleeps. The actual strings live in setup.toml; an empty list
+    # fails the model_validator at startup.
+    goodbye: GoodbyeConfig = Field(default_factory=GoodbyeConfig)
     # Story 4.1: orchestrator daemon endpoint. Optional with defaults
     # (localhost:8001). Story 4.1 wires the BeliefStateClient against
     # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer

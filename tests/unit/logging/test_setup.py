@@ -39,13 +39,14 @@ def stub_config() -> SetupConfig:
     # Story 4.5: pass minimal stt + greeting so SetupConfig's
     # default_factory chain doesn't trip on the (now-required)
     # non-empty clarification_prompts and per-mood greeting buckets.
-    from tests._factories import minimal_greeting_config, minimal_stt_config
+    from tests._factories import minimal_goodbye_config, minimal_greeting_config, minimal_stt_config
 
     return SetupConfig.model_construct(
         schema_version=1,
         picovoice_access_key=SecretStr("stub"),
         stt=minimal_stt_config(),
         greeting=minimal_greeting_config(),
+        goodbye=minimal_goodbye_config(),
     )
 
 
