@@ -36,11 +36,21 @@ from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
 from voice_agent_pipeline.logging.startup import StartupReporter
-from voice_agent_pipeline.pipeline import run_pipeline
+from voice_agent_pipeline.sequential_loop import run_sequential_loop
 from voice_agent_pipeline.tts.cartesia import (
     validate_credentials as validate_cartesia_credentials,
 )
 from voice_agent_pipeline.turn import validate_credentials as validate_talker_credentials
+
+# 2026-05-09: switched the runtime path from the Pipecat streaming
+# assembly (``pipeline.run_pipeline``) to the half-duplex sequential
+# loop (``sequential_loop.run_sequential_loop``). The streaming
+# pipeline's mic+speaker concurrency requires acoustic echo
+# cancellation to avoid bot-hears-itself babble loops. Until
+# system-level AEC (PipeWire's ``module-echo-cancel``) is configured
+# on the host, half-duplex is the simpler / more reliable design.
+# The streaming code stays committed and tested for the eventual
+# Phase 2 swap-back when AEC lands.
 
 
 async def _validate_wakeword_credentials(config: SetupConfig) -> None:
@@ -159,12 +169,13 @@ async def main() -> int:
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGTERM, shutdown.set)
 
-        # Hand the reporter into ``run_pipeline`` — it owns the
-        # remaining startup stages (audio devices, STT model load,
-        # publisher connect, orchestrator probe, ...) and calls
-        # ``reporter.mark_startup_complete()`` itself once the
-        # checklist is done, BEFORE the pipecat runner takes over.
-        pipeline_task = asyncio.create_task(run_pipeline(config, reporter=reporter))
+        # Half-duplex sequential loop. The startup reporter's
+        # checklist closes here (the loop builds its own components
+        # but doesn't drive the reporter) — call mark_startup_complete
+        # explicitly before kicking off the loop so the closing rule
+        # prints before any per-turn log lines.
+        reporter.mark_startup_complete()
+        pipeline_task = asyncio.create_task(run_sequential_loop(config))
         shutdown_task = asyncio.create_task(shutdown.wait())
         _, pending = await asyncio.wait(
             [pipeline_task, shutdown_task],
