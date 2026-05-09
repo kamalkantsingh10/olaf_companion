@@ -40,7 +40,8 @@ Future stories layer onto this without changing the call shape:
 """
 
 import json
-from typing import Any, Protocol
+from collections.abc import AsyncIterator
+from typing import Any, Protocol, cast
 
 import openai
 import structlog
@@ -51,6 +52,35 @@ from voice_agent_pipeline.config.setup import TalkerConfig
 from voice_agent_pipeline.errors import TalkerError
 from voice_agent_pipeline.turn.beliefs import BeliefStateClient
 from voice_agent_pipeline.turn.tools import ToolCall, ToolRegistry
+
+
+class TalkerTextDelta(BaseModel):
+    """Streaming token chunk from :meth:`Talker.complete_with_tools_streaming`.
+
+    Yielded as the LLM emits tokens. Sequence multiple deltas to
+    reconstruct the full reply text. Empty deltas may appear in the
+    stream (e.g., the first chunk that carries only metadata) — the
+    consumer should tolerate them.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+
+
+class TalkerStreamEnd(BaseModel):
+    """Final event from :meth:`Talker.complete_with_tools_streaming`.
+
+    Yielded once at end-of-stream, after all :class:`TalkerTextDelta`
+    events. Carries the parsed tool-call list (collected as the
+    stream produced ``tool_calls`` deltas — openai's streaming format
+    interleaves them with text deltas; we accumulate by index).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool_calls: list[ToolCall]
+
 
 log = structlog.get_logger(__name__)
 
@@ -496,3 +526,191 @@ class Talker:
             )
 
         return TalkerResponse(text=text, tool_calls=parsed)
+
+    async def complete_with_tools_streaming(
+        self,
+        prompt: str,
+        tool_registry: ToolRegistry,
+    ) -> AsyncIterator[TalkerTextDelta | TalkerStreamEnd]:
+        """Streaming variant — yields text deltas as they arrive, then a final ``TalkerStreamEnd``.
+
+        Same belief-grounding + tool surface as
+        :meth:`complete_with_tools`, but uses openai's ``stream=True``
+        mode so the consumer can speak earlier sentences while the LLM
+        is still emitting later ones. The sequential voice loop
+        (:mod:`sequential_loop`) consumes this to feed Cartesia
+        per-sentence as text accumulates.
+
+        Yields:
+            :class:`TalkerTextDelta` for every non-empty text chunk
+            from the stream (in order). Then exactly one
+            :class:`TalkerStreamEnd` carrying the parsed tool calls
+            collected across the stream's ``tool_calls`` deltas.
+
+        Raises:
+            TalkerError: On any ``openai.APIError`` subclass — same
+                wrap-and-propagate posture as the non-streaming
+                variant. CLAUDE.md rule #4: never caught downstream.
+        """
+        # Same belief-grounding shape as complete_with_tools — build
+        # the per-call system prompt locally without mutating the
+        # shared field.
+        system_prompt = self._system_prompt
+        if self._beliefs is not None and self._config.grounded_keys:
+            beliefs = await self._beliefs.read(self._config.grounded_keys)
+            system_prompt = (
+                self._system_prompt + "\n\n## Belief state\n" + json.dumps(beliefs, indent=2)
+            )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+        tools_param = tool_registry.as_openai_tools_param()
+
+        try:
+            # openai's streaming mode: ``stream=True`` makes
+            # ``create()`` return an async iterator of
+            # ``ChatCompletionChunk``. Each chunk's ``choices[0].delta``
+            # carries either ``content`` (text token) or ``tool_calls``
+            # (tool-call deltas, indexed). Same per-provider
+            # max_tokens kwarg branch as the non-streaming variant.
+            # ``stream=True`` makes ``create`` return an ``AsyncStream``
+            # of ``ChatCompletionChunk``. Pyright can't resolve the
+            # overload due to the union return type, so we cast to
+            # ``Any`` and document the chunk shape inline. The
+            # ``getattr`` accesses below are defensive — the SDK's
+            # delta object varies subtly between providers.
+            if self._max_tokens_param == "max_completion_tokens":
+                stream_any = cast(
+                    Any,
+                    await self._client.chat.completions.create(
+                        model=self._model,
+                        messages=messages,  # type: ignore[arg-type]
+                        max_completion_tokens=self._config.max_tokens,
+                        tools=tools_param,  # type: ignore[arg-type]
+                        tool_choice="auto",
+                        stream=True,
+                    ),
+                )
+            else:
+                stream_any = cast(
+                    Any,
+                    await self._client.chat.completions.create(
+                        model=self._model,
+                        messages=messages,  # type: ignore[arg-type]
+                        max_tokens=self._config.max_tokens,
+                        tools=tools_param,  # type: ignore[arg-type]
+                        tool_choice="auto",
+                        stream=True,
+                    ),
+                )
+        except openai.APIError as e:
+            raise TalkerError(
+                provider=self._config.provider,
+                model=self._model,
+                reason=str(e),
+            ) from e
+
+        # Accumulators for the in-flight stream:
+        # - full_text: concatenation of every text delta (for the
+        #   end-of-stream INFO log only; deltas are yielded directly
+        #   to the consumer as they arrive).
+        # - tool_call_buffers: openai's tool_calls stream as deltas
+        #   indexed by ``index``. Each delta may carry partial
+        #   ``id``, ``function.name``, or ``function.arguments``
+        #   strings; we accumulate per-index and parse JSON at the end.
+        full_text_parts: list[str] = []
+        # Map index → {"id": str, "name": str, "arguments_str": str}.
+        tool_call_buffers: dict[int, dict[str, str]] = {}
+
+        try:
+            # ``stream_any`` typed as Any; each chunk's shape is
+            # ``ChatCompletionChunk`` but openai's streaming overload
+            # is hard for pyright to resolve. Cast each chunk to Any
+            # at access time and use defensive ``getattr`` for fields
+            # whose presence varies by provider (Groq's tool-call
+            # streaming differs slightly from OpenAI's).
+            async for chunk in stream_any:  # pyright: ignore[reportUnknownVariableType]
+                if not chunk.choices:
+                    continue
+                delta: Any = chunk.choices[0].delta
+                # Text delta — yield immediately so the consumer can
+                # start speaking once a sentence forms.
+                content = getattr(delta, "content", None)
+                if content:
+                    full_text_parts.append(content)
+                    yield TalkerTextDelta(text=content)
+                # Tool-call delta — accumulate per index. openai's
+                # streaming format sends ``id`` once (on the first
+                # delta for a given index) and ``arguments`` as
+                # multiple JSON-string fragments that concatenate.
+                tc_deltas: list[Any] = getattr(delta, "tool_calls", None) or []
+                for tc_delta in tc_deltas:
+                    idx: int = getattr(tc_delta, "index", 0)
+                    buf = tool_call_buffers.setdefault(
+                        idx,
+                        {"id": "", "name": "", "arguments_str": ""},
+                    )
+                    if getattr(tc_delta, "id", None):
+                        buf["id"] = str(tc_delta.id)
+                    fn: Any = getattr(tc_delta, "function", None)
+                    if fn is not None:
+                        if getattr(fn, "name", None):
+                            buf["name"] = str(fn.name)
+                        args_part = getattr(fn, "arguments", None)
+                        if args_part:
+                            buf["arguments_str"] += str(args_part)
+        except openai.APIError as e:
+            raise TalkerError(
+                provider=self._config.provider,
+                model=self._model,
+                reason=str(e),
+            ) from e
+
+        # Parse the accumulated tool-call buffers into ToolCall
+        # instances. JSON parse errors drop the specific tool call
+        # (mirrors complete_with_tools) — bad arguments shouldn't
+        # kill the turn's text.
+        parsed_tool_calls: list[ToolCall] = []
+        for idx in sorted(tool_call_buffers.keys()):
+            buf = tool_call_buffers[idx]
+            if not buf["name"]:
+                # Defensive — shouldn't happen with a well-formed
+                # stream. Skip empty entries.
+                continue
+            args_str = buf["arguments_str"]
+            try:
+                arguments: dict[str, Any] = json.loads(args_str) if args_str else {}
+            except json.JSONDecodeError:
+                log.warning(
+                    "talker.tool_call_invalid_json",
+                    tool=buf["name"],
+                    raw_length=len(args_str),
+                )
+                continue
+            parsed_tool_calls.append(
+                ToolCall(
+                    id=buf["id"] or f"streaming-{idx}",
+                    name=buf["name"],
+                    arguments=arguments,
+                ),
+            )
+
+        # End-of-stream observability log. No ``usage`` block on
+        # streaming responses (openai sometimes provides it on the
+        # final chunk; we just log what we know).
+        full_text = "".join(full_text_parts)
+        log.info(
+            "talker.completion_streaming",
+            provider=self._config.provider,
+            model=self._model,
+            tool_call_count=len(parsed_tool_calls),
+            # Same Story 2.5 deviation as the non-streaming variant
+            # — operator-visible prompt + response at INFO.
+            prompt=prompt,
+            response=full_text,
+        )
+
+        yield TalkerStreamEnd(tool_calls=parsed_tool_calls)

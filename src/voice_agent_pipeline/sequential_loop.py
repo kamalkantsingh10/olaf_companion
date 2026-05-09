@@ -59,6 +59,8 @@ from voice_agent_pipeline.publisher import build_publisher
 from voice_agent_pipeline.stt import build_stt_backend
 from voice_agent_pipeline.tts.cartesia import CartesiaClient
 from voice_agent_pipeline.turn import build_talker, build_tool_registry
+from voice_agent_pipeline.turn.talker import Talker, TalkerTextDelta
+from voice_agent_pipeline.turn.tools import ToolCall, ToolRegistry
 
 log = structlog.get_logger(__name__)
 
@@ -193,47 +195,52 @@ async def run_sequential_loop(config: SetupConfig) -> None:
 
                 # Low-confidence: clarification short-circuit. No LLM
                 # round-trip — just pick a canned phrase and play it.
+                # No streaming needed; the phrase is already a single
+                # short sentence.
                 if stt_result.confidence < config.stt.low_confidence_threshold:
-                    text_to_speak = random.choice(  # noqa: S311 — UX, not security
+                    clarification_text = random.choice(  # noqa: S311
                         config.stt.clarification_prompts,
                     )
-                    log.info(
-                        "clarification.picked",
-                        text=text_to_speak,
-                    )
-                    tool_calls: list[Any] = []
-                else:
-                    # Normal turn: Talker with tools.
-                    response = await talker.complete_with_tools(
-                        stt_result.text,
-                        tool_registry,
-                    )
-                    log.info(
-                        "talker.responded",
-                        clarification=False,
-                        tool_call_count=len(response.tool_calls),
-                    )
-                    text_to_speak = response.text
-                    tool_calls = list(response.tool_calls)
+                    log.info("clarification.picked", text=clarification_text)
+                    await fsm.on_first_audio_frame()
+                    await _speak(pa, indices, tts, clarification_text)
+                    await fsm.on_last_audio_frame()
+                    if fsm.current_state == "sleeping":
+                        log.info("sequential_loop.sleeping")
+                        break
+                    continue
 
-                # Dispatch tool calls BEFORE speaking. In streaming
-                # mode FR45/FR46 demanded text-first parallel dispatch
-                # so audio frames weren't blocked. In half-duplex
-                # mode the user can't hear anything until ``_speak``
-                # finishes anyway, so the dispatch order doesn't
-                # affect the user-perceived "text first" property.
-                # Sequential dispatch is simpler. ``go_to_sleep`` just
-                # sets ``sleep_pending``; ``set_mood`` publishes a
-                # mood event — both fast.
+                # Normal turn: stream Talker tokens, segment into
+                # sentences, fire Cartesia per sentence so playback
+                # starts as soon as the FIRST sentence is ready (LLM
+                # is usually still emitting later sentences when
+                # we're playing the first one). FSM working→speaking
+                # transition fires JUST before the first sentence's
+                # audio starts to land — see ``_stream_and_speak``
+                # for the timing.
+                tool_calls = await _stream_and_speak(
+                    pa,
+                    indices,
+                    tts,
+                    talker,
+                    tool_registry,
+                    stt_result.text,
+                    fsm,
+                )
+
+                # Dispatch tool calls AFTER speech finishes. In half-
+                # duplex mode the user can't hear anything until the
+                # speak completes anyway, so the dispatch order
+                # doesn't affect text-first UX. ``go_to_sleep`` just
+                # sets ``sleep_pending`` (consumed by
+                # on_last_audio_frame below); ``set_mood`` publishes
+                # the mood event.
                 for tc in tool_calls:
                     try:
                         await tool_registry.dispatch(tc)
                     except Exception:
                         log.exception("tool.dispatch_error")
 
-                # Bot replies (working → speaking).
-                await fsm.on_first_audio_frame()
-                await _speak(pa, indices, tts, text_to_speak)
                 # Bot finishes (speaking → listening, OR via deferred-
                 # sleep chain → going_to_sleep → sleeping if a
                 # ``go_to_sleep`` tool call set ``sleep_pending``).
@@ -398,6 +405,129 @@ async def _record_with_vad(
     finally:
         stream.stop_stream()
         stream.close()
+
+
+# Sentence-boundary detector. Greedy: returns the longest prefix of
+# ``buffer`` that ends in a sentence-final punctuation followed by a
+# space, plus the trailing space. Returns ``None`` if no complete
+# sentence yet (caller waits for more tokens).
+#
+# Decimal numbers ("3.14") and abbreviations ("U.S.") could in
+# principle be mis-split, but Talker replies in the v1 register are
+# short conversational sentences — the simple heuristic is good
+# enough. If we see real-world false splits, a smarter splitter
+# (e.g. spaCy's sentence segmenter) lands as a follow-up.
+_SENTENCE_END_CHARS = ".!?"
+
+
+def _extract_sentence(buffer: str) -> str | None:
+    """Return a complete sentence + trailing whitespace, or ``None``."""
+    # Walk backwards from the end, looking for a sentence-final
+    # punctuation that's followed by whitespace (or end-of-buffer
+    # AND the LLM finished — but we don't know that here, so trailing
+    # punct without space waits for more).
+    for i, ch in enumerate(buffer):
+        if ch in _SENTENCE_END_CHARS:
+            # Look ahead: is the NEXT char whitespace?
+            if i + 1 < len(buffer) and buffer[i + 1].isspace():
+                # Sentence ends at i; include the trailing space.
+                return buffer[: i + 2]
+    return None
+
+
+async def _stream_and_speak(
+    pa: pyaudio.PyAudio,
+    indices: Any,
+    tts: CartesiaClient,
+    talker: Talker,
+    tool_registry: ToolRegistry,
+    prompt: str,
+    fsm: ActivityFSM,
+) -> list[ToolCall]:
+    """Stream Talker tokens; speak each sentence as it forms.
+
+    Token-streaming for snappier perceived latency (the canonical
+    voice-AI win): we don't wait for the full LLM response before
+    starting Cartesia. As tokens arrive, we accumulate; whenever a
+    complete sentence forms (text up to ``[.!?]`` + space), we send
+    that sentence to Cartesia and start playing while the LLM is
+    still emitting later sentences.
+
+    The bot's ``working → speaking`` FSM transition fires just before
+    the FIRST sentence's audio starts — that's when the user starts
+    hearing anything. Subsequent sentences play continuously into
+    the same PyAudio output stream.
+
+    Returns the accumulated tool calls so the caller can dispatch
+    them post-speech (matches the half-duplex ordering — speech
+    completes, then tool side effects fire).
+    """
+    # Open ONE output stream for the whole reply. Each sentence's
+    # Cartesia chunks write into this stream sequentially. PyAudio's
+    # blocking write naturally rate-limits us to playback speed.
+    with suppress_native_stderr():
+        out_stream = pa.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=_SAMPLE_RATE,
+            output=True,
+            output_device_index=indices.output_index,
+        )
+
+    text_buffer = ""
+    tool_calls: list[ToolCall] = []
+    fsm_speaking_fired = False
+
+    async def _speak_sentence(sentence: str) -> None:
+        """Synthesize ONE sentence via Cartesia; write chunks to out_stream."""
+        nonlocal fsm_speaking_fired
+        if not sentence.strip():
+            return
+        # Fire the FSM transition right before the first sentence's
+        # first chunk lands — that's the "user hears the bot" moment.
+        if not fsm_speaking_fired:
+            await fsm.on_first_audio_frame()
+            fsm_speaking_fired = True
+        log.info("tts.sentence_speak", text=sentence.strip())
+        async for chunk in tts.synthesize(sentence):
+            await asyncio.to_thread(out_stream.write, chunk)
+
+    try:
+        async for event in talker.complete_with_tools_streaming(prompt, tool_registry):
+            if isinstance(event, TalkerTextDelta):
+                text_buffer += event.text
+                # Drain complete sentences as they form. The while
+                # loop handles the case where one delta finishes
+                # multiple short sentences in one go.
+                while (sentence := _extract_sentence(text_buffer)) is not None:
+                    text_buffer = text_buffer[len(sentence) :]
+                    await _speak_sentence(sentence)
+            else:
+                # Discriminated union: only TalkerStreamEnd remains
+                # after the TalkerTextDelta branch above. Pyright
+                # narrows this without the explicit isinstance check.
+                tool_calls = list(event.tool_calls)
+
+        # Stream finished. Speak any leftover buffered text — the
+        # final sentence often lacks a trailing space (LLM's last
+        # token).
+        if text_buffer.strip():
+            await _speak_sentence(text_buffer)
+
+        # If the LLM produced no text at all (tool-call-only reply),
+        # we never fired ``on_first_audio_frame``. Fire it now so the
+        # FSM still advances to ``speaking`` and the caller's
+        # ``on_last_audio_frame`` lands cleanly.
+        if not fsm_speaking_fired:
+            await fsm.on_first_audio_frame()
+
+        # Trailing drain — let the OS finish playing buffered audio.
+        await asyncio.sleep(_AUDIO_DRAIN_TAIL_MS / 1000)
+    finally:
+        out_stream.stop_stream()
+        out_stream.close()
+
+    return tool_calls
 
 
 async def _speak(
