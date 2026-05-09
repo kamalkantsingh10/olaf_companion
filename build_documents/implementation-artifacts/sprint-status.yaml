@@ -98,7 +98,7 @@ development_status:
   4-3-activity-fsm-core: review
   4-4-talker-tool-using-upgrade: review
   4-5-wake-greeting: review
-  4-6-mic-mode-flip: ready-for-dev
+  4-6-mic-mode-flip: review
   4-7-turn-router-slow-path-and-complex-turn: ready-for-dev
   epic-4-retrospective: optional
 

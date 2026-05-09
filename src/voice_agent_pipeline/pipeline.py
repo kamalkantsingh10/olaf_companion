@@ -57,9 +57,10 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voice_agent_pipeline.activity.greeting import trigger_greeting
-from voice_agent_pipeline.activity.machine import ActivityFSM
+from voice_agent_pipeline.activity.machine import ActivityFSM, MicMode
 from voice_agent_pipeline.audio._silence import suppress_native_stderr
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
+from voice_agent_pipeline.audio.mic_mode import MicModeRouter
 from voice_agent_pipeline.audio.transport import build_audio_transport
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame, WakewordProcessor
@@ -993,12 +994,48 @@ async def run_pipeline(
         # BEFORE the pipeline starts (start() publishes the initial
         # ``starting → sleeping`` transition + first ``wake_word_only``
         # mic-mode signal). Story 4.5 wires the wake-greeting callback
-        # here; Story 4.6 will subscribe to mic_mode_queue.
+        # here; Story 4.6 wires the MicModeRouter to the mic_mode_queue.
         activity_fsm = ActivityFSM(
             publisher=event_publisher,
             on_sleeping_to_waking=_on_sleeping_to_waking,
         )
         await activity_fsm.start()
+
+        # Story 4.6: mic-mode router. Sits before WakewordProcessor in
+        # the pipeline, stamps each AudioRawFrame with the current
+        # mode. Wakeword and VAD downstream check the stamp to gate
+        # their own processing (FR47 single-stream invariant).
+        mic_mode_router = MicModeRouter(activity_fsm.mic_mode_queue)
+
+        # Story 4.6: buffer-clear orchestrator. Fired by the router on
+        # every real mode transition. Receives ``(old_mode, new_mode)``
+        # so it can be specific:
+        #
+        # - wake_word_only → vad_stt: Porcupine's rolling buffer is
+        #   cleared (defensive — prevents stale post-wake bytes from
+        #   being interpreted as a fresh wake check next time we
+        #   re-enter wake_word_only). VAD's in-flight state is reset
+        #   (the next WakeWordDetectedFrame sets _active anyway).
+        # - vad_stt → wake_word_only: VAD's in-flight state dropped
+        #   (any partial utterance from before the deferred-sleep
+        #   transition is no longer relevant). Porcupine re-engages
+        #   automatically because subsequent frames will be stamped
+        #   "wake_word_only".
+        #
+        # STT is stateless between utterances (it processes one
+        # ``UtteranceCapturedFrame`` at a time); no reset_state call
+        # is needed.
+        async def _on_mic_mode_change(old: MicMode, new: MicMode) -> None:
+            log.info(
+                "mic_mode.buffer_cleared",
+                from_mode=old,
+                to_mode=new,
+                processors_reset=["wakeword", "vad"],
+            )
+            wakeword.clear_buffer()
+            vad.reset_state()
+
+        mic_mode_router.set_on_mode_change(_on_mic_mode_change)
 
         # Story 4.4: Talker tool registry — single construction site.
         # Captures the FSM and mood_controller references into closures
@@ -1021,6 +1058,10 @@ async def run_pipeline(
         pipeline = Pipeline(
             [
                 transport.input(),
+                # Story 4.6: stamps every AudioRawFrame with the active
+                # mic_mode so wakeword + vad can self-gate. Must run
+                # BEFORE wakeword in the chain.
+                mic_mode_router,
                 wakeword,
                 vad,
                 SttProcessor(stt_backend),

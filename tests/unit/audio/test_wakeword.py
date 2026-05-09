@@ -19,6 +19,7 @@ from pipecat.processors.frame_processor import FrameDirection
 from pydantic import SecretStr
 
 from voice_agent_pipeline.audio import wakeword as wakeword_mod
+from voice_agent_pipeline.audio.mic_mode import _ModeStampedAudioFrame
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame, WakewordProcessor
 
 
@@ -128,7 +129,15 @@ async def _send_audio_chunk(
     processor.push_frame = _collect  # type: ignore[assignment]
 
     audio_bytes = bytes(byte_count)  # all-zero PCM is fine for buffer math.
-    audio_frame = AudioRawFrame(audio=audio_bytes, sample_rate=16000, num_channels=1)
+    # Story 4.6: WakewordProcessor now gates on _ModeStampedAudioFrame
+    # with mic_mode == "wake_word_only". Production stamping is done
+    # by MicModeRouter; tests stamp directly here to skip that layer.
+    audio_frame = _ModeStampedAudioFrame(
+        audio=audio_bytes,
+        sample_rate=16000,
+        num_channels=1,
+        mic_mode="wake_word_only",
+    )
     await processor.process_frame(audio_frame, FrameDirection.DOWNSTREAM)
     return pushed
 

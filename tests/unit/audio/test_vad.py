@@ -14,6 +14,7 @@ from pipecat.frames.frames import AudioRawFrame, Frame
 from pipecat.processors.frame_processor import FrameDirection
 
 from voice_agent_pipeline.audio import vad as vad_mod
+from voice_agent_pipeline.audio.mic_mode import _ModeStampedAudioFrame
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame, VadProcessor
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame
 from voice_agent_pipeline.config.setup import VadConfig
@@ -86,9 +87,18 @@ async def _setup_processor(fake_silero: _FakeSileroAnalyzer) -> VadProcessor:
     return processor
 
 
-def _audio_frame(byte_count: int) -> AudioRawFrame:
-    """Build an AudioRawFrame containing ``byte_count`` zero bytes."""
-    return AudioRawFrame(audio=bytes(byte_count), sample_rate=16000, num_channels=1)
+def _audio_frame(byte_count: int) -> _ModeStampedAudioFrame:
+    """Build a stamped audio frame containing ``byte_count`` zero bytes.
+
+    Story 4.6: VAD gates on ``_ModeStampedAudioFrame.mic_mode ==
+    "vad_stt"``. Tests stamp directly to skip the MicModeRouter.
+    """
+    return _ModeStampedAudioFrame(
+        audio=bytes(byte_count),
+        sample_rate=16000,
+        num_channels=1,
+        mic_mode="vad_stt",
+    )
 
 
 def _wake_frame() -> WakeWordDetectedFrame:

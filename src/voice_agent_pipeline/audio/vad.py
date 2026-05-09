@@ -29,13 +29,14 @@ from dataclasses import dataclass, field
 import structlog
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import Frame
 from pipecat.processors.frame_processor import (
     FrameDirection,
     FrameProcessor,
     FrameProcessorSetup,
 )
 
+from voice_agent_pipeline.audio.mic_mode import _ModeStampedAudioFrame
 from voice_agent_pipeline.audio.wakeword import WakeWordDetectedFrame
 from voice_agent_pipeline.config.setup import VadConfig
 
@@ -146,7 +147,16 @@ class VadProcessor(FrameProcessor):
 
         if isinstance(frame, WakeWordDetectedFrame):
             self._activate(frame.timestamp_ns)
-        elif isinstance(frame, AudioRawFrame) and self._active and self._silero is not None:
+        elif (
+            isinstance(frame, _ModeStampedAudioFrame)
+            and frame.mic_mode == "vad_stt"
+            and self._active
+            and self._silero is not None
+        ):
+            # Story 4.6: gate on mic_mode stamp. VAD only processes
+            # audio when the active mode is ``"vad_stt"`` — in
+            # ``"wake_word_only"`` the frames flow through but VAD is
+            # skipped, enforcing FR47's single-stream invariant.
             self._consume_audio(frame.audio, direction)
             # Check for end-of-utterance after each frame's worth of chunks.
             await self._maybe_emit_utterance(direction)
@@ -155,6 +165,24 @@ class VadProcessor(FrameProcessor):
         # frames are still useful to other processors (e.g. Story 5.1's
         # barge-in detector).
         await self.push_frame(frame, direction)
+
+    def reset_state(self) -> None:
+        """Drop in-flight VAD buffers + flags (Story 4.6).
+
+        Called by the mic-mode-change orchestrator on transitions in
+        either direction. Clears any partially-buffered utterance,
+        VAD chunk buffer, silence counter, and speech-seen flag.
+
+        **Does NOT** touch ``_active`` — that's owned by the
+        wake-word path (the next :class:`WakeWordDetectedFrame` sets
+        it; the deferred-sleep path doesn't need it cleared because
+        the FSM's mic-mode flip is the gate, not ``_active``).
+        """
+        self._utterance_buffer.clear()
+        self._vad_frame_buffer.clear()
+        self._silence_run_ms = 0
+        self._speech_seen = False
+        log.info("vad.state_reset")
 
     def _activate(self, wake_timestamp_ns: int) -> None:
         """Reset state and start collecting an utterance after a wake-word."""

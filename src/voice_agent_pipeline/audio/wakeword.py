@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pvporcupine  # pyright: ignore[reportMissingTypeStubs]
 import structlog
-from pipecat.frames.frames import AudioRawFrame, Frame
+from pipecat.frames.frames import Frame
 from pipecat.processors.frame_processor import (
     FrameDirection,
     FrameProcessor,
@@ -38,6 +38,7 @@ from pipecat.processors.frame_processor import (
 )
 from pydantic import SecretStr
 
+from voice_agent_pipeline.audio.mic_mode import _ModeStampedAudioFrame
 from voice_agent_pipeline.errors import StartupValidationError
 
 log = structlog.get_logger(__name__)
@@ -171,6 +172,18 @@ class WakewordProcessor(FrameProcessor):
             sensitivity=self._sensitivity,
         )
 
+    def clear_buffer(self) -> None:
+        """Drop any pending audio bytes in the rolling Porcupine buffer (Story 4.6).
+
+        Called by the mic-mode-change orchestrator on the
+        ``wake_word_only → vad_stt`` transition. Prevents stale post-
+        wake audio from being interpreted as a fresh wake-word check
+        once we re-enter ``wake_word_only`` later. Sub-microsecond.
+        """
+        prior_bytes = len(self._buffer)
+        self._buffer.clear()
+        log.info("wakeword.buffer_cleared", prior_buffer_bytes=prior_bytes)
+
     async def cleanup(self) -> None:
         """Pipecat lifecycle hook (1.1+) — release Porcupine."""
         # Release Porcupine first so the SDK's native handle goes away
@@ -191,10 +204,20 @@ class WakewordProcessor(FrameProcessor):
         consume them. Wake-word detection results emit as a separate frame
         type (:class:`WakeWordDetectedFrame`) so subscribers don't have to
         peek inside audio frames.
+
+        Story 4.6: gates on :class:`_ModeStampedAudioFrame.mic_mode` —
+        Porcupine processes audio ONLY when the active mode is
+        ``"wake_word_only"``. In ``"vad_stt"`` mode the frames flow
+        through but Porcupine is skipped, enforcing the FR47
+        single-stream invariant at the type level.
         """
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, AudioRawFrame) and self._porcupine is not None:
+        if (
+            isinstance(frame, _ModeStampedAudioFrame)
+            and frame.mic_mode == "wake_word_only"
+            and self._porcupine is not None
+        ):
             # Append new audio to the rolling buffer; consume in
             # frame_byte_size chunks. The buffer never grows unbounded —
             # at 16kHz mono with 512-sample Porcupine frames, one chunk =
