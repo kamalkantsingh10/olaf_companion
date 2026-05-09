@@ -22,6 +22,10 @@ def _config(backend: str = "whisper-cpu", device: str = "cpu") -> SttConfig:
         compute_type="int8",
         device=device,
         low_confidence_threshold=0.5,
+        # Story 4.5: clarification_prompts has no Python default —
+        # tests must provide a non-empty list. Single dummy entry
+        # keeps the validator happy without bloat.
+        clarification_prompts=["huh?"],
     )
 
 

@@ -15,7 +15,14 @@ Re-exports:
   :attr:`ActivityFSM.mic_mode_queue`.
 """
 
+from voice_agent_pipeline.activity.greeting import trigger_greeting
 from voice_agent_pipeline.activity.machine import ActivityFSM, MicMode
 from voice_agent_pipeline.activity.states import ActivityState, WorkingSubmode
 
-__all__ = ["ActivityFSM", "ActivityState", "MicMode", "WorkingSubmode"]
+__all__ = [
+    "ActivityFSM",
+    "ActivityState",
+    "MicMode",
+    "WorkingSubmode",
+    "trigger_greeting",
+]

@@ -56,6 +56,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from voice_agent_pipeline.activity.greeting import trigger_greeting
 from voice_agent_pipeline.activity.machine import ActivityFSM
 from voice_agent_pipeline.audio._silence import suppress_native_stderr
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
@@ -589,6 +590,60 @@ class CartesiaSynthesisProcessor(FrameProcessor):
         )
 
 
+class _GreetingInjectorProcessor(FrameProcessor):
+    """Pushes wake-greeting :class:`TalkerResponseFrame` into the splitter chain (Story 4.5).
+
+    The wake greeting flows through the *same* downstream path as a
+    Talker reply: splitter → Cartesia → speaker. But the trigger is
+    different — it fires from the FSM's ``sleeping → waking``
+    transition, not from a transcript. This processor is the
+    injection seam.
+
+    Mechanism:
+
+    1. ``process_frame`` records the most recent ``direction`` from
+       any frame flowing through (so the injected greeting flows
+       in the same direction as the audio stream).
+    2. The pipeline assembly site stores a reference to this
+       processor and calls :meth:`inject_greeting(text)` from the
+       FSM's ``on_sleeping_to_waking`` callback. The injected frame
+       is pushed downstream from this processor — the
+       :class:`SegmenterProcessor` and downstream Cartesia stage
+       see it and synthesize the audio.
+
+    Why a dedicated processor rather than reusing
+    :class:`TurnDispatchProcessor`: the dispatcher's contract is
+    "consume TranscriptFrame → produce TalkerResponseFrame". The
+    greeting has no transcript and no Talker call. Two seams keeps
+    each processor single-purpose.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()  # pyright: ignore[reportUnknownMemberType]
+        # Store the most recent direction so injected frames flow the
+        # right way. Defaults to DOWNSTREAM (the normal speaker-bound
+        # direction) for the case where ``inject_greeting`` is called
+        # before any frame has been processed (e.g., very-first wake
+        # right after pipeline start).
+        self._direction: FrameDirection = FrameDirection.DOWNSTREAM
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Pipecat hook — track direction; pass everything through unchanged."""
+        await super().process_frame(frame, direction)
+        self._direction = direction
+        await self.push_frame(frame, direction)
+
+    async def inject_greeting(self, text: str) -> None:
+        """Push a :class:`TalkerResponseFrame` carrying the greeting text.
+
+        Called from the FSM's ``on_sleeping_to_waking`` callback (a
+        background task). The pushed frame travels downstream just like
+        a Talker reply — segmenter → Cartesia → speaker.
+        """
+        log.info("greeting.injected", text=text)
+        await self.push_frame(TalkerResponseFrame(text=text), self._direction)
+
+
 class _PrePublishProcessor(FrameProcessor):
     """Publishes embodiment events before each :class:`EmbodimentAudioFrame` is sent.
 
@@ -915,13 +970,34 @@ async def run_pipeline(
         )
         await mood_controller.publish_initial()
 
+        # Story 4.5: wake-greeting injector. Sits in the pipeline AFTER
+        # the dispatcher (so it inherits the dispatcher's downstream
+        # direction) and BEFORE the segmenter (so injected greetings
+        # flow through the same SSML splitter + Cartesia path as Talker
+        # replies). The FSM's ``on_sleeping_to_waking`` callback (built
+        # below) calls ``greeting_injector.inject_greeting(text)``.
+        greeting_injector = _GreetingInjectorProcessor()
+
+        # Story 4.5: greeting closure. Captures ``mood_controller``
+        # (current-mood read), ``config.greeting.greetings_by_mood``
+        # (the bucket lookup), and ``greeting_injector`` (the push-
+        # frame seam). Sub-millisecond — no LLM, no I/O. Logged via
+        # ``trigger_greeting``'s own ``greeting.picked`` event.
+        async def _on_sleeping_to_waking() -> None:
+            mood = mood_state.current
+            text = trigger_greeting(mood, config.greeting.greetings_by_mood)
+            await greeting_injector.inject_greeting(text)
+
         # Story 4.3: activity FSM. Constructed AFTER the publisher
         # connects (FSM transitions publish via event_publisher) and
         # BEFORE the pipeline starts (start() publishes the initial
         # ``starting → sleeping`` transition + first ``wake_word_only``
-        # mic-mode signal). Story 4.5 will inject the wake-greeting
-        # callback here; Story 4.6 will subscribe to mic_mode_queue.
-        activity_fsm = ActivityFSM(publisher=event_publisher)
+        # mic-mode signal). Story 4.5 wires the wake-greeting callback
+        # here; Story 4.6 will subscribe to mic_mode_queue.
+        activity_fsm = ActivityFSM(
+            publisher=event_publisher,
+            on_sleeping_to_waking=_on_sleeping_to_waking,
+        )
         await activity_fsm.start()
 
         # Story 4.4: Talker tool registry — single construction site.
@@ -957,6 +1033,11 @@ async def run_pipeline(
                 # tool-call responses. Text-first ordering (FR45/46)
                 # is enforced inside the processor itself.
                 TurnDispatchProcessor(router, tool_registry),
+                # Story 4.5: greeting injector. Pushes
+                # ``TalkerResponseFrame`` for wake greetings into the
+                # same downstream path as Talker replies. The injected
+                # frame flows into ``SegmenterProcessor`` next.
+                greeting_injector,
                 # Story 3.7: SegmenterProcessor consumes TalkerResponseFrame
                 # and emits SegmentFrame per boundary.
                 segmenter_processor,

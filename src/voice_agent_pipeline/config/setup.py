@@ -37,9 +37,17 @@ What this module deliberately does **not** do:
 import logging
 import tomllib
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_agent_pipeline.config.version import assert_schema_version
@@ -254,13 +262,20 @@ class SttConfig(BaseModel):
             value emit an additional ``stt.low_confidence`` WARN log,
             and (Story 2.4 onward) trigger a clarification prompt.
             ``exp(avg_logprob)`` units; 0.5 is conservative.
-        clarification_prompt: What the Talker says back when STT
-            confidence is below ``low_confidence_threshold``. Story 2.4's
-            TurnRouter substitutes this string for the user's
-            (low-confidence) transcript when routing to Talker, so the
-            response is a clarifying question rather than the model
-            guessing at the noisy text. Stays in ``[stt]`` because the
-            threshold lives there too — they're a pair.
+        clarification_prompts: List of operator-authored static strings
+            used when STT confidence is below
+            ``low_confidence_threshold``. Story 4.5 replaces Story 2.4's
+            singular ``clarification_prompt`` with this list — picked
+            at random per turn for variety. Story 3.7's `cdf3618`
+            short-circuit emits the picked phrase verbatim as a
+            ``TalkerResponseFrame`` (no LLM round-trip; same emission
+            path as before, just a different string each time).
+
+            Source-of-truth (2026-05-08): the actual strings live in
+            ``setup.toml`` under ``[stt] clarification_prompts``, NOT
+            as a Python constant. Defaults to ``[]`` so a missing TOML
+            entry fails the model_validator with a clear startup
+            error rather than silently using hidden Python defaults.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -270,7 +285,24 @@ class SttConfig(BaseModel):
     compute_type: str = "int8"
     device: str = "auto"
     low_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-    clarification_prompt: str = "Sorry, I didn't catch that — could you say it again?"
+    clarification_prompts: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_clarification_prompts_non_empty(self) -> "SttConfig":
+        """Reject ``clarification_prompts = []`` — ``random.choice`` would crash.
+
+        The strings live in ``setup.toml`` (no Python defaults). An
+        empty list at startup means the operator didn't populate the
+        ``[stt] clarification_prompts`` block; raising here catches
+        that before it manifests as a ``random.choice`` ``IndexError``
+        on the first low-confidence turn.
+        """
+        if len(self.clarification_prompts) == 0:
+            raise ValueError(
+                "stt.clarification_prompts must contain at least one entry. "
+                "Populate the [stt] clarification_prompts list in setup.toml.",
+            )
+        return self
 
 
 class TtsConfig(BaseModel):
@@ -444,6 +476,74 @@ class DaemonConfig(BaseModel):
         return v.rstrip("/")
 
 
+class GreetingConfig(BaseModel):
+    """Per-mood wake-greeting bucket lists (Story 4.5).
+
+    The wake greeting fires automatically on every ``sleeping →
+    waking`` FSM transition. The 2026-05-07 redesign replaced the
+    earlier Talker-driven approach (LLM call + 800ms timeout +
+    word-count gate + fallback list) with a static random pick from
+    per-mood bucket lists. Trade-off: lose LLM novelty per call;
+    gain zero per-call latency, zero cost, zero hallucination risk,
+    zero "LLM treated my prompt as a question" failure mode (Story
+    3.7's `cdf3618` had to work around the same class of bug for
+    clarification).
+
+    The :func:`trigger_greeting` function in
+    :mod:`voice_agent_pipeline.activity.greeting` reads from this
+    dict at runtime — no caching, no preprocessing.
+
+    Source-of-truth design (2026-05-08): the actual greeting strings
+    live in ``setup.toml`` under ``[greeting.greetings_by_mood]``,
+    NOT as a Python constant. This keeps operator-tunable text in
+    the config file where operators expect it, and removes data
+    duplication. The committed ``setup.toml`` ships with starter
+    lists (~10 entries per mood) so the project works out of the
+    box; operators expand to 30-40 over time.
+
+    Validation:
+
+    - The :class:`model_validator` asserts every value in the
+      :data:`Mood` Literal has at least one entry. Missing moods or
+      empty buckets raise :class:`ConfigError` at startup so
+      operators don't hit a silent fallback in production.
+    - pydantic's ``dict[Mood, list[str]]`` annotation rejects keys
+      that aren't in the :data:`Mood` Literal — typos like
+      ``"ecstatic"`` fail loudly at parse time.
+
+    Attributes:
+        greetings_by_mood: Mapping of mood → list of greeting
+            strings. Defaults to an empty dict so a missing TOML
+            block fails the model_validator with a clear error
+            (rather than silently using hidden Python defaults).
+            Operators populate via ``setup.toml``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Annotated empty-dict default. Explicit annotation here lets
+    # pyright resolve ``greetings_by_mood``'s type as
+    # ``dict[Mood, list[str]]`` rather than ``dict[Unknown, Unknown]``
+    # (which is what ``Field(default_factory=dict)`` infers).
+    greetings_by_mood: dict[Mood, list[str]] = Field(
+        default_factory=lambda: dict[Mood, list[str]](),
+    )
+
+    @model_validator(mode="after")
+    def _validate_all_moods_have_entries(self) -> "GreetingConfig":
+        """Every :data:`Mood` Literal value must have ≥1 greeting."""
+        all_moods = set(get_args(Mood))
+        present = {m for m, entries in self.greetings_by_mood.items() if entries}
+        missing = all_moods - present
+        if missing:
+            raise ValueError(
+                f"greeting.greetings_by_mood missing or empty entries for mood(s): "
+                f"{sorted(missing)}. Populate them under [greeting.greetings_by_mood] "
+                f"in setup.toml.",
+            )
+        return self
+
+
 class ToolsConfig(BaseModel):
     """Toggle Talker's individual tools on/off (Story 4.4).
 
@@ -537,6 +637,10 @@ class SetupConfig(BaseSettings):
     # (both tools enabled). Operators disable individual tools to remove
     # them from the LLM's openai-tools surface.
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    # Story 4.5: wake-greeting buckets. Required at startup —
+    # the model_validator catches missing/empty mood buckets. The
+    # actual strings live in setup.toml, not in Python defaults.
+    greeting: GreetingConfig = Field(default_factory=GreetingConfig)
     # Story 4.1: orchestrator daemon endpoint. Optional with defaults
     # (localhost:8001). Story 4.1 wires the BeliefStateClient against
     # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer

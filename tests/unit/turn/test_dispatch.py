@@ -40,7 +40,7 @@ from voice_agent_pipeline.turn.tools import ToolRegistry
 
 @pytest.fixture
 def stt_config() -> SttConfig:
-    return SttConfig(low_confidence_threshold=0.5, clarification_prompt="please repeat?")
+    return SttConfig(low_confidence_threshold=0.5, clarification_prompts=["please repeat?"])
 
 
 @pytest.fixture

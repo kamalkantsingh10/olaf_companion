@@ -44,7 +44,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-08  # Story 4.4 in-progress (Amelia / bmad-dev-story)
+last_updated: 2026-05-08  # Stories 4.4 + 4.5 → review (Amelia / bmad-dev-story)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -97,7 +97,7 @@ development_status:
   4-2-orchestrator-client-sse: review
   4-3-activity-fsm-core: review
   4-4-talker-tool-using-upgrade: review
-  4-5-wake-greeting: ready-for-dev
+  4-5-wake-greeting: review
   4-6-mic-mode-flip: ready-for-dev
   4-7-turn-router-slow-path-and-complex-turn: ready-for-dev
   epic-4-retrospective: optional

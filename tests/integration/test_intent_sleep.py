@@ -88,7 +88,10 @@ async def test_intent_sleep_text_emits_before_sleep_pending_flips() -> None:
 
     mock_talker.complete_with_tools = _complete_with_tools
 
-    stt_config = SttConfig(low_confidence_threshold=0.5, clarification_prompt="please repeat?")
+    stt_config = SttConfig(
+        low_confidence_threshold=0.5,
+        clarification_prompts=["please repeat?"],
+    )
     router = TurnRouter(stt_config, mock_talker)
     dispatcher = TurnDispatchProcessor(router, registry)
 

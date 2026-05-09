@@ -22,13 +22,17 @@ in :class:`TurnDispatchProcessor` (in ``pipeline.py``). Splitting
 single-purpose.
 """
 
+import random
 from typing import Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from voice_agent_pipeline.config.setup import SttConfig
 from voice_agent_pipeline.turn.orchestrator import OrchestratorClient
 from voice_agent_pipeline.turn.talker import TalkerClient
+
+log = structlog.get_logger(__name__)
 
 
 class RouteDecision(BaseModel):
@@ -48,10 +52,11 @@ class RouteDecision(BaseModel):
             type-checks cleanly).
         text: What the target should consume. For high-confidence
             transcripts this is the user's verbatim text. For
-            low-confidence, this is :attr:`SttConfig.clarification_prompt`
-            substituted in — the user's noisy text is dropped on the
-            floor (the clarifying-question reply is more useful than
-            a guess).
+            low-confidence, this is one entry picked at random from
+            :attr:`SttConfig.clarification_prompts` (Story 4.5) —
+            the user's noisy text is dropped on the floor and the
+            clarification phrase plays directly via Story 3.7's
+            short-circuit (no LLM round-trip).
         clarification: ``True`` when this is a clarification dialog —
             lets downstream logging distinguish clarification turns
             without re-checking the confidence value.
@@ -89,7 +94,12 @@ class TurnRouter:
         orchestrator: OrchestratorClient | None = None,
     ) -> None:
         self._threshold = stt_config.low_confidence_threshold
-        self._clarification_prompt = stt_config.clarification_prompt
+        # Story 4.5: list of static clarification phrases — picked
+        # at random per low-confidence turn. The list is non-empty
+        # by SttConfig's model_validator, so random.choice never
+        # fails on []. The actual strings live in setup.toml under
+        # ``[stt] clarification_prompts``.
+        self._clarification_prompts = stt_config.clarification_prompts
         # Public attributes (no underscore) — the dispatcher in
         # pipeline.py reads these directly. Wrapping in private +
         # accessor would be ceremony; the dispatcher is in this
@@ -119,11 +129,17 @@ class TurnRouter:
                 text=transcript,
                 clarification=False,
             )
-        # Low-confidence path: drop the noisy text, substitute the
-        # clarification prompt. The Talker responds with a "could you
-        # repeat that?" reply rather than guessing.
+        # Low-confidence path: drop the noisy text, substitute a
+        # randomly-picked clarification phrase. Story 3.7's
+        # short-circuit in TurnDispatchProcessor emits this verbatim
+        # as a TalkerResponseFrame — no LLM round-trip — so the
+        # phrase IS what the user hears.
+        # ruff S311: random.choice is fine here — clarification variety
+        # is UX, not cryptographic. No security boundary.
+        picked = random.choice(self._clarification_prompts)  # noqa: S311
+        log.info("clarification.picked", text=picked)
         return RouteDecision(
             target="talker",
-            text=self._clarification_prompt,
+            text=picked,
             clarification=True,
         )

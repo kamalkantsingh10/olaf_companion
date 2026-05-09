@@ -323,6 +323,9 @@ def test_synthesize_logs_first_frame_ttfb(
 @pytest.fixture
 def setup_config(tmp_path: Path, tts_config: TtsConfig) -> SetupConfig:
     """A SetupConfig good enough for the credentials probe."""
+    # Story 4.5: pass minimal stt + greeting (see tests/conftest.py).
+    from tests._factories import minimal_greeting_config, minimal_stt_config
+
     return SetupConfig.model_construct(
         schema_version=2,
         picovoice_access_key=SecretStr("stub-pico"),
@@ -330,6 +333,8 @@ def setup_config(tmp_path: Path, tts_config: TtsConfig) -> SetupConfig:
         audio=AudioConfig(input_device_name="m", output_device_name="s"),
         wakeword=WakewordConfig(model_path=Path("models/x.ppn")),
         tts=tts_config,
+        stt=minimal_stt_config(),
+        greeting=minimal_greeting_config(),
     )
 
 

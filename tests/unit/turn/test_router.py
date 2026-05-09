@@ -24,7 +24,7 @@ def stt_config() -> SttConfig:
     Pinning the prompt to a recognisable value lets the substitution
     tests assert on identity rather than just "some string".
     """
-    return SttConfig(low_confidence_threshold=0.5, clarification_prompt="please repeat?")
+    return SttConfig(low_confidence_threshold=0.5, clarification_prompts=["please repeat?"])
 
 
 @pytest.fixture
@@ -84,6 +84,38 @@ def test_threshold_boundary_inclusive_at_threshold(
 
     assert decision.clarification is False
     assert decision.text == "hello"
+
+
+def test_low_confidence_picks_random_from_clarification_list(
+    stub_talker: MagicMock,
+) -> None:
+    """Story 4.5: ``decision.text`` is one entry from the configured list."""
+    config = SttConfig(
+        low_confidence_threshold=0.5,
+        clarification_prompts=["alpha", "beta", "gamma"],
+    )
+    router = TurnRouter(config, stub_talker)
+    # Drive several routes; every result should be in the configured list.
+    for _ in range(20):
+        decision = router.route("noisy", confidence=0.2)
+        assert decision.text in {"alpha", "beta", "gamma"}
+        assert decision.clarification is True
+
+
+def test_low_confidence_logs_clarification_picked(
+    stt_config: SttConfig,
+    stub_talker: MagicMock,
+) -> None:
+    """Story 4.5: low-confidence route logs ``clarification.picked`` with text."""
+    import structlog as _structlog
+
+    router = TurnRouter(stt_config, stub_talker)
+    with _structlog.testing.capture_logs() as captured:
+        decision = router.route("noisy", confidence=0.2)
+
+    matching = [r for r in captured if r.get("event") == "clarification.picked"]
+    assert len(matching) == 1
+    assert matching[0].get("text") == decision.text
 
 
 def test_route_decision_is_frozen() -> None:

@@ -16,6 +16,29 @@ import pytest
 from voice_agent_pipeline.config.setup import load_setup_config
 from voice_agent_pipeline.errors import ConfigError, SchemaVersionError
 
+# Story 4.5: greeting block is required at startup (no Python default;
+# canonical strings live in setup.toml). Tests building custom TOMLs
+# append this snippet so the model_validator doesn't trip.
+_GREETING_BLOCK = (
+    "[greeting.greetings_by_mood]\n"
+    'calm = ["hi"]\n'
+    'happy = ["hi!"]\n'
+    'playful = ["yo"]\n'
+    'curious = ["yeah?"]\n'
+    'thoughtful = ["mm"]\n'
+    'sleepy = ["mmh"]\n'
+    'grumpy = ["yeah"]\n'
+    'excited = ["hey!"]\n'
+)
+
+# Story 4.5: stt block is required (clarification_prompts non-empty).
+# Tests that don't define their own [stt] section append this.
+_STT_BLOCK = '[stt]\nclarification_prompts = ["huh?"]\n'
+
+# Combined snippet — most custom-TOML tests use this.
+_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK
+
+
 _VALID_TOML = (
     "schema_version = 2\n"
     "[audio]\n"
@@ -24,10 +47,10 @@ _VALID_TOML = (
     "[wakeword]\n"
     'model_path = "models/wakeword/hey_olaf.ppn"\n'
     "sensitivity = 0.5\n"
-    # Story 2.3: TtsConfig.voice_id is required (no default), so every
-    # test TOML needs a [tts] block; provider tests can override.
+    # Story 2.3: TtsConfig.voice_id is required (no default).
     "[tts]\n"
-    'voice_id = "stub-voice-uuid"\n'
+    'voice_id = "stub-voice-uuid"\n' + _STT_AND_GREETING_BLOCKS
+    # Story 4.5: required stt + greeting blocks.
 )
 
 
@@ -150,7 +173,7 @@ def test_publisher_block_overrides_loaded(tmp_path: Path) -> None:
         'speech_emotion = "/custom/se"\n'
         'vocalization = "/custom/v"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_body)
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_body + _STT_AND_GREETING_BLOCKS)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.publisher.adapter == "log"
     assert config.publisher.dds_domain_id == 7
@@ -176,7 +199,7 @@ def test_publisher_block_unknown_adapter_rejected(tmp_path: Path) -> None:
         "[publisher]\n"
         'adapter = "kafka"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_body)
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_body + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)
 
@@ -200,7 +223,7 @@ def test_wakeword_block_extra_key_rejected(tmp_path: Path) -> None:
         # silently treating it as unrelated metadata.
         'unknown_wakeword_field = "x"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     # Assert the operator-facing message names the offender so they can fix
@@ -226,7 +249,7 @@ def test_wakeword_sensitivity_out_of_range_rejected(tmp_path: Path) -> None:
         # 2.5 is out of [0.0, 1.0] — pydantic should reject.
         "sensitivity = 2.5\n"
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     # Lowercase to be robust against pydantic's preferred capitalization.
@@ -253,7 +276,9 @@ def test_wakeword_sensitivity_default(tmp_path: Path) -> None:
         "[tts]\n"
         'voice_id = "v"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_default)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_default + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.wakeword.sensitivity == 0.5
 
@@ -282,7 +307,7 @@ def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
     bad_toml = (
         'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\nunknown_audio_field = 42\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "unknown_audio_field" in str(exc_info.value)
@@ -291,7 +316,7 @@ def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
 def test_audio_block_missing_input_name_rejected(tmp_path: Path) -> None:
     """Story 1.5 AC #3: `input_device_name` is required."""
     bad_toml = "schema_version = 2\n[audio]\n"
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "input_device_name" in str(exc_info.value)
@@ -327,7 +352,9 @@ def test_talker_block_overrides_loaded(tmp_path: Path) -> None:
     # subset of provider keys are present). CARTESIA is required from
     # Story 2.3 onward.
     env_body = "PICOVOICE_ACCESS_KEY=stub\nGROQ_API_KEY=stub-groq\nCARTESIA_API_KEY=stub-cart\n"
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_talker, env_body=env_body)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_talker + _STT_AND_GREETING_BLOCKS, env_body=env_body
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.talker.provider == "groq"
     assert config.talker.max_tokens == 1024
@@ -359,7 +386,7 @@ def test_talker_max_tokens_must_be_positive(tmp_path: Path) -> None:
         # 0 is non-positive — pydantic should reject.
         "max_tokens = 0\n"
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "max_tokens" in str(exc_info.value).lower()
@@ -377,28 +404,14 @@ def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
         "[talker]\n"
         'unknown_talker_field = "x"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "unknown_talker_field" in str(exc_info.value)
 
 
-def test_stt_clarification_prompt_default(tmp_path: Path) -> None:
-    """Story 2.4: ``[stt] clarification_prompt`` defaults to a sane sorry-please-repeat string.
-
-    Operators with no override should still get a useful clarification
-    dialog when STT confidence drops below threshold. The default is
-    documented so the operator's first install plays nicely.
-    """
-    toml_path, env_path = _write_files(tmp_path)
-    config = load_setup_config(toml_path=toml_path, env_path=env_path)
-    # Default prompt should be conversational and brief — same vibe
-    # the v1 system prompt cultivates ("terse, conversational").
-    assert config.stt.clarification_prompt == "Sorry, I didn't catch that — could you say it again?"
-
-
-def test_stt_clarification_prompt_override(tmp_path: Path) -> None:
-    """Story 2.4: an explicit [stt] clarification_prompt overrides the default."""
+def test_stt_clarification_prompts_explicit_override(tmp_path: Path) -> None:
+    """Story 4.5: ``[stt] clarification_prompts = [...]`` parses correctly."""
     toml_with_clarification = (
         "schema_version = 2\n"
         "[audio]\n"
@@ -407,13 +420,122 @@ def test_stt_clarification_prompt_override(tmp_path: Path) -> None:
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
         "[stt]\n"
-        'clarification_prompt = "Hmm, please repeat that?"\n'
+        'clarification_prompts = ["huh?", "say again?"]\n'
         "[tts]\n"
         'voice_id = "v"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_clarification)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_clarification + _GREETING_BLOCK
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
-    assert config.stt.clarification_prompt == "Hmm, please repeat that?"
+    assert config.stt.clarification_prompts == ["huh?", "say again?"]
+
+
+def test_stt_clarification_prompts_empty_raises(tmp_path: Path) -> None:
+    """Story 4.5: ``clarification_prompts = []`` rejected by the model_validator.
+
+    Empty list would crash ``random.choice`` at the first low-
+    confidence turn; the validator catches it at startup.
+    """
+    toml_with_empty = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[stt]\n"
+        "clarification_prompts = []\n"
+        "[tts]\n"
+        'voice_id = "v"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_empty + _GREETING_BLOCK)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+def test_greeting_defaults_with_valid_toml(tmp_path: Path) -> None:
+    """Story 4.5: ``[greeting.greetings_by_mood]`` from TOML round-trips.
+
+    The starter set ships in setup.toml; tests load it and assert the
+    bucket structure is preserved.
+    """
+    toml_path, env_path = _write_files(tmp_path)  # uses _VALID_TOML
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Every Mood key has at least one entry — the model_validator
+    # would have rejected otherwise.
+    for mood, bucket in config.greeting.greetings_by_mood.items():
+        assert bucket, f"mood {mood!r} has empty bucket"
+
+
+def test_greeting_missing_mood_raises(tmp_path: Path) -> None:
+    """Story 4.5: missing a Mood Literal value → ConfigError from model_validator."""
+    toml_with_missing_mood = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n' + _STT_BLOCK + "[greeting.greetings_by_mood]\n"
+        # Only "calm" — missing the other 7 mood keys.
+        'calm = ["hi"]\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_missing_mood)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Error message should call out at least one missing mood.
+    assert "missing or empty entries" in str(exc_info.value)
+
+
+def test_greeting_extra_mood_key_rejected(tmp_path: Path) -> None:
+    """Story 4.5: ``ecstatic`` (not in Mood Literal) → pydantic key validation rejects."""
+    toml_with_bad_mood = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n' + _STT_BLOCK + "[greeting.greetings_by_mood]\n"
+        'calm = ["hi"]\n'
+        'happy = ["hi!"]\n'
+        'playful = ["yo"]\n'
+        'curious = ["yeah?"]\n'
+        'thoughtful = ["mm"]\n'
+        'sleepy = ["mmh"]\n'
+        'grumpy = ["yeah"]\n'
+        'excited = ["hey!"]\n'
+        'ecstatic = ["yay!"]\n'  # not in Mood Literal
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_mood)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+def test_stt_old_singular_clarification_prompt_rejected(tmp_path: Path) -> None:
+    """Story 4.5: the old singular ``clarification_prompt`` field is gone.
+
+    extra="forbid" catches an operator still using the Story 2.4
+    singular form, surfacing as a ``ConfigError`` so they update.
+    """
+    toml_with_old_field = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[stt]\n"
+        'clarification_prompt = "Hmm, please repeat that?"\n'  # old singular field
+        "[tts]\n"
+        'voice_id = "v"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_old_field + _GREETING_BLOCK)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
 
 
 def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
@@ -433,7 +555,7 @@ def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
         # Note: [tts] block missing entirely.
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "tts" in str(exc_info.value).lower()
@@ -452,7 +574,7 @@ def test_tts_block_extra_key_rejected(tmp_path: Path) -> None:
         'voice_id = "v"\n'
         'unknown_tts_field = "x"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "unknown_tts_field" in str(exc_info.value)
@@ -508,7 +630,7 @@ def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "output_device_name" in str(exc_info.value)
@@ -532,9 +654,21 @@ def test_missing_schema_version_raises(tmp_path: Path) -> None:
 
 def test_extra_key_raises(tmp_path: Path) -> None:
     """An unknown TOML key raises ConfigError naming the offender (extra='forbid')."""
+    # Provide otherwise-valid blocks so the only failure is the
+    # top-level unknown_key — Story 4.5's greeting/stt validators
+    # fire eagerly during default_factory construction, which can
+    # mask the unknown-key error if those blocks are missing.
     toml_path, env_path = _write_files(
         tmp_path,
-        toml_body="schema_version = 2\nunknown_key = 42\n",
+        toml_body=(
+            "schema_version = 2\nunknown_key = 42\n"
+            '[audio]\ninput_device_name = "USB.*Mic.*"\n'
+            'output_device_name = "USB.*Speaker.*"\n'
+            "[wakeword]\n"
+            'model_path = "models/wakeword/hey_olaf.ppn"\n'
+            "[tts]\n"
+            'voice_id = "v"\n' + _STT_AND_GREETING_BLOCKS
+        ),
     )
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
@@ -602,7 +736,7 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
         "[tts]\n"
         'voice_id = "v"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(SchemaVersionError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     msg = str(exc_info.value)
@@ -662,7 +796,9 @@ def test_daemon_enabled_false_explicit(tmp_path: Path) -> None:
         'url = "http://localhost:8001"\n'
         "enabled = false\n"
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_disabled)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_disabled + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.daemon.enabled is False
 
@@ -681,7 +817,9 @@ def test_daemon_url_explicit_override(tmp_path: Path) -> None:
         "[daemon]\n"
         'url = "http://localhost:9000"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_daemon)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_daemon + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.daemon.url == "http://localhost:9000"
 
@@ -704,7 +842,9 @@ def test_daemon_url_unknown_field_raises(tmp_path: Path) -> None:
         "[daemon]\n"
         'urll = "http://localhost:8001"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_typo)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_typo + _STT_AND_GREETING_BLOCKS
+    )
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "urll" in str(exc_info.value)
@@ -729,7 +869,9 @@ def test_daemon_url_must_start_with_http(tmp_path: Path) -> None:
         "[daemon]\n"
         'url = "localhost:8001"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_url)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_bad_url + _STT_AND_GREETING_BLOCKS
+    )
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)
 
@@ -752,7 +894,9 @@ def test_daemon_url_strips_trailing_slash(tmp_path: Path) -> None:
         "[daemon]\n"
         'url = "http://localhost:8001/"\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_trailing)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_trailing + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.daemon.url == "http://localhost:8001"
 
@@ -782,7 +926,9 @@ def test_talker_grounded_keys_explicit(tmp_path: Path) -> None:
         "[talker]\n"
         'grounded_keys = ["time", "calendar_today"]\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_grounded)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_grounded + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.talker.grounded_keys == ["time", "calendar_today"]
 
@@ -848,7 +994,9 @@ def test_tools_one_disabled(tmp_path: Path) -> None:
         "enable_go_to_sleep = false\n"
         "enable_set_mood = true\n"
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_partial)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_partial + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.tools.enable_go_to_sleep is False
     assert config.tools.enable_set_mood is True
@@ -869,7 +1017,9 @@ def test_tools_both_disabled(tmp_path: Path) -> None:
         "enable_go_to_sleep = false\n"
         "enable_set_mood = false\n"
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_both_off)
+    toml_path, env_path = _write_files(
+        tmp_path, toml_body=toml_with_both_off + _STT_AND_GREETING_BLOCKS
+    )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.tools.enable_go_to_sleep is False
     assert config.tools.enable_set_mood is False

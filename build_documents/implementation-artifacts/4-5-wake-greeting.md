@@ -1,6 +1,6 @@
 # Story 4.5: Wake greeting — static random per-mood pick + clarification list simplification + J1 integration test
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

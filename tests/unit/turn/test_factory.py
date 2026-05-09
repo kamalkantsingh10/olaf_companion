@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import SecretStr
 
+from tests._factories import minimal_greeting_config, minimal_stt_config
 from voice_agent_pipeline import turn as turn_module
 from voice_agent_pipeline.config.setup import (
     AudioConfig,
@@ -58,6 +59,11 @@ def _build_setup(
         gemini_api_key=SecretStr(gemini_key) if gemini_key else None,
         audio=AudioConfig(input_device_name="m", output_device_name="s"),
         wakeword=WakewordConfig(model_path=Path("models/x.ppn")),
+        # Story 4.5: stt + greeting have no Python defaults; provide
+        # minimal valid values so SetupConfig's default_factory chain
+        # doesn't trip on validation.
+        stt=minimal_stt_config(),
+        greeting=minimal_greeting_config(),
         talker=TalkerConfig(
             provider=provider,  # type: ignore[arg-type]
             max_tokens=128,

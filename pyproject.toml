@@ -55,6 +55,10 @@ typeCheckingMode = "strict"
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"
+# Story 4.5: tests/_factories.py is shared via ``from tests._factories
+# import ...``. ``extraPaths`` adds the project root to pyright's
+# resolution path so ``tests`` resolves as a package.
+extraPaths = ["."]
 reportMissingTypeStubs = false
 reportUnusedImport = false
 reportUnusedFunction = false

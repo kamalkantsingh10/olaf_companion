@@ -71,17 +71,63 @@ model = "Systran/faster-distil-whisper-large-v3"
 compute_type = "int8"
 device = "auto"
 low_confidence_threshold = 0.5
-# Story 2.4: when STT confidence drops below the threshold, the
-# TurnRouter substitutes this prompt for the user's (noisy) text and
-# routes it to the Talker — so the bot asks for a repeat instead of
-# guessing. Edit to taste.
-# Story 3.7 live-test pattern: this is an INSTRUCTION sent to the
-# Talker LLM (not the user-facing apology itself). The LLM produces a
-# varied short apology each time, capped by the explicit length limit.
-# Earlier "Sorry, I didn't catch that — could you say it again?" got
-# treated as a question by Groq Llama 8B and answered literally
-# ("No worries, I'm right here on Kamal's desk").
-clarification_prompt = "Briefly ask the user to repeat themselves. Use under 5 words. No greeting, no preamble — just the question."
+# Story 4.5 (2026-05-07 redesign): static-random pick from a list of
+# clarification phrases. Story 3.7's `cdf3618` short-circuit emits
+# the picked phrase verbatim as a TalkerResponseFrame (no LLM round-
+# trip), so this list IS what the user hears — these are the spoken
+# phrases, not instructions to an LLM.
+#
+# Tone: casual, friendly, Ooppi's voice — small, voice-first, a bit
+# playful, sometimes apologetic. Avoid formal butler-speak ("Pardon?").
+# Voice-natural beats grammatically clean ("uh, what?" beats "I beg
+# your pardon"). Prefer short — most are 1-5 words.
+#
+# At runtime the TurnRouter picks one entry uniformly at random per
+# low-confidence turn (random.choice). 40 entries gives ~2.5% chance
+# of immediate-repeat — feels naturally varied. Operators can keep
+# adding entries over time. Must be non-empty (validated at startup).
+clarification_prompts = [
+    "huh?",
+    "wait, what?",
+    "say that again?",
+    "hm — one more time?",
+    "oof, missed that",
+    "sorry — what was that?",
+    "didn't quite catch that",
+    "come again?",
+    "ah, say again?",
+    "what was that, sorry?",
+    "uh, repeat?",
+    "hmm — once more?",
+    "missed it, try again?",
+    "didn't hear you",
+    "sorry — one more?",
+    "what? say again?",
+    "oof — repeat that?",
+    "hm, what was that?",
+    "sorry, missed it",
+    "didn't get that",
+    "once more?",
+    "say again?",
+    "what was that?",
+    "missed that — again?",
+    "hm? what?",
+    "what'd you say?",
+    "lost that one",
+    "missed you there",
+    "say once more?",
+    "didn't catch that",
+    "ah, missed it",
+    "uh sorry, what?",
+    "wait — say again",
+    "hmm, repeat?",
+    "what was that, hm?",
+    "didn't get it",
+    "ah hm — say again?",
+    "uh, missed that",
+    "say it once more?",
+    "what? one more time?",
+]
 
 # Talker (Story 2.2). Fast-path LLM for short conversational replies.
 # Three providers wired out of the box — all reach the same `openai`
@@ -201,6 +247,58 @@ enabled = false
 [tools]
 enable_go_to_sleep = true
 enable_set_mood = true
+
+# Story 4.5: wake greeting (static random pick by mood). The wake
+# greeting fires automatically on every sleeping→waking FSM transition;
+# we pick one entry uniformly at random from the bucket matching the
+# current mood. Each entry IS the spoken text (not an instruction to
+# an LLM) — the early "Talker.greet" design was dropped 2026-05-07
+# after Story 3.7's clarification flow showed that small LLMs treat
+# instruction-style prompts as questions and answer them literally.
+#
+# Lists below are starter sets — operators are encouraged to expand
+# to 30-40 entries per mood for low repetition over long sessions.
+# Each entry should be 2-8 words, no SSML, no question-mark-ending
+# instructions. The mood TINTS the register (calm = quiet acknowledge,
+# playful = energetic), it doesn't dictate content (don't make every
+# "happy" greeting include the word "happy").
+#
+# Every Mood Literal value must have at least one entry — a missing
+# mood raises a clean ConfigError at startup. The Mood enum is:
+# calm, happy, playful, curious, thoughtful, sleepy, grumpy, excited.
+[greeting.greetings_by_mood]
+calm = [
+    "hey", "yeah?", "yes?", "what's up?", "I'm here", "hi",
+    "yeah, hi", "what's up", "hello", "hi there",
+]
+happy = [
+    "hey there!", "hi!", "what's up!", "good to see you",
+    "hey hey", "yes!", "hiya", "hi there!",
+]
+playful = [
+    "yo", "what's up", "heya", "sup", "hey hey", "yo what's up",
+    "yes? yes?", "hm hm hm hi", "hello hello",
+]
+curious = [
+    "yeah?", "tell me", "what's up?", "what's on your mind",
+    "hi, what is it", "yes?", "yeah, hi", "go on",
+]
+thoughtful = [
+    "hmm yes?", "yeah", "mm", "yes", "go on", "I'm listening",
+    "yeah, hi", "tell me",
+]
+sleepy = [
+    "mmh", "yeah?", "hi", "hmm what?", "mm yes?", "yeah hi",
+    "I'm here", "mmh yeah",
+]
+grumpy = [
+    "yeah", "what?", "uh", "yeah hi", "what is it",
+    "yes", "hm", "go on",
+]
+excited = [
+    "hey!", "yes!", "what's up!!", "heyy", "hi hi!", "yo!",
+    "yeah hi!", "hello!", "yes yes!",
+]
 
 # Sections populated by subsequent stories:
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
