@@ -476,6 +476,39 @@ class DaemonConfig(BaseModel):
         return v.rstrip("/")
 
 
+class RouterConfig(BaseModel):
+    """TurnRouter routing configuration (Story 4.7).
+
+    The :class:`TurnRouter` (in :mod:`turn.router`) decides per-turn
+    whether a transcript routes to the in-pipeline Talker (fast path)
+    or escalates to the orchestrator daemon (slow path). v1 uses a
+    simple regex-pattern match against the transcript:
+
+    - If the transcript matches any pattern in
+      :attr:`slow_path_patterns`, route to ``"orchestrator"``.
+    - Otherwise, route to :attr:`default` (v1 default ``"talker"``).
+
+    The patterns are case-insensitive and operator-tunable. Patterns
+    are compiled once at :class:`TurnRouter` construction; invalid
+    regexes raise :class:`ConfigError` at startup.
+
+    Attributes:
+        slow_path_patterns: Operator-defined regex strings. Empty
+            default — operators opt in by adding entries. Each pattern
+            is compiled with ``re.IGNORECASE``.
+        default: Fallback target when no slow-path pattern matches.
+            v1 default ``"talker"``; setting to ``"orchestrator"``
+            means EVERY high-confidence turn goes to the orchestrator
+            (sometimes useful for offline-LLM dev or for soak-testing
+            the slow path).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    slow_path_patterns: list[str] = Field(default_factory=list)
+    default: Literal["talker", "orchestrator"] = "talker"
+
+
 class GreetingConfig(BaseModel):
     """Per-mood wake-greeting bucket lists (Story 4.5).
 
@@ -641,6 +674,11 @@ class SetupConfig(BaseSettings):
     # the model_validator catches missing/empty mood buckets. The
     # actual strings live in setup.toml, not in Python defaults.
     greeting: GreetingConfig = Field(default_factory=GreetingConfig)
+    # Story 4.7: TurnRouter slow-path escalation. Optional; empty
+    # default means every high-confidence turn routes to Talker (v1
+    # original behavior). Operators add patterns to enable orchestrator
+    # escalation.
+    router: RouterConfig = Field(default_factory=RouterConfig)
     # Story 4.1: orchestrator daemon endpoint. Optional with defaults
     # (localhost:8001). Story 4.1 wires the BeliefStateClient against
     # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer

@@ -23,12 +23,14 @@ single-purpose.
 """
 
 import random
+import re
 from typing import Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
 from voice_agent_pipeline.config.setup import SttConfig
+from voice_agent_pipeline.errors import ConfigError
 from voice_agent_pipeline.turn.orchestrator import OrchestratorClient
 from voice_agent_pipeline.turn.talker import TalkerClient
 
@@ -92,6 +94,8 @@ class TurnRouter:
         stt_config: SttConfig,
         talker: TalkerClient,
         orchestrator: OrchestratorClient | None = None,
+        slow_path_patterns: list[str] | None = None,
+        default_target: Literal["talker", "orchestrator"] = "talker",
     ) -> None:
         self._threshold = stt_config.low_confidence_threshold
         # Story 4.5: list of static clarification phrases — picked
@@ -100,6 +104,23 @@ class TurnRouter:
         # fails on []. The actual strings live in setup.toml under
         # ``[stt] clarification_prompts``.
         self._clarification_prompts = stt_config.clarification_prompts
+        # Story 4.7: compile slow-path escalation patterns once at
+        # construction. Per-pattern compilation lets us identify the
+        # bad pattern by source string in the ConfigError context.
+        # An empty list (or omitted arg) means no escalation —
+        # every high-confidence turn falls back to ``default_target``.
+        self._compiled_patterns: list[re.Pattern[str]] = []
+        for pattern in slow_path_patterns or []:
+            try:
+                compiled = re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                raise ConfigError(
+                    stage="router",
+                    reason=str(exc),
+                    pattern=pattern,
+                ) from exc
+            self._compiled_patterns.append(compiled)
+        self._default_target: Literal["talker", "orchestrator"] = default_target
         # Public attributes (no underscore) — the dispatcher in
         # pipeline.py reads these directly. Wrapping in private +
         # accessor would be ceremony; the dispatcher is in this
@@ -110,9 +131,21 @@ class TurnRouter:
     def route(self, transcript: str, confidence: float) -> RouteDecision:
         """Decide where this transcript goes.
 
+        Routing precedence (Story 4.7):
+
+        1. **Low confidence** → clarification dialog routed to Talker
+           (Story 2.4 contract; clarification beats slow-path
+           escalation because the input is unreliable).
+        2. **Slow-path pattern match** → orchestrator. The first
+           pattern in :attr:`_compiled_patterns` that matches the
+           transcript wins; logged at INFO with the pattern's source
+           string (NOT the transcript).
+        3. **Default fallback** → :attr:`_default_target` (v1 default
+           ``"talker"``).
+
         Inclusive at the threshold (``>=``) — a transcript with
         ``confidence == low_confidence_threshold`` takes the high-
-        confidence path. Documented in the test
+        confidence path. Pinned by
         ``test_threshold_boundary_inclusive_at_threshold``.
 
         Args:
@@ -120,26 +153,40 @@ class TurnRouter:
             confidence: STT-reported confidence in ``[0.0, 1.0]``.
 
         Returns:
-            A :class:`RouteDecision`. v1 always emits ``target="talker"``;
-            Story 4.3 will introduce ``target="orchestrator"``.
+            A :class:`RouteDecision`. ``target`` may be ``"talker"``
+            or ``"orchestrator"``; the dispatcher in ``pipeline.py``
+            handles each branch.
         """
-        if confidence >= self._threshold:
+        if confidence < self._threshold:
+            # Low-confidence path takes precedence — see method docstring.
+            picked = random.choice(self._clarification_prompts)  # noqa: S311
+            log.info("clarification.picked", text=picked)
             return RouteDecision(
                 target="talker",
-                text=transcript,
-                clarification=False,
+                text=picked,
+                clarification=True,
             )
-        # Low-confidence path: drop the noisy text, substitute a
-        # randomly-picked clarification phrase. Story 3.7's
-        # short-circuit in TurnDispatchProcessor emits this verbatim
-        # as a TalkerResponseFrame — no LLM round-trip — so the
-        # phrase IS what the user hears.
-        # ruff S311: random.choice is fine here — clarification variety
-        # is UX, not cryptographic. No security boundary.
-        picked = random.choice(self._clarification_prompts)  # noqa: S311
-        log.info("clarification.picked", text=picked)
+
+        # High-confidence: check slow-path patterns before defaulting.
+        for compiled in self._compiled_patterns:
+            if compiled.search(transcript):
+                # Privacy: log the matched pattern (operator-authored,
+                # safe) and the transcript LENGTH only — never the
+                # transcript itself (FR42 / NFR25).
+                log.info(
+                    "router.escalated_to_orchestrator",
+                    pattern_matched=compiled.pattern,
+                    transcript_length=len(transcript),
+                )
+                return RouteDecision(
+                    target="orchestrator",
+                    text=transcript,
+                    clarification=False,
+                )
+
+        # No pattern matched — fall back to the configured default.
         return RouteDecision(
-            target="talker",
-            text=picked,
-            clarification=True,
+            target=self._default_target,
+            text=transcript,
+            clarification=False,
         )

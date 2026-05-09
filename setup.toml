@@ -300,9 +300,21 @@ excited = [
     "yeah hi!", "hello!", "yes yes!",
 ]
 
+# Story 4.7: TurnRouter slow-path escalation. Patterns are case-
+# insensitive regex strings; if any matches the transcript, the turn
+# routes to the orchestrator daemon instead of Talker. Tune per the
+# operator's belief-state surface and orchestrator capabilities.
+# `default` is the fallback when no pattern matches; v1 ships "talker".
+#
+# Empty list = no escalation; every high-confidence turn goes to
+# Talker (the simple-turn behavior). Add patterns when the orchestrator
+# is up and you want time/calendar/weather queries handled there.
+[router]
+slow_path_patterns = []
+default = "talker"
+
 # Sections populated by subsequent stories:
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)
-# [router]         -- Story 4.3 (slow_path_patterns, default)
 # [daemon]         -- extended in Story 5.3 (bearer_token_env, mtls)
 # [barge_in]       -- Story 5.1 (sustained_ms, energy_threshold)
 # [logging]        -- Story 5.3 (max_file_size_mb, retention_days, console_mirror)

@@ -118,6 +118,91 @@ def test_low_confidence_logs_clarification_picked(
     assert matching[0].get("text") == decision.text
 
 
+def test_router_escalates_on_keyword_match(stub_talker: MagicMock) -> None:
+    """Story 4.7: a slow_path_pattern match → ``target="orchestrator"``."""
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    router = TurnRouter(config, stub_talker, slow_path_patterns=["calendar"])
+    decision = router.route("what's on my calendar today", confidence=0.9)
+    assert decision.target == "orchestrator"
+    assert decision.text == "what's on my calendar today"
+    assert decision.clarification is False
+
+
+def test_router_escalates_case_insensitive(stub_talker: MagicMock) -> None:
+    """Story 4.7: pattern matching is case-insensitive."""
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    router = TurnRouter(config, stub_talker, slow_path_patterns=["calendar"])
+    decision = router.route("CALENDAR check please", confidence=0.9)
+    assert decision.target == "orchestrator"
+
+
+def test_router_does_not_escalate_when_no_match(stub_talker: MagicMock) -> None:
+    """Story 4.7: no pattern match → ``default_target`` (Talker by default)."""
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    router = TurnRouter(config, stub_talker, slow_path_patterns=["calendar"])
+    decision = router.route("tell me a joke", confidence=0.9)
+    assert decision.target == "talker"
+
+
+def test_router_default_target_orchestrator(stub_talker: MagicMock) -> None:
+    """Story 4.7: ``default_target="orchestrator"`` + empty patterns → orchestrator."""
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    router = TurnRouter(
+        config,
+        stub_talker,
+        slow_path_patterns=[],
+        default_target="orchestrator",
+    )
+    decision = router.route("anything", confidence=0.9)
+    assert decision.target == "orchestrator"
+
+
+def test_router_low_confidence_routes_to_talker_even_with_pattern_match(
+    stub_talker: MagicMock,
+) -> None:
+    """Clarification beats slow-path: bad input → clarify first."""
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    router = TurnRouter(config, stub_talker, slow_path_patterns=["calendar"])
+    decision = router.route("calendar??", confidence=0.2)
+    assert decision.target == "talker"
+    assert decision.clarification is True
+    assert decision.text == "huh?"
+
+
+def test_router_invalid_regex_raises_config_error(stub_talker: MagicMock) -> None:
+    """Story 4.7: bad regex at construction → ``ConfigError`` with pattern context."""
+    from voice_agent_pipeline.errors import ConfigError
+
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    with pytest.raises(ConfigError) as exc_info:
+        TurnRouter(config, stub_talker, slow_path_patterns=["[invalid"])
+    assert exc_info.value.context.get("stage") == "router"
+    assert exc_info.value.context.get("pattern") == "[invalid"
+
+
+def test_router_emits_log_on_escalation(stub_talker: MagicMock) -> None:
+    """Story 4.7: ``router.escalated_to_orchestrator`` INFO log fires on match.
+
+    Privacy: log carries the matched pattern + transcript LENGTH only,
+    never the transcript itself.
+    """
+    import structlog as _structlog
+
+    config = SttConfig(low_confidence_threshold=0.5, clarification_prompts=["huh?"])
+    router = TurnRouter(config, stub_talker, slow_path_patterns=["calendar"])
+
+    with _structlog.testing.capture_logs() as captured:
+        router.route("what's on my calendar today", confidence=0.9)
+
+    matching = [r for r in captured if r.get("event") == "router.escalated_to_orchestrator"]
+    assert len(matching) == 1
+    rec = matching[0]
+    assert rec.get("pattern_matched") == "calendar"
+    assert rec.get("transcript_length") == len("what's on my calendar today")
+    # Privacy: the transcript text itself NOT in the log.
+    assert "what's on my calendar today" not in str(rec)
+
+
 def test_route_decision_is_frozen() -> None:
     """RouteDecision is immutable — mutating fields raises ValidationError.
 

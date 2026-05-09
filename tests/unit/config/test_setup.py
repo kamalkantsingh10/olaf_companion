@@ -489,6 +489,71 @@ def test_greeting_missing_mood_raises(tmp_path: Path) -> None:
     assert "missing or empty entries" in str(exc_info.value)
 
 
+def test_router_defaults(tmp_path: Path) -> None:
+    """Story 4.7: omitted ``[router]`` block defaults to empty patterns + Talker."""
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.router.slow_path_patterns == []
+    assert config.router.default == "talker"
+
+
+def test_router_slow_path_patterns_explicit(tmp_path: Path) -> None:
+    """Story 4.7: ``[router] slow_path_patterns = [...]`` parses correctly."""
+    toml_with_router = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[router]\n"
+        'slow_path_patterns = ["calendar", "weather"]\n' + _STT_AND_GREETING_BLOCKS
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_router)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.router.slow_path_patterns == ["calendar", "weather"]
+
+
+def test_router_default_orchestrator(tmp_path: Path) -> None:
+    """Story 4.7: ``[router] default = "orchestrator"`` parses."""
+    toml_with_default = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[router]\n"
+        'default = "orchestrator"\n' + _STT_AND_GREETING_BLOCKS
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_default)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.router.default == "orchestrator"
+
+
+def test_router_default_invalid_raises(tmp_path: Path) -> None:
+    """Story 4.7: ``[router] default = "..."`` outside the Literal raises."""
+    toml_with_bad_default = (
+        "schema_version = 2\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        "[router]\n"
+        'default = "subagent"\n' + _STT_AND_GREETING_BLOCKS  # not in the Literal
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_default)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
 def test_greeting_extra_mood_key_rejected(tmp_path: Path) -> None:
     """Story 4.5: ``ecstatic`` (not in Mood Literal) → pydantic key validation rejects."""
     toml_with_bad_mood = (

@@ -41,6 +41,7 @@ Future epics layer onto this without changing the assembly order:
 
 import asyncio
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -74,6 +75,14 @@ from voice_agent_pipeline.publisher.interface import EventPublisher
 from voice_agent_pipeline.schemas.speech_emotion_event import (
     SpeechEmotionEvent,
 )
+from voice_agent_pipeline.schemas.stream import (
+    NarrationEvent,
+    ResponseChunkEvent,
+    SubagentDoneEvent,
+    SubagentProgressEvent,
+    SubagentStartedEvent,
+    TurnEndEvent,
+)
 from voice_agent_pipeline.schemas.vocalization_event import (
     VocalizationEvent,
 )
@@ -84,7 +93,7 @@ from voice_agent_pipeline.tts.cartesia import CartesiaClient
 from voice_agent_pipeline.tts.client import TTSClient
 from voice_agent_pipeline.turn import build_talker, build_tool_registry
 from voice_agent_pipeline.turn.beliefs import HttpBeliefStateClient, async_http_client
-from voice_agent_pipeline.turn.orchestrator import HttpOrchestratorClient
+from voice_agent_pipeline.turn.orchestrator import HttpOrchestratorClient, OrchestratorClient
 from voice_agent_pipeline.turn.router import TurnRouter
 from voice_agent_pipeline.turn.tools import ToolRegistry
 
@@ -258,10 +267,30 @@ class TurnDispatchProcessor(FrameProcessor):
     restarts).
     """
 
-    def __init__(self, router: TurnRouter, tool_registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        router: TurnRouter,
+        tool_registry: ToolRegistry,
+        orchestrator: OrchestratorClient | None = None,
+        activity_fsm: ActivityFSM | None = None,
+        session_id_supplier: Callable[[], str] | None = None,
+    ) -> None:
         super().__init__()  # pyright: ignore[reportUnknownMemberType]
         self._router = router
         self._tool_registry = tool_registry
+        # Story 4.7: orchestrator slow-path deps. Optional so tests
+        # exercising the fast-path only don't have to wire them. The
+        # orchestrator branch raises a clear error if the deps are
+        # missing when actually dispatched (see ``_dispatch_orchestrator``).
+        self._orchestrator = orchestrator
+        self._activity_fsm = activity_fsm
+        # Default supplier returns a fresh UUID per call — fine for
+        # unit tests that don't care about session correlation.
+        # Production wires this from structlog's correlation_id
+        # contextvar via run_pipeline.
+        self._session_id_supplier: Callable[[], str] = (
+            session_id_supplier if session_id_supplier is not None else (lambda: uuid4().hex)
+        )
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         """On TranscriptFrame: route, dispatch, emit TalkerResponseFrame.
@@ -323,16 +352,118 @@ class TurnDispatchProcessor(FrameProcessor):
                     )
                     task.add_done_callback(self._log_tool_done)
             else:
-                # Story 4.7 wires the orchestrator branch; raising
-                # explicitly makes a misconfiguration scream rather
-                # than fall through.
-                raise NotImplementedError(
-                    "orchestrator path is wired in Epic 4 (Story 4.7); "
-                    f"got target={decision.target!r}"
-                )
+                # Story 4.7: orchestrator slow-path dispatch. The
+                # deps are optional at the constructor level; if a
+                # turn lands here without them wired, that's a
+                # configuration error (the TurnRouter shouldn't
+                # have produced ``target="orchestrator"`` if the
+                # orchestrator client wasn't supplied).
+                if self._orchestrator is None or self._activity_fsm is None:
+                    raise RuntimeError(
+                        "TurnRouter routed to orchestrator but "
+                        "TurnDispatchProcessor was constructed without "
+                        "orchestrator + activity_fsm. Check pipeline "
+                        "assembly in run_pipeline.",
+                    )
+                await self._dispatch_orchestrator(decision.text, direction)
 
         # Pass the original frame through so future stages can observe.
         await self.push_frame(frame, direction)
+
+    async def _dispatch_orchestrator(self, transcript: str, direction: FrameDirection) -> None:
+        """Slow-path: dispatch to orchestrator daemon, stream events downstream (Story 4.7).
+
+        Steps (architecture.md §"Talker placement in Pipecat" + epics.md J3 AC):
+
+        1. **FSM transition**: ``working[thinking] → working[delegating]``
+           via :meth:`ActivityFSM.on_dispatch_to_orchestrator`. Publishes
+           ``ActivityEvent(state="working", working_submode="delegating")``
+           so embodiment subscribers can distinguish "OLAF thinking
+           locally" from "OLAF delegating to a subagent." The FSM must
+           already be in ``working[thinking]``; if not, that method
+           raises :class:`VoiceAgentError(reason="illegal_transition")`
+           — correct fail-fast (Story 4.3 contract).
+        2. **Open SSE stream** via
+           :meth:`OrchestratorClient.dispatch`. Each typed event flows
+           through a ``match`` block:
+           - ``NarrationEvent`` / ``ResponseChunkEvent`` → push
+             :class:`TalkerResponseFrame` downstream (same path as
+             Talker fast-path replies — splitter / TTS / publisher
+             "just work").
+           - Subagent events (started/progress/done) → INFO log only
+             (no audio impact in v1).
+           - ``TurnEndEvent`` → INFO log; flag for missing-end check.
+        3. **Missing-`turn_end` recovery** (FR14): track a flag during
+           the loop. If the stream closes without ``TurnEndEvent``,
+           log WARN ``orchestrator.missing_turn_end``. The splitter
+           drains naturally on the audio side; FSM transitions on
+           the last audio frame as usual.
+
+        Privacy (NFR25 / FR39): the LLM-emitted text in
+        ``narration.text`` and ``response_chunk.text`` is treated like
+        a transcript — gated to DEBUG only via the
+        ``orchestrator.text_emitted`` event. The redaction processor
+        catches any field-name slip; this method just doesn't pass
+        text into INFO+ logs in the first place.
+        """
+        # Tell pyright these are not None (the caller checked).
+        assert self._orchestrator is not None  # noqa: S101
+        assert self._activity_fsm is not None  # noqa: S101
+
+        # FSM enters working[delegating]. Errors propagate (fail-fast).
+        await self._activity_fsm.on_dispatch_to_orchestrator()
+
+        session_id = self._session_id_supplier()
+        log.info("orchestrator.dispatch_begin", session_id=session_id)
+
+        turn_end_seen = False
+        async for event in self._orchestrator.dispatch(transcript, session_id):
+            # Discriminated-union dispatch. ``match`` narrows each
+            # case to its concrete event type; pyright infers the
+            # ``.text`` / ``.name`` / ``.msg`` fields cleanly.
+            match event:
+                case NarrationEvent(text=t) | ResponseChunkEvent(text=t):
+                    # Privacy: log at DEBUG only (text content is
+                    # LLM output, treated like transcript).
+                    log.debug(
+                        "orchestrator.text_emitted",
+                        length=len(t),
+                        session_id=session_id,
+                    )
+                    await self.push_frame(
+                        TalkerResponseFrame(text=t),
+                        direction,
+                    )
+                case SubagentStartedEvent(name=n):
+                    log.info(
+                        "orchestrator.subagent_started",
+                        subagent_name=n,
+                        session_id=session_id,
+                    )
+                case SubagentProgressEvent(name=n, msg=m):
+                    log.info(
+                        "orchestrator.subagent_progress",
+                        subagent_name=n,
+                        msg=m,
+                        session_id=session_id,
+                    )
+                case SubagentDoneEvent(name=n):
+                    log.info(
+                        "orchestrator.subagent_done",
+                        subagent_name=n,
+                        session_id=session_id,
+                    )
+                case TurnEndEvent():
+                    turn_end_seen = True
+                    log.info("orchestrator.turn_end", session_id=session_id)
+
+        if not turn_end_seen:
+            # FR14: stream ended without explicit turn_end. The splitter
+            # drains naturally on the audio side; FSM transitions when
+            # the last audio frame leaves the transport (Story 4.3
+            # plumbing). Just log so operators can spot the
+            # contract drift.
+            log.warning("orchestrator.missing_turn_end", session_id=session_id)
 
     def _log_tool_done(self, task: asyncio.Task[None]) -> None:
         """Done-callback for fire-and-forget ``tool_registry.dispatch`` tasks.
@@ -946,20 +1077,38 @@ async def run_pipeline(
                 await orchestrator_client.probe_health()
 
             talker = build_talker(config, beliefs=belief_client)
-            # Story 4.2: orchestrator client is now wired in for Story 4.7's
-            # slow-path dispatch (TurnRouter target="orchestrator"). Story
-            # 2.4's NotImplementedError stub in TurnDispatchProcessor still
-            # gates the actual call site — Story 4.7 removes it.
-            router = TurnRouter(config.stt, talker, orchestrator=orchestrator_client)
+            # Story 4.7: TurnRouter now compiles slow-path patterns +
+            # honors the configured default. Patterns from setup.toml
+            # under ``[router] slow_path_patterns``; default from
+            # ``[router] default``. The dispatcher in
+            # ``TurnDispatchProcessor`` consumes the orchestrator client
+            # via ``_dispatch_orchestrator`` when a turn escalates.
+            router = TurnRouter(
+                config.stt,
+                talker,
+                orchestrator=orchestrator_client,
+                slow_path_patterns=config.router.slow_path_patterns,
+                default_target=config.router.default,
+            )
+            orchestrator_for_dispatch: OrchestratorClient | None = orchestrator_client
         else:
             # Dev mode: no daemon coupling. Belief reads are skipped
             # (Story 4.4: ``beliefs=None`` → plain system prompt); the
-            # orchestrator branch in ``TurnDispatchProcessor`` is gated
-            # by its own NotImplementedError, which is the right error
-            # if a turn somehow routes there with the daemon disabled.
+            # orchestrator client is None, so the dispatcher's
+            # orchestrator branch raises a clear error if a turn ever
+            # routes there. Operators using ``[daemon] enabled = false``
+            # should keep ``[router] slow_path_patterns = []`` so no
+            # turn escalates.
             log.info("daemon.disabled", reason="[daemon] enabled = false")
             talker = build_talker(config, beliefs=None)
-            router = TurnRouter(config.stt, talker, orchestrator=None)
+            router = TurnRouter(
+                config.stt,
+                talker,
+                orchestrator=None,
+                slow_path_patterns=config.router.slow_path_patterns,
+                default_target=config.router.default,
+            )
+            orchestrator_for_dispatch = None
 
         # Story 3.6: mood module. State + controller wired BEFORE
         # publish_initial so the first event lives on the latched topic.
@@ -1069,11 +1218,27 @@ async def run_pipeline(
                 _WakewordEventLogger(),
                 # Story 4.3: drive FSM transitions from wake + VAD frames.
                 _FsmEventBridge(activity_fsm),
-                # Story 4.4: dispatcher now needs the tool registry
-                # to fire ``go_to_sleep`` / ``set_mood`` from Talker
-                # tool-call responses. Text-first ordering (FR45/46)
-                # is enforced inside the processor itself.
-                TurnDispatchProcessor(router, tool_registry),
+                # Story 4.4: dispatcher fires ``go_to_sleep`` / ``set_mood``
+                # tool calls from Talker (text-first parallel dispatch).
+                # Story 4.7: dispatcher now also handles target=
+                # "orchestrator" by streaming SSE events from the
+                # orchestrator daemon, pushing each narration /
+                # response_chunk as a TalkerResponseFrame downstream.
+                # Session-id supplier reads the per-turn correlation id
+                # set by structlog's contextvars (Story 3.7) so log
+                # lines stitch together across the slow-path turn.
+                TurnDispatchProcessor(
+                    router,
+                    tool_registry,
+                    orchestrator=orchestrator_for_dispatch,
+                    activity_fsm=activity_fsm,
+                    session_id_supplier=lambda: str(
+                        structlog.contextvars.get_contextvars().get(
+                            "correlation_id",
+                            uuid4().hex,
+                        )
+                    ),
+                ),
                 # Story 4.5: greeting injector. Pushes
                 # ``TalkerResponseFrame`` for wake greetings into the
                 # same downstream path as Talker replies. The injected

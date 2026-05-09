@@ -22,6 +22,7 @@ text-first parallel-tools path live in ``test_dispatch_parallel.py``
 """
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -440,3 +441,214 @@ def test_dispatch_constructor_accepts_tool_registry(
     router = TurnRouter(stt_config, mock_talker)
     dispatcher = TurnDispatchProcessor(router, empty_tool_registry)
     assert dispatcher is not None
+
+
+# ---------------------------------------------------------------------------
+# Story 4.7: orchestrator slow-path dispatch tests
+# ---------------------------------------------------------------------------
+
+
+def _async_iter(events: list):  # type: ignore[no-untyped-def]
+    """Build an async iterator over events for orchestrator mocks."""
+
+    async def _gen():  # type: ignore[no-untyped-def]
+        for e in events:
+            yield e
+
+    return _gen()
+
+
+def _build_fsm_in_thinking() -> Any:
+    """Build a real FSM driven into ``working[thinking]`` (where slow-path lands)."""
+    from voice_agent_pipeline.activity.machine import ActivityFSM
+    from voice_agent_pipeline.publisher.log_adapter import LogEventPublisher
+
+    fsm = ActivityFSM(publisher=LogEventPublisher())
+
+    async def _drive() -> None:
+        await fsm.start()
+        await fsm.on_wake_detected()
+        await fsm.on_speech_started()
+        await fsm.on_speech_ended()
+
+    asyncio.run(_drive())
+    return fsm
+
+
+def _make_orchestrator_dispatcher(
+    stt_config: SttConfig,
+    mock_talker: MagicMock,
+    empty_tool_registry: ToolRegistry,
+    events: list,  # type: ignore[type-arg]
+):
+    """Build a TurnDispatchProcessor wired with a mock orchestrator + real FSM."""
+    fsm = _build_fsm_in_thinking()
+    orch_mock = MagicMock()
+    orch_mock.dispatch = MagicMock(return_value=_async_iter(events))
+    router = TurnRouter(
+        stt_config,
+        mock_talker,
+        orchestrator=orch_mock,
+        slow_path_patterns=["calendar"],
+    )
+    dispatcher = TurnDispatchProcessor(
+        router,
+        empty_tool_registry,
+        orchestrator=orch_mock,
+        activity_fsm=fsm,
+    )
+    return dispatcher, fsm, orch_mock
+
+
+def test_orchestrator_dispatch_transitions_fsm_to_delegating(
+    stt_config: SttConfig,
+    mock_talker: MagicMock,
+    empty_tool_registry: ToolRegistry,
+) -> None:
+    """Story 4.7: orchestrator dispatch fires FSM ``thinking → delegating``."""
+    from voice_agent_pipeline.schemas.stream import NarrationEvent, TurnEndEvent
+
+    dispatcher, fsm, _ = _make_orchestrator_dispatcher(
+        stt_config,
+        mock_talker,
+        empty_tool_registry,
+        [
+            NarrationEvent(type="narration", text="thinking..."),
+            TurnEndEvent(type="turn_end"),
+        ],
+    )
+    _drain_pushed(dispatcher)
+
+    asyncio.run(
+        dispatcher.process_frame(
+            TranscriptFrame(
+                text="what's on my calendar today",
+                confidence=0.9,
+                end_to_transcript_ms=42,
+            ),
+            direction=None,  # type: ignore[arg-type]
+        )
+    )
+    assert fsm.current_state == "working"
+    assert fsm.working_submode == "delegating"
+
+
+def test_orchestrator_dispatch_emits_text_frames(
+    stt_config: SttConfig,
+    mock_talker: MagicMock,
+    empty_tool_registry: ToolRegistry,
+) -> None:
+    """Each NarrationEvent / ResponseChunkEvent → one TalkerResponseFrame."""
+    from voice_agent_pipeline.schemas.stream import (
+        NarrationEvent,
+        ResponseChunkEvent,
+        TurnEndEvent,
+    )
+
+    dispatcher, _, _ = _make_orchestrator_dispatcher(
+        stt_config,
+        mock_talker,
+        empty_tool_registry,
+        [
+            NarrationEvent(type="narration", text="thinking"),
+            ResponseChunkEvent(type="response_chunk", text="here's"),
+            ResponseChunkEvent(type="response_chunk", text=" the answer"),
+            TurnEndEvent(type="turn_end"),
+        ],
+    )
+    pushed = _drain_pushed(dispatcher)
+
+    asyncio.run(
+        dispatcher.process_frame(
+            TranscriptFrame(
+                text="my calendar?",
+                confidence=0.9,
+                end_to_transcript_ms=42,
+            ),
+            direction=None,  # type: ignore[arg-type]
+        )
+    )
+    text_frames = [f for f in pushed if isinstance(f, TalkerResponseFrame)]
+    assert [f.text for f in text_frames] == ["thinking", "here's", " the answer"]
+
+
+def test_orchestrator_dispatch_missing_turn_end_logs_warn(
+    stt_config: SttConfig,
+    mock_talker: MagicMock,
+    empty_tool_registry: ToolRegistry,
+) -> None:
+    """Stream closes without TurnEndEvent → WARN ``orchestrator.missing_turn_end``."""
+    import structlog as _structlog
+
+    from voice_agent_pipeline.schemas.stream import NarrationEvent, ResponseChunkEvent
+
+    dispatcher, _, _ = _make_orchestrator_dispatcher(
+        stt_config,
+        mock_talker,
+        empty_tool_registry,
+        [
+            NarrationEvent(type="narration", text="hi"),
+            ResponseChunkEvent(type="response_chunk", text="bye"),
+            # No TurnEndEvent.
+        ],
+    )
+    pushed = _drain_pushed(dispatcher)
+
+    with _structlog.testing.capture_logs() as captured:
+        asyncio.run(
+            dispatcher.process_frame(
+                TranscriptFrame(
+                    text="my calendar?",
+                    confidence=0.9,
+                    end_to_transcript_ms=42,
+                ),
+                direction=None,  # type: ignore[arg-type]
+            )
+        )
+
+    text_frames = [f for f in pushed if isinstance(f, TalkerResponseFrame)]
+    assert len(text_frames) == 2
+    warns = [r for r in captured if r.get("event") == "orchestrator.missing_turn_end"]
+    assert len(warns) == 1
+
+
+def test_orchestrator_dispatch_response_text_at_debug_not_info(
+    stt_config: SttConfig,
+    mock_talker: MagicMock,
+    empty_tool_registry: ToolRegistry,
+) -> None:
+    """Privacy: response_chunk text never appears in INFO+ logs."""
+    import structlog as _structlog
+
+    from voice_agent_pipeline.schemas.stream import ResponseChunkEvent, TurnEndEvent
+
+    dispatcher, _, _ = _make_orchestrator_dispatcher(
+        stt_config,
+        mock_talker,
+        empty_tool_registry,
+        [
+            ResponseChunkEvent(type="response_chunk", text="USER_SECRET_123"),
+            TurnEndEvent(type="turn_end"),
+        ],
+    )
+    _drain_pushed(dispatcher)
+
+    with _structlog.testing.capture_logs() as captured:
+        asyncio.run(
+            dispatcher.process_frame(
+                TranscriptFrame(
+                    text="my calendar?",
+                    confidence=0.9,
+                    end_to_transcript_ms=42,
+                ),
+                direction=None,  # type: ignore[arg-type]
+            )
+        )
+
+    info_or_higher = [
+        r
+        for r in captured
+        if r.get("log_level", "").lower() in ("info", "warning", "error", "critical")
+    ]
+    for rec in info_or_higher:
+        assert "USER_SECRET_123" not in str(rec)

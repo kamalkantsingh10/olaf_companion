@@ -1,6 +1,6 @@
 # Story 4.7: TurnRouter slow-path wiring + missing-`turn_end` recovery + complex-turn integration test (J3, NFR2 baseline)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
