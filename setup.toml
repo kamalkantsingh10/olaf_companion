@@ -143,7 +143,7 @@ clarification_prompts = [
 # verbose answers that blow NFR1. Edit `prompts/talker_system.md` (not
 # env vars) to change OLAF's voice / personality.
 [talker]
-provider = "groq"
+provider = "openai"
 max_tokens = 512
 system_prompt_path = "prompts/talker_system.md"
 # Story 4.1: belief-state grounding. List of keys to fetch from the

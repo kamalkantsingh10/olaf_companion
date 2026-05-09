@@ -146,6 +146,16 @@ async def run_sequential_loop(config: SetupConfig) -> None:
             await _wait_for_wake(pa, indices, config)
             await fsm.on_wake_detected()
 
+            # Per-wake conversation history. Reset on every wake —
+            # each wake starts a fresh conversation. The desk-
+            # companion mental model: "Hey OLAF" is a new
+            # conversation, prior chat is gone. Each entry is an
+            # openai-format message: {"role": "user|assistant",
+            # "content": "..."}. Tool-call messages are NOT included
+            # in history (v1 simplicity); the bot's text reply is
+            # what the LLM sees on subsequent turns.
+            conversation_history: list[dict[str, str]] = []
+
             # Brief pause before greeting — feels less robotic than
             # snapping into a reply the instant the wake-word fires.
             await asyncio.sleep(0.2)
@@ -196,7 +206,9 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                 # Low-confidence: clarification short-circuit. No LLM
                 # round-trip — just pick a canned phrase and play it.
                 # No streaming needed; the phrase is already a single
-                # short sentence.
+                # short sentence. Clarification turns DO go into
+                # history (the bot said "say again?", the user's
+                # next turn should make sense in that context).
                 if stt_result.confidence < config.stt.low_confidence_threshold:
                     clarification_text = random.choice(  # noqa: S311
                         config.stt.clarification_prompts,
@@ -205,6 +217,12 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                     await fsm.on_first_audio_frame()
                     await _speak(pa, indices, tts, clarification_text)
                     await fsm.on_last_audio_frame()
+                    conversation_history.append(
+                        {"role": "user", "content": stt_result.text},
+                    )
+                    conversation_history.append(
+                        {"role": "assistant", "content": clarification_text},
+                    )
                     if fsm.current_state == "sleeping":
                         log.info("sequential_loop.sleeping")
                         break
@@ -218,7 +236,7 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                 # transition fires JUST before the first sentence's
                 # audio starts to land — see ``_stream_and_speak``
                 # for the timing.
-                tool_calls = await _stream_and_speak(
+                full_text, tool_calls = await _stream_and_speak(
                     pa,
                     indices,
                     tts,
@@ -226,6 +244,19 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                     tool_registry,
                     stt_result.text,
                     fsm,
+                    history=conversation_history,
+                )
+
+                # Append this turn to the history BEFORE dispatching
+                # tools / firing on_last_audio_frame. Order: user
+                # turn, then assistant turn — even if assistant text
+                # is empty (tool-call-only reply), append an empty
+                # assistant message so the LLM sees the alternation.
+                conversation_history.append(
+                    {"role": "user", "content": stt_result.text},
+                )
+                conversation_history.append(
+                    {"role": "assistant", "content": full_text},
                 )
 
                 # Dispatch tool calls AFTER speech finishes. In half-
@@ -443,7 +474,8 @@ async def _stream_and_speak(
     tool_registry: ToolRegistry,
     prompt: str,
     fsm: ActivityFSM,
-) -> list[ToolCall]:
+    history: list[dict[str, str]] | None = None,
+) -> tuple[str, list[ToolCall]]:
     """Stream Talker tokens; speak each sentence as it forms.
 
     Token-streaming for snappier perceived latency (the canonical
@@ -475,6 +507,7 @@ async def _stream_and_speak(
         )
 
     text_buffer = ""
+    full_text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     fsm_speaking_fired = False
 
@@ -493,9 +526,14 @@ async def _stream_and_speak(
             await asyncio.to_thread(out_stream.write, chunk)
 
     try:
-        async for event in talker.complete_with_tools_streaming(prompt, tool_registry):
+        async for event in talker.complete_with_tools_streaming(
+            prompt,
+            tool_registry,
+            history=history,
+        ):
             if isinstance(event, TalkerTextDelta):
                 text_buffer += event.text
+                full_text_parts.append(event.text)
                 # Drain complete sentences as they form. The while
                 # loop handles the case where one delta finishes
                 # multiple short sentences in one go.
@@ -527,7 +565,8 @@ async def _stream_and_speak(
         out_stream.stop_stream()
         out_stream.close()
 
-    return tool_calls
+    full_text = "".join(full_text_parts)
+    return full_text, tool_calls
 
 
 async def _speak(

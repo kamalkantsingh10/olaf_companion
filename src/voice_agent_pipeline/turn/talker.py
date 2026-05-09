@@ -531,6 +531,7 @@ class Talker:
         self,
         prompt: str,
         tool_registry: ToolRegistry,
+        history: list[dict[str, str]] | None = None,
     ) -> AsyncIterator[TalkerTextDelta | TalkerStreamEnd]:
         """Streaming variant — yields text deltas as they arrive, then a final ``TalkerStreamEnd``.
 
@@ -540,6 +541,19 @@ class Talker:
         is still emitting later ones. The sequential voice loop
         (:mod:`sequential_loop`) consumes this to feed Cartesia
         per-sentence as text accumulates.
+
+        Args:
+            prompt: The current user utterance (post-STT).
+            tool_registry: Tool surface forwarded to ``tools=``.
+            history: Optional list of prior turns for in-session
+                conversational context. Each entry is an openai-
+                format message: ``{"role": "user"|"assistant",
+                "content": "..."}``. Inserted between the system
+                prompt and the current user message. The sequential
+                loop maintains this and resets it on each wake (new
+                wake = new conversation). When ``None`` or empty,
+                the LLM has no memory of prior turns — fine for the
+                first turn after wake.
 
         Yields:
             :class:`TalkerTextDelta` for every non-empty text chunk
@@ -562,10 +576,15 @@ class Talker:
                 self._system_prompt + "\n\n## Belief state\n" + json.dumps(beliefs, indent=2)
             )
 
-        messages = [
+        # Build the messages array: system prompt → prior turns
+        # (if any) → current user message. History is appended verbatim;
+        # the caller is responsible for the role/content shape.
+        messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
         ]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
 
         tools_param = tool_registry.as_openai_tools_param()
 
