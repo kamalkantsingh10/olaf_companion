@@ -19,11 +19,16 @@ from voice_agent_pipeline.errors import SchemaVersionError
 # Story 3.4 (2026-05-07): bumped 1 → 2 for the Epic 3 event-topology
 # rebuild. The single ``OlafAction`` channel split into four typed
 # topics (mood / activity / speech_emotion / vocalization) sharing a
-# common :class:`EventEnvelope`. ``setup.toml`` and the new event
-# schemas all carry ``schema_version=2``. ``expression_map.yaml`` was
-# already at 2 (Story 3.1 introduced the local
-# ``EXPRESSION_MAP_SCHEMA_VERSION`` pre-bump).
-SUPPORTED_SCHEMA_VERSION: int = 2
+# common :class:`EventEnvelope`.
+#
+# sprint-change-proposal-2026-05-10: bumped 2 → 3 for the
+# speech_emotion boundary repair. Removed the
+# ``SpeechEmotionPayload.expression_data`` field (OLAF-renderer
+# vocabulary that violated the consumer-agnostic publisher boundary).
+# All schema-version surfaces lockstep at 3: ``setup.toml``,
+# ``expression_map.yaml``, and the four event types via the shared
+# :class:`EventEnvelope` default.
+SUPPORTED_SCHEMA_VERSION: int = 3
 
 
 def assert_schema_version(

@@ -18,7 +18,6 @@ import pytest
 from pydantic import ValidationError
 
 from voice_agent_pipeline.config.expression_map import (
-    EmotionEntry,
     ExpressionMapConfig,
     FallbackFamily,
     UnknownEntry,
@@ -56,12 +55,8 @@ def _make_mapping(
             },
         }
     return ExpressionMapConfig(
-        schema_version=2,
-        emotions={
-            "neutral": EmotionEntry(expression_data={"led_color": "#ffffff"}),
-            "excited": EmotionEntry(expression_data={"led_color": "#ffa040", "led_intensity": 0.9}),
-            "happy": EmotionEntry(expression_data={"led_color": "#ffd060", "led_intensity": 0.7}),
-        },
+        schema_version=3,
+        emotions=["neutral", "excited", "happy"],
         vocalizations={
             "laughter": VocalizationEntry(tts_supported=True),
             "sigh": VocalizationEntry(tts_supported=False),
@@ -102,7 +97,6 @@ def test_speech_emotion_payload_is_frozen_and_extra_forbid() -> None:
         source_tag="excited",
         raw_tag="excited",
         resolved_fallback=None,
-        expression_data={"k": "v"},
     )
     # Frozen → mutation raises ValidationError (pydantic v2 wraps the
     # frozen-instance error in its own validation hierarchy).
@@ -116,7 +110,6 @@ def test_speech_emotion_payload_is_frozen_and_extra_forbid() -> None:
             source_tag="excited",
             raw_tag="excited",
             resolved_fallback=None,
-            expression_data={},
             bogus="x",  # type: ignore[call-arg]
         )
 
@@ -132,7 +125,6 @@ def test_speech_emotion_payload_audio_frame_id_defaults_to_none() -> None:
         source_tag="excited",
         raw_tag="excited",
         resolved_fallback=None,
-        expression_data={"k": "v"},
     )
     assert payload.audio_frame_id is None
 
@@ -170,7 +162,6 @@ def test_resolve_primary_emotion_no_log(caplog: pytest.LogCaptureFixture) -> Non
     assert payload.source_tag == "excited"
     assert payload.raw_tag == "excited"
     assert payload.resolved_fallback is None
-    assert payload.expression_data == {"led_color": "#ffa040", "led_intensity": 0.9}
     # No log emission on the happy path — happy tags should be silent.
     assert caplog.records == []
 
@@ -206,7 +197,6 @@ def test_resolve_fallback_family_logs_debug_first_time(
     assert first.source_tag == "enthusiastic"
     assert first.raw_tag == "enthusiastic"
     assert first.resolved_fallback == "high_energy_positive"
-    assert first.expression_data == {"led_color": "#ffa040", "led_intensity": 0.9}
     assert second == first
 
     # Exactly ONE DEBUG log on the fallback event name (de-duped).
@@ -233,7 +223,6 @@ def test_resolve_unmapped_tag_logs_warn_every_time(
     assert first.source_tag == "nevereverseen"
     assert first.raw_tag == "nevereverseen"
     assert first.resolved_fallback == "unknown"
-    assert first.expression_data == {"led_color": "#ffffff"}
     assert second == first
 
     # WARN logged on EVERY occurrence — no dedup on unmapped.
@@ -324,7 +313,6 @@ def _make_payload(emotion: str) -> SpeechEmotionPayload:
         source_tag=emotion,
         raw_tag=emotion,
         resolved_fallback=None,
-        expression_data={"led_color": "#000000"},
     )
 
 

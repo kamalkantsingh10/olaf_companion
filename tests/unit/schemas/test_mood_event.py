@@ -11,7 +11,7 @@ def test_minimal_valid_mood_event() -> None:
     event = MoodEvent(payload=MoodPayload(mood="calm"))
     assert event.payload.mood == "calm"
     assert event.payload.reason is None
-    assert event.schema_version == 2
+    assert event.schema_version == 3
 
 
 def test_mood_event_with_reason() -> None:

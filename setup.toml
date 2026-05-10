@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 
 # Mic input + speaker output devices — regexes matched (case-insensitive)
 # against PyAudio's enumerated device names. Tune to your hardware; if a
@@ -67,7 +67,7 @@ backend = "whisper-cpu"
 # more accurate than small on the v1 dev PC. First run downloads
 # ~750 MB to ~/.cache/huggingface/. v2 Pi 5 port (Story 5.x) will
 # swap the entire backend, so this model choice is dev-PC-only.
-model = "Systran/faster-distil-whisper-large-v3"
+model = "Systran/faster-distil-whisper-small.en"
 compute_type = "int8"
 device = "auto"
 low_confidence_threshold = 0.5

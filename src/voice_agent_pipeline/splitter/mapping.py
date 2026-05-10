@@ -96,11 +96,10 @@ def resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload:
         mapping: The loaded :class:`ExpressionMapConfig` (Story 3.1).
 
     Returns:
-        A populated :class:`SpeechEmotionPayload`. The
-        ``expression_data`` field is a reference (not a copy) into the
-        mapping's entry — safe because pydantic's ``frozen=True`` on
-        the entry plus the payload's own ``frozen=True`` mean the dict
-        isn't mutable through either path.
+        A populated :class:`SpeechEmotionPayload` carrying the resolved
+        canonical emotion name + audit metadata. Embodiment vocabulary
+        (pose / LED / etc.) is the consumer's responsibility, keyed on
+        ``payload.emotion`` (schema-3 boundary repair).
     """
     # Case 1 — first-class hit. Highest priority; no log emission.
     if tag in mapping.emotions:
@@ -109,7 +108,6 @@ def resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload:
             source_tag=tag,
             raw_tag=tag,
             resolved_fallback=None,
-            expression_data=mapping.emotions[tag].expression_data,
         )
 
     # Case 2 — fallback family hit. Iterate families in
@@ -136,7 +134,6 @@ def resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload:
                 source_tag=tag,
                 raw_tag=tag,
                 resolved_fallback=family_name,
-                expression_data=mapping.emotions[family.maps_to].expression_data,
             )
 
     # Case 3 — unmapped. WARN every time (no dedup); fall through to
@@ -156,7 +153,6 @@ def resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload:
         source_tag=tag,
         raw_tag=tag,
         resolved_fallback="unknown",
-        expression_data=mapping.emotions[fallback_emotion].expression_data,
     )
 
 

@@ -1,6 +1,6 @@
 ---
 stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8]
-editsCompleted: [edit-2026-05-06-direction-shift]
+editsCompleted: [edit-2026-05-06-direction-shift, edit-2026-05-10-boundary-repair]
 inputDocuments:
   - build_documents/planning-artifacts/prd.md
   - build_documents/planning-artifacts/voice-agent-pipeline-brief.md
@@ -13,7 +13,7 @@ date: '2026-05-05'
 lastStep: 8
 status: 'complete'
 completedAt: '2026-05-05'
-lastEdited: '2026-05-06'
+lastEdited: '2026-05-10'
 editHistory:
   - date: '2026-05-06'
     summary: |
@@ -33,6 +33,26 @@ editHistory:
       `activity/`; adds `mood/` package and `turn/tools.py`. Existing
       decisions on toolchain, naming conventions, module-by-domain layout,
       async patterns, fail-fast posture, and audio/STT/Cartesia stages are
+      unchanged.
+  - date: '2026-05-10'
+    summary: |
+      Boundary repair (sprint-change-proposal-2026-05-10). Removed
+      `SpeechEmotionPayload.expression_data: dict[str, Any]` —
+      OLAF-renderer vocabulary that was leaking onto the wire and
+      coupling the pipeline to a specific embodiment, contrary to
+      the consumer-agnostic publisher boundary the rest of the
+      architecture honors. `expression_map.yaml`'s `emotions:` block
+      reshapes from a mapping-of-EmotionEntry to a list of canonical
+      names (a vocabulary, not renderer hints); the `EmotionEntry`
+      pydantic model is deleted; the architectural `dict[str, Any]`
+      exception in Type System Conventions is retired. `schema_version`
+      bumped 2 → 3 across `setup.toml`, `expression_map.yaml`, and the
+      shared `EventEnvelope`. Bundled: two new vocalization tags
+      `nod` and `shake` with `tts_supported: false` (gesture cues for
+      affirmatives / negatives), with the matching Talker prompt
+      update. No story renumber; ACs in Stories 3.1 / 3.2 / 3.4
+      amended in-place in epics.md. Existing decisions on the four
+      typed topics, per-topic QoS, FSM, mood, and tool registry are
       unchanged.
 ---
 
@@ -67,7 +87,7 @@ The component is **consumer-agnostic**. The event envelope, the four topic-speci
 | Lifecycle (Activity) FSM | FR26–FR30 | 7-state activity FSM (`starting, sleeping, waking, listening, working, speaking, going_to_sleep`); `working` sub-modes (`thinking, delegating`); deferred-sleep transition; publishes to `activity` topic. FR29/FR30 (barge-in flush + STT preserve) deferred to v1.5. |
 | Wake/Sleep & Tool-Use | FR44–FR47 | Wake greeting via Talker greeting-mode on `sleeping → waking` (FR44, 800 ms timeout, static fallback list); Talker tool registry `{go_to_sleep, set_mood}` with typed Pydantic input validation (FR45); deferred-sleep semantics — `go_to_sleep` schedules transition for after acknowledgement audio finishes (FR46); continuous mic capture while AWAKE — wake-word fires only on `sleeping → waking` (FR47). |
 | Mood Control | FR48–FR50 | Discrete mood enum; `MoodController` with publisher-boundary cooldown (≤4/hr per NFR31); v1 lifetime is single-process (cross-restart persistence v1.5). |
-| Event Publishing & Channels | FR51–FR53 | Four typed ROS 2 topics (`mood` + `activity` latched/transient_local; `speech_emotion` + `vocalization` volatile); common envelope `{timestamp, schema_version, source, correlation_id, payload}`; `schema_version=2` (bumped due to topology change). |
+| Event Publishing & Channels | FR51–FR53 | Four typed ROS 2 topics (`mood` + `activity` latched/transient_local; `speech_emotion` + `vocalization` volatile); common envelope `{timestamp, schema_version, source, correlation_id, payload}`; `schema_version=3` (bump history: 1→2 topology change, 2→3 boundary repair). |
 | Configuration & Operations | FR31–FR36 | `setup.toml` + `.env` + `expression_map.yaml` loaders, schema validation, SIGHUP atomic swap (mapping only), systemd unit. |
 | Observability & Diagnostics | FR37–FR43 | Structured JSON logs, level discipline, local rotation, no telemetry, no persistence. |
 
@@ -183,7 +203,7 @@ All three files are **project-scoped**. No cross-project shared config; the orch
 5. Talker lives inside Pipecat — **and is tool-using in v1** (registered tools `{go_to_sleep, set_mood}`, typed Pydantic input validation)
 6. Pipeline only publishes voice-driven and FSM-driven events (idle/non-voice ambient behaviors are downstream concerns)
 7. **Continuous conversation; intent-based sleep.** Wake-word fires only on `sleeping → waking`; while AWAKE the mic stays open. Sleep is fired by Talker `go_to_sleep()` and **deferred** until the acknowledgement audio finishes. No idle auto-sleep timer.
-8. **Multi-topic event publish with a common envelope.** Four typed ROS 2 topics (`mood`, `activity`, `speech_emotion`, `vocalization`); every event carries `{timestamp, schema_version, source, correlation_id, payload}` with `schema_version=2`. The publisher is Protocol-based; ROS 2 is the v1 channel adapter; alternative adapters (Zenoh, NATS, WebSocket) require zero consumer-side changes.
+8. **Multi-topic event publish with a common envelope.** Four typed ROS 2 topics (`mood`, `activity`, `speech_emotion`, `vocalization`); every event carries `{timestamp, schema_version, source, correlation_id, payload}` with `schema_version=3`. The publisher is Protocol-based; ROS 2 is the v1 channel adapter; alternative adapters (Zenoh, NATS, WebSocket) require zero consumer-side changes.
 
 **Pre-decided technology choices** (architecture must conform):
 
@@ -198,7 +218,7 @@ All three files are **project-scoped**. No cross-project shared config; the orch
 **Stable contracts** (must survive any future rewrite of internals):
 
 - `POST /turn` request/response schema with the orchestrator
-- **Common event envelope** — `{timestamp, schema_version, source, correlation_id, payload}` shared across all four topics; `schema_version=2`
+- **Common event envelope** — `{timestamp, schema_version, source, correlation_id, payload}` shared across all four topics; `schema_version=3`
 - **Four topic-specific event schemas** — `MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent` (each a frozen pydantic v2 model wrapping `EventEnvelope` with a typed `payload`)
 - **`EventPublisher` interface** — `connect / disconnect / is_healthy / publish_mood / publish_activity / publish_speech_emotion / publish_vocalization`. Stable across transport changes.
 - **Talker tool registry contract** — tool name + typed Pydantic input schema (not implementation); v1 registry is `{go_to_sleep, set_mood}`
@@ -240,6 +260,7 @@ The PRD/brief/distillate alignment pass landed in commit `6f3bfe3` (2026-05-06 s
 - Idle auto-sleep removed → intent-based sleep via Talker `go_to_sleep()` ✅
 - Wake-word semantics refined: fires only on `sleeping → waking`; continuous mic capture while AWAKE ✅
 - `schema_version` bumped 1 → 2 ✅
+- `schema_version` bumped 2 → 3 ✅ (sprint-change-proposal-2026-05-10 — `SpeechEmotionPayload.expression_data` removed; consumer-agnostic publisher boundary repaired)
 - Barge-in deferred to v1.5 ✅
 - Wake greeting + mood + Talker tool-using added as first-class concepts ✅
 
@@ -377,15 +398,50 @@ uv add --dev ruff pyright pytest pytest-asyncio
 | Decision | Choice | Notes |
 |---|---|---|
 | `EventPublisher` interface | Async Protocol: `connect()`, `disconnect()`, `is_healthy() -> bool`, plus four typed publish methods — `publish_mood(MoodEvent)`, `publish_activity(ActivityEvent)`, `publish_speech_emotion(SpeechEmotionEvent)`, `publish_vocalization(VocalizationEvent)`. Fire-and-forget; errors raise. | Aligned with v1 fail-fast. v2 swap to queue-based behind same interface. Four methods (not one polymorphic `publish(topic, event)`) so type checking enforces topic↔event correspondence at call sites. |
-| Common envelope | **`EventEnvelope`** mixin (frozen pydantic v2 BaseModel): `schema_version: int = 2`, `timestamp: datetime` (UTC, ISO8601 on the wire), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload: <topic-specific BaseModel>`. The four event classes inherit envelope fields and tighten `payload` to a topic-specific Pydantic model. | `correlation_id` ties an audio-anchored `speech_emotion` event back to the parent turn (so consumers can correlate `activity → working → speaking → speech_emotion → vocalization` for one user turn). |
+| Common envelope | **`EventEnvelope`** mixin (frozen pydantic v2 BaseModel): `schema_version: int = 3`, `timestamp: datetime` (UTC, ISO8601 on the wire), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload: <topic-specific BaseModel>`. The four event classes inherit envelope fields and tighten `payload` to a topic-specific Pydantic model. | `correlation_id` ties an audio-anchored `speech_emotion` event back to the parent turn (so consumers can correlate `activity → working → speaking → speech_emotion → vocalization` for one user turn). |
 | `MoodEvent` schema | Frozen pydantic v2 model. `payload: MoodPayload(mood: Mood, reason: str \| None)`. `Mood` is a `Literal[...]` of 6–8 values (~`"calm", "happy", "playful", "curious", "thoughtful", "sleepy", "grumpy", "excited"` — final set in `mood/state.py`). Published on transition (set_mood) only; latched/transient_local QoS. | The mood enum is code-level (not YAML), allowed to evolve under `schema_version` umbrella. |
 | `ActivityEvent` schema | Frozen pydantic v2 model. `payload: ActivityPayload(state: ActivityState, working_submode: WorkingSubmode \| None, transition_reason: str \| None, from_state: ActivityState \| None)`. `ActivityState = Literal["starting", "sleeping", "waking", "listening", "working", "speaking", "going_to_sleep"]`; `WorkingSubmode = Literal["thinking", "delegating"]`. Published on every FSM transition; latched/transient_local QoS. | `working_submode` is non-null only when `state="working"`. `from_state` is null only on the initial `starting` publish. |
-| `SpeechEmotionEvent` schema | Frozen pydantic v2 model. `payload: SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str \| None, raw_tag: str, resolved_fallback: str \| None, expression_data: dict[str, Any])`. `expression_data` is the open extensibility seam — pose, eye state, LED color/intensity, anything new from `expression_map.yaml`. Volatile QoS, depth=8. | The split between `emotion` (resolved name) and `raw_tag` + `resolved_fallback` (the audit trail) is FR20 — consumers know what was asked AND what was rendered. |
+| `SpeechEmotionEvent` schema | Frozen pydantic v2 model. `payload: SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str \| None, raw_tag: str, resolved_fallback: str \| None)`. Resolved canonical name + audit trail only — embodiment vocabulary (pose / LED / eye state) is the consumer's responsibility, keyed on `payload.emotion`. Volatile QoS, depth=8. | The split between `emotion` (resolved name) and `raw_tag` + `resolved_fallback` (the audit trail) is FR20 — consumers know what was asked AND what was rendered. The pre-3 `expression_data: dict[str, Any]` "open extensibility seam" was removed in sprint-change-proposal-2026-05-10 (boundary repair) — see "What left the wire on schema_version=3" below. |
 | `VocalizationEvent` schema | Frozen pydantic v2 model. `payload: VocalizationPayload(tag: str, audio_frame_id: str \| None, tts_supported: bool)`. `tag` examples: `"laugh"`, `"sigh"`, `"gasp"`, `"clears_throat"`. `tts_supported` indicates whether Cartesia rendered audio for the tag (some are silently dropped by TTS but still published for embodiment). Volatile QoS, depth=8. | All vocalizations are published on the topic regardless of TTS support, so OLAF can express them. |
-| Schema versioning | **Integer `schema_version=2`** on every event AND every config file (bumped from 1 due to topology change from single channel to four topics). Bumped only on breaking changes; forward-compat additions don't bump. | NFR27 satisfied. Pipeline refuses to load configs/parse events with unsupported version (raises `SchemaVersionError`). |
+| Schema versioning | **Integer `schema_version=3`** on every event AND every config file. Bump history: `1 → 2` (Story 3.4, single-channel → four-topic topology); `2 → 3` (sprint-change-proposal-2026-05-10, removal of `SpeechEmotionPayload.expression_data` to repair the consumer-agnostic publisher boundary). Bumped only on breaking changes; forward-compat additions don't bump. | NFR27 satisfied. Pipeline refuses to load configs/parse events with unsupported version (raises `SchemaVersionError`). |
 | Type naming (final) | `MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent` (each `<Topic>Payload` for the inner model). Single-channel `OlafAction` / `ExpressionEvent` / `LifecycleEvent` from earlier are removed. | Spec-triple is updated in commit `6f3bfe3`; this architecture follows. |
 | DDS wire format | ROS 2 `std_msgs/String` carrying the **full envelope JSON** (envelope + payload, single round of serialization). v1 keeps the no-`.msg`-package simplification (no `colcon build`, no `ament_python` package). When a typed consumer materializes (Epic 4+), a custom `.msg` package adds typed structural fields on top — same JSON content. | One serialization hop per event. JSON encoding cost is ~µs; QoS is the actual cost driver. |
 | Per-topic QoS | `mood`: latched / transient_local, depth=1 (subscribers learn current mood at connect). `activity`: latched / transient_local, depth=1 (subscribers learn current state at connect). `speech_emotion`: volatile, depth=8 (recent emotions only; new subscribers don't replay). `vocalization`: volatile, depth=8 (same — punctual events). All four set RELIABLE delivery (NFR21). | Latched QoS for slow-changing state (mood, activity) is the standard ROS 2 pattern for "tell me what's true now"; volatile for high-rate transients. |
+
+#### What left the wire on schema_version=3
+
+Sprint-change-proposal-2026-05-10 (boundary repair). The
+`SpeechEmotionPayload.expression_data: dict[str, Any]` field — the
+documented "open extensibility seam" pre-3 — was carrying OLAF-specific
+renderer vocabulary (`base_pose.yaw`, `pitch`, `eye_state`, `led_color`,
+`led_intensity`) verbatim from `expression_map.yaml` onto every
+published `SpeechEmotionEvent`. That coupled the pipeline to a
+specific embodiment and violated the consumer-agnostic publisher
+boundary the rest of the architecture (and the `MoodEvent` schema in
+particular) honors.
+
+**Removed:** `SpeechEmotionPayload.expression_data` field; the
+per-emotion `expression_data:` block in `expression_map.yaml`; the
+`EmotionEntry` pydantic model; the architectural `dict[str, Any]`
+exception.
+
+**Reshaped:** `expression_map.yaml`'s `emotions:` is now a list of
+canonical names (a vocabulary, not renderer hints). The resolver
+returns the resolved canonical name + audit metadata (`source_tag` /
+`raw_tag` / `resolved_fallback`); embodiment vocabulary is the
+consumer's responsibility, keyed on `payload.emotion`.
+
+**Bundled with the same commit:** two new vocalization tags `nod` and
+`shake` (with `tts_supported: false`) — gesture cues for clear
+affirmatives / negatives. The Talker prompt (`prompts/talker_system.md`)
+teaches the LLM when to emit them; the embodiment binds them to
+head-nod / head-shake.
+
+**Subscriber rule:** schema_version=2 events are not accepted; the
+pipeline `assert_schema_version` helper raises `SchemaVersionError`.
+No dual-emit, no graceful degradation (V1 fail-fast posture, CLAUDE.md
+rule #4). The boundary repair is consumer-blocking by design — the
+downstream embodiment project consumes the wire as-is or not at all.
 
 ### External Clients (Batch 4)
 
@@ -521,10 +577,10 @@ tests/
 | Use case | Mechanism | Notes |
 |---|---|---|
 | **Interfaces / seams** | `typing.Protocol` | Examples: `STTBackend`, `EventPublisher`, `OrchestratorClient`, `BeliefStateClient`, `TalkerClient`, `TTSClient`. Never use `abc.ABC` for these. |
-| **Events / config / data models** | `pydantic.BaseModel` v2 | `model_config = ConfigDict(frozen=True, extra="forbid")` for events. The four event types share an `EventEnvelope` mixin; `payload` is a typed Pydantic model per topic (not an open `dict`). The one allowed open `dict[str, Any]` is the inner `expression_data` field on `SpeechEmotionPayload` (extensibility seam for `expression_map.yaml`). |
+| **Events / config / data models** | `pydantic.BaseModel` v2 | `model_config = ConfigDict(frozen=True, extra="forbid")` for events. The four event types share an `EventEnvelope` mixin; `payload` is a typed Pydantic model per topic — **no plain dicts at boundaries, period**. (Pre-schema-3 there was one carved-out `dict[str, Any]` exception on `SpeechEmotionPayload.expression_data`; that field was removed in the boundary repair, and the exception with it.) |
 | **Enum-like fixed values** | `typing.Literal[...]` | `ActivityState = Literal["starting", "sleeping", "waking", "listening", "working", "speaking", "going_to_sleep"]`; `WorkingSubmode = Literal["thinking", "delegating"]`; `Mood = Literal[<6–8 values>]`. Don't reach for `enum.Enum`. |
 | **Internal trivial structs** | `@dataclass(frozen=True)` | Only when pydantic validation is overkill; never crosses a boundary. |
-| **Type hints** | Required everywhere; pyright strict for `src/`, basic for `tests/` | No `Any` except the documented `expression_data: dict[str, Any]` extensibility seam on `SpeechEmotionPayload` (forward-compat for `expression_map.yaml` additions). No `# type: ignore` without an inline reason comment. |
+| **Type hints** | Required everywhere; pyright strict for `src/`, basic for `tests/` | **No `Any` in `src/`, period.** (The pre-schema-3 `expression_data: dict[str, Any]` exception is gone with the field — see "What left the wire on schema_version=3" below.) No `# type: ignore` without an inline reason comment. |
 
 ### Error Handling
 
@@ -645,7 +701,7 @@ log.warning("tool.dispatch_invalid_input", tool="set_mood", error="value not in 
 - Adding a `utils/` package — there's a domain package it belongs to
 - Silently catching external service errors in v1 code
 - Writing function docstrings that just restate the function name
-- Adding `Any` outside the documented `SpeechEmotionPayload.expression_data` extensibility seam
+- Adding `Any` anywhere in `src/` (the historical `SpeechEmotionPayload.expression_data` exception is gone with the field — schema-3 boundary repair)
 
 ## Project Structure & Boundaries
 
@@ -729,7 +785,7 @@ voice-agent-pipeline/
 │       │   ├── __init__.py
 │       │   ├── setup.py                       # SetupConfig (pydantic-settings; setup.toml + .env; covers [publisher], [mood], [greeting], [tools] sections)
 │       │   ├── expression_map.py              # ExpressionMapConfig + SIGHUP atomic swap (deferred mid-utterance)
-│       │   └── version.py                     # SchemaVersionError check helpers (refuses schema_version != 2)
+│       │   └── version.py                     # SchemaVersionError check helpers (refuses schema_version != 3)
 │       ├── logging/
 │       │   ├── __init__.py
 │       │   ├── setup.py                       # structlog configuration, RotatingFileHandler wiring
@@ -774,7 +830,7 @@ voice-agent-pipeline/
     │   ├── config/
     │   │   ├── test_setup.py                  # schema validation; missing keys; LAN orchestrator + secret rule; new sections
     │   │   ├── test_expression_map.py         # SIGHUP atomic swap; mid-utterance defer; rollback on invalid
-    │   │   └── test_version.py                # schema_version=2 accepted; other values rejected
+    │   │   └── test_version.py                # schema_version=3 accepted; other values rejected
     │   └── logging/
     │       └── test_redaction.py              # audio bytes dropped; transcripts gated; credentials regex
     ├── integration/
@@ -791,7 +847,7 @@ voice-agent-pipeline/
         ├── test_activity_event_schema.py      # 7-state Literal exhaustive; working sub-modes only when state=working
         ├── test_speech_emotion_event_schema.py
         ├── test_vocalization_event_schema.py
-        └── test_setup_schema_version.py       # schema_version=2 accepted; mismatch refused
+        └── test_setup_schema_version.py       # schema_version=3 accepted; mismatch refused
 ```
 
 ### Architectural Boundaries

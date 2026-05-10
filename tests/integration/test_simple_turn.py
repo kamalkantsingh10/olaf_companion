@@ -36,7 +36,6 @@ from pipecat.frames.frames import Frame, OutputAudioRawFrame
 
 from voice_agent_pipeline.audio.vad import UtteranceCapturedFrame
 from voice_agent_pipeline.config.expression_map import (
-    EmotionEntry,
     ExpressionMapConfig,
     FallbackFamily,
     UnknownEntry,
@@ -60,11 +59,8 @@ from voice_agent_pipeline.turn.tools import ToolRegistry
 def _make_mapping() -> ExpressionMapConfig:
     """Minimal ExpressionMapConfig for the integration chain."""
     return ExpressionMapConfig(
-        schema_version=2,
-        emotions={
-            "neutral": EmotionEntry(expression_data={"led_color": "#fff"}),
-            "content": EmotionEntry(expression_data={"led_color": "#a0e0a0"}),
-        },
+        schema_version=3,
+        emotions=["neutral", "content"],
         vocalizations={"laughter": VocalizationEntry(tts_supported=True)},
         fallback_families={
             "high_energy_positive": FallbackFamily(members=["enthusiastic"], maps_to="content"),

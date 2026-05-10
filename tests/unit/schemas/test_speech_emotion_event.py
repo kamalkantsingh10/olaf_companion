@@ -1,9 +1,12 @@
 """Tests for :mod:`voice_agent_pipeline.schemas.speech_emotion_event`.
 
-The migration from ``splitter/mapping.py`` to the canonical home in
-``schemas/`` does not change the field set — Story 3.2's existing
-tests for the resolver continue to drive this payload type; this file
-adds schema-shape coverage.
+The schema-3 boundary repair (sprint-change-proposal-2026-05-10)
+removed the ``expression_data: dict[str, Any]`` field that was the
+documented "open-extensibility seam" — embodiment vocabulary
+(pose / LED) belongs on the consumer side, not on this wire payload.
+The remaining fields are the audit-trail surface only:
+``emotion`` / ``source_tag`` / ``raw_tag`` / ``resolved_fallback``
+plus the optional ``audio_frame_id`` slot Story 3.7 fills.
 """
 
 import pytest
@@ -22,7 +25,6 @@ def _payload(**overrides: object) -> SpeechEmotionPayload:
         "source_tag": "excited",
         "raw_tag": "excited",
         "resolved_fallback": None,
-        "expression_data": {"led_color": "#ffa040"},
     }
     base.update(overrides)
     return SpeechEmotionPayload(**base)  # type: ignore[arg-type]
@@ -32,7 +34,7 @@ def test_minimal_valid_speech_emotion_event() -> None:
     event = SpeechEmotionEvent(payload=_payload())
     assert event.payload.emotion == "excited"
     assert event.payload.audio_frame_id is None  # default
-    assert event.schema_version == 2
+    assert event.schema_version == 3
 
 
 def test_payload_with_fallback_metadata() -> None:
@@ -46,22 +48,37 @@ def test_payload_with_fallback_metadata() -> None:
 
 
 def test_payload_extra_forbid() -> None:
+    """``extra="forbid"`` rejects unknown fields at construction.
+
+    Post-boundary-repair, attempting to pass ``expression_data`` (the
+    removed field) is itself an extra-key violation — the test doubles
+    as a regression alarm if the field accidentally returns.
+    """
     with pytest.raises(ValidationError):
         SpeechEmotionPayload(
             emotion="excited",
             source_tag="excited",
             raw_tag="excited",
             resolved_fallback=None,
-            expression_data={},
             bogus=1,  # type: ignore[call-arg]
         )
 
 
-def test_expression_data_accepts_arbitrary_keys() -> None:
-    """``expression_data: dict[str, Any]`` is the open-extensibility seam."""
-    payload = _payload(expression_data={"any_new_field": [1, 2, 3], "nested": {"k": "v"}})
-    assert payload.expression_data["any_new_field"] == [1, 2, 3]
-    assert payload.expression_data["nested"] == {"k": "v"}
+def test_removed_expression_data_field_is_rejected() -> None:
+    """Passing the removed ``expression_data`` field raises ``ValidationError``.
+
+    Wire-contract regression alarm: the field was deleted in the
+    schema-3 boundary repair. Re-introducing it (intentionally or
+    accidentally) breaks ``extra="forbid"`` and surfaces here.
+    """
+    with pytest.raises(ValidationError):
+        SpeechEmotionPayload(
+            emotion="excited",
+            source_tag="excited",
+            raw_tag="excited",
+            resolved_fallback=None,
+            expression_data={"led_color": "#ffa040"},  # type: ignore[call-arg]
+        )
 
 
 def test_payload_is_frozen() -> None:

@@ -27,13 +27,14 @@ def test_mismatched_version_raises_with_both_versions_and_source() -> None:
     is the only thing the operator sees in stderr / logs, so we test what
     they actually read.
 
-    Story 3.4 bumped ``SUPPORTED_SCHEMA_VERSION`` from 1 → 2; the test
-    now drives ``found=1`` to assert the rejected-on-mismatch contract
-    against the new supported version.
+    Bump history: Story 3.4 bumped ``SUPPORTED_SCHEMA_VERSION`` 1 → 2;
+    sprint-change-proposal-2026-05-10 bumped 2 → 3 (boundary repair).
+    The test drives ``found=1`` to assert the rejected-on-mismatch
+    contract against the current supported version.
     """
     with pytest.raises(SchemaVersionError) as exc_info:
         assert_schema_version(1, source="setup.toml")
     msg = str(exc_info.value)
     assert "1" in msg
-    assert "2" in msg
+    assert "3" in msg
     assert "setup.toml" in msg

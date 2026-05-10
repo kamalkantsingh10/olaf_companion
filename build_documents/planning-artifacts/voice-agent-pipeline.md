@@ -32,7 +32,7 @@ These are the decisions an LLM implementing this component **must not violate**.
 5. **Talker lives inside Pipecat**, not the orchestrator. Talker is **tool-using** in v1 — registered tool-set is `{go_to_sleep(), set_mood(mood)}`, with typed Pydantic input schemas validated before execution.
 6. **Pipeline publishes only on the four event topics.** No other ROS 2 publishes from this component; no non-voice-driven events. Idle behaviors and motion are owned by other components.
 7. **Continuous conversation; intent-based sleep.** Wake-word fires only on the `sleeping → waking` transition. While AWAKE, the mic stays open and turns flow without re-prompting. Sleep is fired by Talker `go_to_sleep()` tool-call, scheduled to take effect after the acknowledgement audio finishes (deferred sleep). No idle auto-sleep.
-8. **Multi-topic event publish with a common envelope.** Four typed ROS 2 topics (`mood`, `activity`, `speech_emotion`, `vocalization`); every event carries `{timestamp, schema_version, source, correlation_id, payload}`. Schema version is currently **2** (bumped from 1 due to the breaking topology change away from a single `/olaf/expression` channel). The publisher is Protocol-based; ROS 2 is the v1 channel adapter, with a fake/log adapter for tests.
+8. **Multi-topic event publish with a common envelope.** Four typed ROS 2 topics (`mood`, `activity`, `speech_emotion`, `vocalization`); every event carries `{timestamp, schema_version, source, correlation_id, payload}`. Schema version is currently **3**. Bump history: 1 → 2 (Story 3.4 — single `/olaf/expression` channel split into four topics); 2 → 3 (sprint-change-proposal-2026-05-10 — `SpeechEmotionPayload.expression_data` removed; consumer-agnostic boundary repair). The publisher is Protocol-based; ROS 2 is the v1 channel adapter, with a fake/log adapter for tests.
 
 ## 3. Responsibilities
 
@@ -360,82 +360,70 @@ OLAF's renderer can use activity state for things outside emotion: a small "list
 
 Loaded at Pipecat startup. Reloadable on `SIGHUP` for live tuning. Schema version is checked at load; incompatible versions are rejected at startup (FR31 / NFR27).
 
+Post-schema-3 (sprint-change-proposal-2026-05-10) the file is a
+**vocabulary**, not renderer hints — `emotions:` is a list of canonical
+names; the per-emotion `expression_data:` blocks shipping pose / LED /
+eye-state are gone. The embodiment project owns that mapping
+consumer-side. Two new gesture vocalizations `nod` and `shake` ride on
+the same channel as the audio bursts but with `tts_supported: false`
+(visual cues only, never audio).
+
 ```yaml
-schema_version: 2
+schema_version: 3
 
 emotions:
-  neutral:
-    tier: primary
-    olaf:
-      base_pose: { yaw: 0, pitch: 0, roll: 0, lean: 5 }
-      eye_state: open_relaxed
-      led_color: "#FFFFFF"
-      led_intensity: 0.3
-  content:
-    tier: primary
-    olaf:
-      base_pose: { yaw: 0, pitch: -5, roll: 0, lean: 3 }
-      eye_state: soft_blink
-      led_color: "#FFA060"
-      led_intensity: 0.5
-  # ...
-  curious:
-    tier: secondary
-    fallback: content
-    olaf:
-      base_pose: { yaw: 0, pitch: 0, roll: 12, lean: 8 }
-      eye_state: wide_focused
-      led_color: "#40D0FF"
+  - neutral
+  - content
+  - excited
+  - sad
+  - angry
+  - scared
+  - happy
+  - curious
+  - sympathetic
+  - surprised
+  - frustrated
+  - melancholic
 
 vocalizations:
-  laugh:
-    cartesia_supported: true
-    aliases: ["laughter"]   # accept either tag from the LLM
-    duration_ms: 1500
-    olaf:
-      pose: head_bob
-      eye_state: squint
-      led_pulse: warm
-  sigh:
-    cartesia_supported: false
-    duration_ms: 1200
-    olaf:
-      pose: head_drop_recover
-      eye_state: brief_close
-  gasp:
-    cartesia_supported: false
-    duration_ms: 400
-    olaf:
-      pose: head_up_quick
-      eye_state: wide
-      led_flash: white_brief
-  clears_throat:
-    cartesia_supported: false
-    duration_ms: 600
+  laughter: { tts_supported: true }
+  sigh:     { tts_supported: false }
+  gasp:     { tts_supported: false }
+  clears_throat: { tts_supported: false }
+  nod:      { tts_supported: false }   # gesture cue (head-nod), never audio
+  shake:    { tts_supported: false }   # gesture cue (head-shake), never audio
 
 fallback_families:
-  high_energy_positive: excited
-  calm_positive: content
-  engaged_neutral: content
-  negative_active: angry
-  negative_passive: sad
-  apprehensive: scared
-  edgy: angry
-  unknown: neutral
+  high_energy_positive:
+    members: [enthusiastic, gleeful, joyful, elated, eager, ecstatic, exuberant, thrilled]
+    maps_to: excited
+  low_energy_positive:
+    members: [relaxed, serene, peaceful, satisfied, calm, hopeful, grateful, fond]
+    maps_to: content
+  high_energy_negative:
+    members: [furious, irritated, annoyed, aggressive, indignant, enraged, hostile, exasperated]
+    maps_to: angry
+  low_energy_negative:
+    members: [melancholy, disappointed, gloomy, regretful, tearful, despondent, weary, defeated, resigned]
+    maps_to: sad
+  curious_inquisitive:
+    members: [inquisitive, interested, intrigued, pondering, contemplative, thoughtful, attentive]
+    maps_to: curious
+  sympathetic_caring:
+    members: [concerned, apologetic, caring, gentle, tender, compassionate, soothing, reassuring]
+    maps_to: sympathetic
+  surprise_alarm:
+    members: [shocked, astonished, startled, alarmed, worried, fearful, anxious, dismayed, taken_aback]
+    maps_to: surprised
 
-# Discrete mood enum used by Talker set_mood() tool. Talker prompt is given
-# this list so it knows which values are valid; the publisher rejects anything
-# outside this enum with a WARN log.
-moods:
-  - happy
-  - playful
-  - calm
-  - curious
-  - gloomy
-  - grumpy
-  - sleepy
-  - excited
+unknown:
+  maps_to: neutral
 ```
+
+The Mood enum lives in code (`schemas/mood_event.py`), not YAML — it is
+fine-tuned with the Talker system prompt and consumer-side rendering,
+both of which are code-coupled. v1 values: `calm, happy, playful,
+curious, thoughtful, sleepy, grumpy, excited`.
 
 ### 11.2 `pipeline.toml`
 
@@ -527,7 +515,7 @@ A conversation feels alive when these hold. Numbers below are the v1 commitments
 - Talker tool-using — `go_to_sleep()` and `set_mood(mood)` with typed Pydantic input schemas
 - Mood-tinted wake greeting (Talker greeting mode + static fallback list)
 - Mood model (~6–8 discrete states; slow-cadence publish; in-process persistence within a process lifetime)
-- Common event envelope (`timestamp`, `schema_version`, `source`, `correlation_id`, `payload`); `schema_version=2`
+- Common event envelope (`timestamp`, `schema_version`, `source`, `correlation_id`, `payload`); `schema_version=3`
 - HTTP/WebSocket stream contract with orchestrator (Claude Code session)
 - Tag splitter — streaming SSML parser, emotion + vocalization tag parsing, primary + secondary mapping, full fallback table coverage; `speech_emotion` payload carries both raw and resolved tags
 - Configuration: `expression_map.yaml` + `pipeline.toml`
@@ -568,7 +556,7 @@ A conversation feels alive when these hold. Numbers below are the v1 commitments
 - **Continuous conversation while AWAKE.** Wake-word gates `sleeping → waking` only. Subsequent turns flow without re-arming. The mic is the single audio stream consumer in either mode (wake-word listener while sleeping; VAD + STT while AWAKE) — no parallel-listener architecture.
 - **Sleep is intent-driven, deferred-execution.** Talker decides; the pipeline executes the transition after the acknowledgement audio finishes so the goodbye is heard before the mic mode flips. No idle auto-sleep.
 - **Wake greeting** is generated by Talker in greeting mode on every wake-word fire, tinted by current mood. Static fallback list (`["hey", "yeah?", "hi"]`) for unreachable Talker / overlong responses / 800ms timeout.
-- **Four-topic event publish, common envelope, schema version 2.** `mood`, `activity`, `speech_emotion`, `vocalization` over ROS 2. Common envelope: `timestamp`, `schema_version`, `source`, `correlation_id`, `payload`. The publisher is Protocol-based; ROS 2 is the v1 channel adapter.
+- **Four-topic event publish, common envelope, schema version 3.** `mood`, `activity`, `speech_emotion`, `vocalization` over ROS 2. Common envelope: `timestamp`, `schema_version`, `source`, `correlation_id`, `payload`. The publisher is Protocol-based; ROS 2 is the v1 channel adapter.
 - **`speech_emotion` schema is open-set.** Any Cartesia tag string is accepted; the payload carries `raw_tag + resolved_fallback`. Cartesia silently drops tags it doesn't recognise on the voice side.
 - **Vocalization source: LLM-emitted inline tags**, parsed pre-TTS. Cartesia receives the tags it supports; the pipeline publishes all of them as `vocalization` events anchored to audio frames.
 - **Vocalization pose timing.** OLAF renderer interpolates ease-in/ease-out itself. Pipeline says "go to laughter, hold 1500ms, return to base"; renderer chooses the curves.
@@ -597,7 +585,7 @@ Phase 3 is the v1 finish line. The component is meant to be **stable, narrow, an
 The contracts that must survive any future rewrite of this component:
 
 - `POST /turn` request/response shape with the orchestrator
-- The four typed event schemas on ROS 2 — `mood`, `activity`, `speech_emotion`, `vocalization` — with their common envelope and current `schema_version=2`
+- The four typed event schemas on ROS 2 — `mood`, `activity`, `speech_emotion`, `vocalization` — with their common envelope and current `schema_version=3`
 - The `expression_map.yaml` schema (mapping table + vocalization table + fallback families + mood enum)
 - The Talker tool registry contract — name + Pydantic input schema for each tool, not implementation
 
@@ -620,7 +608,7 @@ from pydantic import BaseModel
 
 class EventEnvelope(BaseModel):
     timestamp: datetime          # UTC, ISO8601, microsecond precision
-    schema_version: int          # currently 2; bumps only on breaking changes (CLAUDE.md rule 6)
+    schema_version: int          # currently 3; bumps only on breaking changes (CLAUDE.md rule 6)
     source: str                  # component name string, e.g. "voice-agent-pipeline"
     correlation_id: UUID         # turn-scoped for audio-anchored events; session-scoped for mood/activity
     payload: dict                # topic-specific Pydantic model (see §17.2)
@@ -631,7 +619,7 @@ JSON-on-wire example:
 ```json
 {
   "timestamp": "2026-05-06T08:47:12.314152Z",
-  "schema_version": 2,
+  "schema_version": 3,
   "source": "voice-agent-pipeline",
   "correlation_id": "f3a51c5e-3b8d-4d29-8b1a-6e0a7c1e3a9c",
   "payload": { "...": "topic-specific" }
@@ -739,7 +727,7 @@ class EventPublisher(Protocol):
     async def publish_vocalization(self, payload: VocalizationPayload, *, correlation_id: UUID) -> None: ...
 ```
 
-The publisher applies the common envelope (`timestamp`, `schema_version=2`, `source`, the supplied `correlation_id`, the supplied `payload`) and writes to the appropriate ROS 2 topic with the QoS profile defined above. Mood-cooldown enforcement (NFR31) and `speech_emotion` last-published-cache (FR24) live inside the publisher implementation, not in the pipeline call sites.
+The publisher applies the common envelope (`timestamp`, `schema_version=3`, `source`, the supplied `correlation_id`, the supplied `payload`) and writes to the appropriate ROS 2 topic with the QoS profile defined above. Mood-cooldown enforcement (NFR31) and `speech_emotion` last-published-cache (FR24) live inside the publisher implementation, not in the pipeline call sites.
 
 ### 17.4 Talker Tools Registry
 
@@ -797,7 +785,10 @@ class SetMoodResult(BaseModel):
 
 ### 17.5 Schema Version Migration Notes
 
-`schema_version=2` was introduced in the 2026-05-06 PRD edit, replacing the prior `schema_version=1` which used a single `/olaf/expression` topic carrying `OlafAction` events with lifecycle states `{SLEEPING, LISTENING, THINKING, SPEAKING, IDLE}`.
+`schema_version=3` is the current wire version. Bump history:
+
+- **`1 → 2`** (Story 3.4, 2026-05-07): single `/olaf/expression` topic carrying `OlafAction` events with lifecycle states `{SLEEPING, LISTENING, THINKING, SPEAKING, IDLE}` was replaced by four typed topics (`mood`, `activity`, `speech_emotion`, `vocalization`) sharing a common `EventEnvelope`.
+- **`2 → 3`** (sprint-change-proposal-2026-05-10): `SpeechEmotionPayload.expression_data: dict[str, Any]` removed (consumer-agnostic publisher boundary repair). Pre-3 the field shipped OLAF-specific renderer vocabulary (pose / LED / eye state) verbatim from `expression_map.yaml`; that vocabulary now lives consumer-side, keyed on `payload.emotion`.
 
 **Breaking changes in v2:**
 

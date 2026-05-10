@@ -8,8 +8,13 @@ concrete subclass.
 
 The envelope's stable contract (architecture.md §"Stable contracts"):
 
-- ``schema_version: int = 2`` — bumped from 1 in this story to mark the
-  Epic 3 topology change (single channel → four topics).
+- ``schema_version: int = 3`` — bumped from 2 in
+  sprint-change-proposal-2026-05-10 (boundary repair) when the
+  ``SpeechEmotionPayload.expression_data`` field was removed from the
+  wire. The bump applies envelope-wide for cross-topic consistency
+  even though only ``speech_emotion`` lost a field; subscribers that
+  only consume ``mood`` / ``activity`` / ``vocalization`` see no shape
+  change beyond the version integer.
 - ``timestamp: datetime`` — UTC, ISO8601 on the wire.
 - ``source: Literal["voice_agent_pipeline"]`` — discriminator that lets
   multi-producer subscribers tell our events apart from a future
@@ -40,9 +45,9 @@ class EventEnvelope(BaseModel):
     pydantic model.
 
     Attributes:
-        schema_version: Always ``2`` post-Epic-3. Subscribers reject
-            other values via :func:`assert_schema_version` at parse
-            boundaries (NFR27).
+        schema_version: Always ``3`` post-boundary-repair. Subscribers
+            reject other values via :func:`assert_schema_version` at
+            parse boundaries (NFR27).
         timestamp: UTC datetime at construction (default factory).
             Pydantic v2 serializes datetime → ISO8601 with timezone
             offset on ``model_dump_json()``.
@@ -60,7 +65,7 @@ class EventEnvelope(BaseModel):
     # extra="forbid" → typos fail loudly at construction time.
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: int = 2
+    schema_version: int = 3
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     source: Literal["voice_agent_pipeline"] = "voice_agent_pipeline"
     correlation_id: UUID = Field(default_factory=uuid4)

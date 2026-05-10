@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from voice_agent_pipeline.config.expression_map import (
-    EmotionEntry,
     ExpressionMapConfig,
     FallbackFamily,
     UnknownEntry,
@@ -36,13 +35,8 @@ def _make_mapping(
     if families is None:
         families = {"high_energy_positive": {"members": ["enthusiastic"], "maps_to": "excited"}}
     return ExpressionMapConfig(
-        schema_version=2,
-        emotions={
-            "neutral": EmotionEntry(expression_data={"led_color": "#ffffff"}),
-            "content": EmotionEntry(expression_data={"led_color": "#a0e0a0"}),
-            "excited": EmotionEntry(expression_data={"led_color": "#ffa040"}),
-            "happy": EmotionEntry(expression_data={"led_color": "#ffd060"}),
-        },
+        schema_version=3,
+        emotions=["neutral", "content", "excited", "happy"],
         vocalizations={
             "laughter": VocalizationEntry(tts_supported=True),
             "sigh": VocalizationEntry(tts_supported=False),

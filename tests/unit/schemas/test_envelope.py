@@ -24,7 +24,7 @@ class _DummyPayload(BaseModel):
 def test_envelope_constructs_with_minimal_payload() -> None:
     """An envelope with just a payload populates every field with defaults."""
     env = EventEnvelope(payload=_DummyPayload(name="x"))
-    assert env.schema_version == 2
+    assert env.schema_version == 3
     assert env.source == "voice_agent_pipeline"
     assert isinstance(env.timestamp, datetime)
     assert env.timestamp.tzinfo is not None  # UTC-aware

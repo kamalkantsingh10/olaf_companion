@@ -29,7 +29,6 @@ import pytest
 from pipecat.frames.frames import Frame, OutputAudioRawFrame
 
 from voice_agent_pipeline.config.expression_map import (
-    EmotionEntry,
     ExpressionMapConfig,
     FallbackFamily,
     UnknownEntry,
@@ -54,14 +53,8 @@ from voice_agent_pipeline.splitter.segmenter import Segmenter
 def _make_mapping() -> ExpressionMapConfig:
     """ExpressionMapConfig with primary, secondary, fallback family entries."""
     return ExpressionMapConfig(
-        schema_version=2,
-        emotions={
-            "neutral": EmotionEntry(expression_data={"led_color": "#ffffff"}),
-            "content": EmotionEntry(expression_data={"led_color": "#a0e0a0"}),
-            "excited": EmotionEntry(expression_data={"led_color": "#ffa040"}),
-            "happy": EmotionEntry(expression_data={"led_color": "#ffd060"}),
-            "sad": EmotionEntry(expression_data={"led_color": "#4060a0"}),
-        },
+        schema_version=3,
+        emotions=["neutral", "content", "excited", "happy", "sad"],
         vocalizations={
             "laughter": VocalizationEntry(tts_supported=True),
             "sigh": VocalizationEntry(tts_supported=False),

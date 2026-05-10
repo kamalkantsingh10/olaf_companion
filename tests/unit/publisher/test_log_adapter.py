@@ -44,7 +44,6 @@ async def test_publish_speech_emotion_records_event() -> None:
             source_tag="excited",
             raw_tag="excited",
             resolved_fallback=None,
-            expression_data={"led_color": "#ffa040"},
         )
     )
     await pub.publish_speech_emotion(event)

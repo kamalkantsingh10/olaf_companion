@@ -10,6 +10,7 @@ stepsCompleted:
   - step-04-final-validation
 editsCompleted:
   - edit-2026-05-06-direction-shift-correct-course
+  - edit-2026-05-10-speech-emotion-boundary-repair
 inputDocuments:
   - build_documents/planning-artifacts/prd.md
   - build_documents/planning-artifacts/voice-agent-pipeline-brief.md
@@ -30,7 +31,7 @@ approachGuidance: |
   Per Kamal: go super simple 1st and progressively add complexity in each sprint.
   Start with the leanest possible epic that proves the core flow end-to-end,
   then layer complexity sprint by sprint.
-lastEdited: '2026-05-06'
+lastEdited: '2026-05-10'
 editHistory:
   - date: '2026-05-06'
     summary: |
@@ -45,6 +46,23 @@ editHistory:
       + intent-sleep FP/FN + mood cadence). Net v1 story count: 22 → 30
       across 5 epics. New `## v1.5 Backlog (Post-v1)` section captures
       4 deferred items. Epic 1 + Epic 2 (both at `review` status) untouched.
+  - date: '2026-05-10'
+    summary: |
+      Boundary-repair edit (sprint-change-proposal-2026-05-10).
+      `SpeechEmotionPayload.expression_data: dict[str, Any]` removed
+      from the wire — OLAF-renderer vocabulary that violated the
+      consumer-agnostic publisher boundary. ACs in Stories 3.1, 3.2,
+      and 3.4 amended in-place to drop `expression_data` references;
+      the YAML's `emotions:` block reshapes from a mapping to a list of
+      canonical names. `schema_version` bumped 2 → 3 in lockstep with
+      `setup.toml`, `expression_map.yaml`, and `EventEnvelope`. Bundled:
+      two new vocalization tags `nod` and `shake` (with
+      `tts_supported: false`) — gesture cues for affirmatives /
+      negatives, with the matching Talker prompt update. No story
+      renumber, no epic restructure; impl-artifacts story specs
+      (frozen, post-execution) untouched — the sprint change proposal
+      is the audit record. FR20 / FR53 / NFR27 narratives carried
+      through.
 ---
 
 # olaf_companion — voice-agent-pipeline — Epic Breakdown
@@ -127,8 +145,8 @@ This document provides the complete epic and story breakdown for the **voice-age
 **Event Publishing & Channels** *(new in 2026-05-06 direction shift)*
 
 - **FR51**: The pipeline can publish on four typed ROS 2 topics (`/olaf/mood`, `/olaf/activity`, `/olaf/speech_emotion`, `/olaf/vocalization`), each with the appropriate QoS profile (latched/transient_local for `mood` + `activity`; volatile depth=8 for `speech_emotion` + `vocalization`).
-- **FR52**: The pipeline can serialize every event with a common `EventEnvelope` carrying `timestamp` (UTC ISO8601), `schema_version` (currently 2), `source` (`"voice_agent_pipeline"`), `correlation_id` (UUID), and `payload` (topic-specific Pydantic model). Per CLAUDE.md rule 6: bump `schema_version` only on breaking changes; additive field changes are forward-compat.
-- **FR53**: The pipeline can produce events with `schema_version=2` (bumped from 1 in the 2026-05-06 topology change away from a single `/olaf/expression` channel).
+- **FR52**: The pipeline can serialize every event with a common `EventEnvelope` carrying `timestamp` (UTC ISO8601), `schema_version` (currently 3), `source` (`"voice_agent_pipeline"`), `correlation_id` (UUID), and `payload` (topic-specific Pydantic model). Per CLAUDE.md rule 6: bump `schema_version` only on breaking changes; additive field changes are forward-compat.
+- **FR53**: The pipeline can produce events with `schema_version=3`. Bump history: `1 → 2` (Story 3.4 — single `/olaf/expression` channel split into four topics); `2 → 3` (sprint-change-proposal-2026-05-10 — `SpeechEmotionPayload.expression_data` removed; consumer-agnostic boundary repair).
 
 **Configuration & Operations**
 
@@ -189,7 +207,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 **Maintainability**
 
 - **NFR26**: PRD, brief, distillate, and architecture are the canonical specs (the four-document set governed by CLAUDE.md rule 9). Any implementation decision deviating from them must update the relevant document(s) in the same change.
-- **NFR27**: Configuration schemas (`expression_map.yaml`, `setup.toml`) and event schemas (`MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent` — all sharing the common `EventEnvelope`) must be versioned with an integer `schema_version` field; the pipeline must reject incompatible versions at startup. Current event schema version is **2** (bumped from 1 in the 2026-05-06 topology change away from a single `/olaf/expression` channel).
+- **NFR27**: Configuration schemas (`expression_map.yaml`, `setup.toml`) and event schemas (`MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent` — all sharing the common `EventEnvelope`) must be versioned with an integer `schema_version` field; the pipeline must reject incompatible versions at startup. Current event schema version is **3**. Bump history: `1 → 2` (Story 3.4 topology change); `2 → 3` (sprint-change-proposal-2026-05-10 boundary repair, removing `SpeechEmotionPayload.expression_data`).
 - **NFR28**: Components within the pipeline (wake-word, STT, Talker, splitter, TTS, publisher) must be independently testable — each can be exercised in isolation with mock or synthetic inputs at its Protocol seam.
 - **NFR29**: Logs must be machine-readable JSON to enable post-hoc analysis without manual parsing.
 
@@ -233,10 +251,10 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **Event schemas (Architecture §"Publisher Contract + Event Schemas"):**
 
-- `EventEnvelope` mixin (frozen pydantic v2): `schema_version: int = 2`, `timestamp: datetime` (UTC ISO8601 on the wire), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload: <topic-specific BaseModel>`.
+- `EventEnvelope` mixin (frozen pydantic v2): `schema_version: int = 3`, `timestamp: datetime` (UTC ISO8601 on the wire), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload: <topic-specific BaseModel>`.
 - `MoodEvent` — `payload: MoodPayload(mood: Mood, reason: str | None)`. `Mood` is a `Literal[...]` of 6–8 values defined in `mood/state.py`.
 - `ActivityEvent` — `payload: ActivityPayload(state: ActivityState, working_submode: WorkingSubmode | None, transition_reason: str | None, from_state: ActivityState | None)`. `ActivityState` is the 7-value Literal; `WorkingSubmode = Literal["thinking", "delegating"]`.
-- `SpeechEmotionEvent` — `payload: SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str | None, raw_tag: str, resolved_fallback: str | None, expression_data: dict[str, Any])`. `expression_data` is the open extensibility seam (forward-compat for `expression_map.yaml` payload additions).
+- `SpeechEmotionEvent` — `payload: SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str | None, raw_tag: str, resolved_fallback: str | None)`. Resolved canonical name + audit trail; embodiment vocabulary is consumer-side, keyed on `payload.emotion` (schema-3 boundary repair removed the prior `expression_data: dict[str, Any]` field).
 - `VocalizationEvent` — `payload: VocalizationPayload(tag: str, audio_frame_id: str | None, tts_supported: bool)`.
 - DDS wire format: `std_msgs/String` per topic, body is the full `EventEnvelope` JSON-encoded as a single string.
 
@@ -261,7 +279,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 - `tests/unit/` mirrors `src/` exactly; one behavior per test; mock only at Protocol boundaries.
 - `tests/integration/` runs the full Pipecat pipeline with Protocol mocks for external services; covers v1's 7 active PRD journeys (J1 wake-greeting, J2 simple turn, J3 complex turn, J4 intent-sleep, J5 coherent mood, J7 unmapped emotion, J8 SIGHUP). J6 (barge-in) is v1.5 backlog.
-- `tests/contract/` verifies pydantic ↔ JSON ↔ DDS round-trip stability and `schema_version=2` rejection across all four event types.
+- `tests/contract/` verifies pydantic ↔ JSON ↔ DDS round-trip stability and pre-current `schema_version` rejection across all four event types.
 - `pytest-asyncio` for async tests; `conftest.py` for shared fixtures.
 
 **Deployment (Architecture §"Operations: systemd"):**
@@ -332,7 +350,7 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 | FR50 (publish `MoodEvent` on /olaf/mood with latched QoS) | Epic 3 | Latched / transient_local QoS (Story 3.5 publisher impl + 3.6 controller) |
 | FR51 (four typed ROS 2 topics with per-topic QoS) | Epic 3 | `Ros2EventPublisher` four publishers + per-topic QoS (Story 3.5) |
 | FR52 (common `EventEnvelope` across topics) | Epic 3 | `schemas/envelope.py` + four event types (Story 3.4) |
-| FR53 (`schema_version=2` bump) | Epic 3 | Bumped from 1 in event schema rebuild (Story 3.4) |
+| FR53 (`schema_version=3` bump) | Epic 3 + sprint-change-2026-05-10 | 1→2 in event schema rebuild (Story 3.4); 2→3 in boundary repair (sprint-change-proposal-2026-05-10) |
 
 **Coverage check:** all 49 v1-active FRs mapped. FR5 + FR29 + FR30 deferred to v1.5 (tracked in `## v1.5 Backlog (Post-v1)`). FR28 removed. FR7, FR13, FR16, FR41 intentionally absent (v2 deferred).
 
@@ -384,7 +402,7 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 
 ### Epic 3: Embodiment Channel — four typed event topics + mood
 
-**Goal:** Talker emits Cartesia SSML tags. The streaming splitter parses them and segments along sentence / emotion / vocalization boundaries; segments anchor to audio frames; `Ros2EventPublisher` broadcasts on four typed topics — `mood` (latched, slow-cadence), `activity` (FSM-driven, latched — wired Epic 4), `speech_emotion` (audio-anchored, volatile), `vocalization` (audio-anchored, volatile) — sharing a common envelope with `schema_version=2`. Full Cartesia tag → `speech_emotion` mapping with no silent gaps. Mood module ships with publisher-boundary cooldown enforcement (≤4/hr, NFR31).
+**Goal:** Talker emits Cartesia SSML tags. The streaming splitter parses them and segments along sentence / emotion / vocalization boundaries; segments anchor to audio frames; `Ros2EventPublisher` broadcasts on four typed topics — `mood` (latched, slow-cadence), `activity` (FSM-driven, latched — wired Epic 4), `speech_emotion` (audio-anchored, volatile), `vocalization` (audio-anchored, volatile) — sharing a common envelope with `schema_version=3`. Full Cartesia tag → `speech_emotion` mapping with no silent gaps. Mood module ships with publisher-boundary cooldown enforcement (≤4/hr, NFR31).
 
 **User outcome:** OLAF's voice now carries emotion. Subscribers on the bus see four distinct event topics in lockstep with audio (speech_emotion + vocalization) or on transition (mood + activity, the latter wired in Epic 4). Adding a new `speech_emotion` is a YAML edit (no code touchpoints — the architectural extensibility test).
 
@@ -396,10 +414,10 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 - Last-published cache for `speech_emotion` dedup, scoped per-turn; vocalizations always publish.
 - Vocalization-tag stripping: Cartesia-supported tags pass through to TTS; unsupported tags stripped from text but still published as `VocalizationEvent`.
 - Audio-frame metadata threading: extend Pipecat's `AudioRawFrame` with optional `speech_emotion_event` AND `vocalization_event` metadata (two distinct slots); transport reads on send and calls the corresponding `EventPublisher.publish_*` method.
-- **NEW: Event schema rebuild** — `schemas/envelope.py` (`EventEnvelope` mixin) + four `<topic>_event.py` files (`mood_event`, `activity_event`, `speech_emotion_event`, `vocalization_event`). `schema_version=2`. Replaces placeholder `expression_event.py` + `lifecycle_event.py`.
+- **NEW: Event schema rebuild** — `schemas/envelope.py` (`EventEnvelope` mixin) + four `<topic>_event.py` files (`mood_event`, `activity_event`, `speech_emotion_event`, `vocalization_event`). `schema_version=3` (initial 2 from Story 3.4; bumped to 3 in sprint-change-proposal-2026-05-10 boundary repair). Replaces placeholder `expression_event.py` + `lifecycle_event.py`.
 - **NEW: `EventPublisher` Protocol + Implementations** — Protocol with four publish methods + connect/disconnect/health. `Ros2EventPublisher` (four publishers, per-topic QoS, `std_msgs/String` + JSON envelope). `LogEventPublisher` (in-memory adapter for tests + pre-Epic-3 dev).
 - **NEW: Mood module** — `mood/state.py` (Mood Literal + MoodState; default `"calm"`) + `mood/controller.py` (`MoodController.set()` with ≤4/hr cooldown enforced at publisher boundary; over-rate drops with WARN; in-process state updated only on successful publish).
-- `expression_map.yaml` ships with full mapping; loaded at startup, schema-validated (extends FR31). `schema_version=2` enforced.
+- `expression_map.yaml` ships with the canonical taxonomy (12 first-class names + 7 fallback families + 6 vocalizations); loaded at startup, schema-validated (extends FR31). `schema_version=3` enforced.
 - Talker prompt updated to emit `<emotion value="..."/>` SSML tags.
 - Startup validation extended: `EventPublisher` initialized with all four topic publishers; initial `MoodEvent("calm")` published on connect.
 
@@ -948,7 +966,7 @@ So that I can run `just run`, say "Hey OLAF, what time is it?", and hear OLAF re
 
 ## Epic 3: Embodiment Channel — four typed event topics + mood
 
-**Goal:** Talker emits Cartesia SSML tags; the streaming splitter parses them and segments along sentence / emotion / vocalization boundaries; segments anchor to audio frames; `Ros2EventPublisher` broadcasts on four typed topics — `mood` (latched, slow-cadence), `activity` (FSM-driven, latched — wired Epic 4), `speech_emotion` (audio-anchored, volatile), `vocalization` (audio-anchored, volatile) — sharing a common envelope with `schema_version=2`. Full Cartesia tag → `speech_emotion` mapping with no silent gaps. Mood module ships with publisher-boundary cooldown enforcement (≤4/hr, NFR31). The "OLAF feels alive" sprint.
+**Goal:** Talker emits Cartesia SSML tags; the streaming splitter parses them and segments along sentence / emotion / vocalization boundaries; segments anchor to audio frames; `Ros2EventPublisher` broadcasts on four typed topics — `mood` (latched, slow-cadence), `activity` (FSM-driven, latched — wired Epic 4), `speech_emotion` (audio-anchored, volatile), `vocalization` (audio-anchored, volatile) — sharing a common envelope with `schema_version=3`. Full Cartesia tag → `speech_emotion` mapping with no silent gaps. Mood module ships with publisher-boundary cooldown enforcement (≤4/hr, NFR31). The "OLAF feels alive" sprint.
 
 ### Story 3.1: `expression_map.yaml` authoring + loader + schema validation
 
@@ -960,7 +978,7 @@ So that subsequent stories have a typed, complete mapping table to consume — a
 
 **Given** `expression_map.yaml` at the project root,
 **When** I inspect it,
-**Then** it contains an integer `schema_version: 2`, an `emotions:` block with all 6 primary (`neutral, content, excited, sad, angry, scared`) and 6 secondary (`happy, curious, sympathetic, surprised, frustrated, melancholic`) emotions as first-class entries with full payload (`base_pose`, `eye_state`, `led_color`, `led_intensity` — values negotiated with embodiment but published as opaque `expression_data`), a `vocalizations:` block (`laughter, sigh, gasp, clears_throat`), a `fallback_families:` block grouping the remaining 50+ Cartesia tags into 7 families (e.g., `high_energy_positive → excited`, `low_energy_negative → sad`), and an `unknown:` entry mapping to `neutral`.
+**Then** it contains an integer `schema_version: 3`, an `emotions:` list of all 6 primary (`neutral, content, excited, sad, angry, scared`) and 6 secondary (`happy, curious, sympathetic, surprised, frustrated, melancholic`) canonical emotion names (a vocabulary, not renderer hints — embodiment vocabulary lives consumer-side), a `vocalizations:` block of 6 entries (4 audio bursts: `laughter, sigh, gasp, clears_throat`; 2 gesture cues: `nod, shake` with `tts_supported: false`), a `fallback_families:` block grouping the remaining 50+ Cartesia tags into 7 families (e.g., `high_energy_positive → excited`, `low_energy_negative → sad`), and an `unknown:` entry mapping to `neutral`.
 
 **Given** `src/voice_agent_pipeline/config/expression_map.py`,
 **When** I inspect it,
@@ -970,16 +988,16 @@ So that subsequent stories have a typed, complete mapping table to consume — a
 **When** the pipeline starts,
 **Then** loading raises `ConfigError` with the offending key/path and exits non-zero (FR31 extension).
 
-**Given** an `expression_map.yaml` with `schema_version` ≠ 2,
+**Given** an `expression_map.yaml` with `schema_version` ≠ 3,
 **When** the pipeline starts,
 **Then** it raises `SchemaVersionError` naming the file, the file's version, and the supported version 2 (NFR27).
 
 **Given** a coverage check at startup,
 **When** the loader validates the map,
-**Then** every primary + secondary emotion has a non-empty `expression_data` field; missing payload raises `ConfigError` (FR20 — no silent gaps). Note: the YAML key is `expression_data` to match the wire-schema field name on `SpeechEmotionPayload`.
+**Then** every primary + secondary emotion name is present in the `emotions:` list; a missing canonical name raises `ConfigError(missing_emotions=[...])` (FR20 — no silent gaps). The schema-3 boundary repair removed the per-emotion `expression_data:` block — the loader's completeness check is now a set-difference against `PRIMARY_EMOTIONS + SECONDARY_EMOTIONS`, no per-entry payload check.
 
 **Given** the architectural extensibility test,
-**When** I add a new entry under `emotions:` (e.g., `serene`) with `expression_data`, restart the pipeline, and the LLM emits `<emotion value="serene"/>`,
+**When** I append a new canonical name (e.g., `serene`) to the `emotions:` list, restart the pipeline, and the LLM emits `<emotion value="serene"/>`,
 **Then** the resolver (Story 3.2) finds it as first-class — proven by the unit test in 3.2 covering the new entry. (SIGHUP hot-reload of this same change is Epic 5.)
 
 **Given** unit tests in `tests/unit/config/test_expression_map.py`,
@@ -998,19 +1016,19 @@ So that the splitter (Story 3.3) can call one function regardless of whether the
 
 **Given** `src/voice_agent_pipeline/splitter/mapping.py`,
 **When** I inspect it,
-**Then** it exposes `resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload` returning a fully-populated payload with `emotion` (resolved name), `source_tag` (original Cartesia tag), `raw_tag`, `resolved_fallback`, and `expression_data` (FR20, FR21).
+**Then** it exposes `resolve(tag: str, mapping: ExpressionMapConfig) -> SpeechEmotionPayload` returning a fully-populated payload with `emotion` (resolved canonical name), `source_tag` (original Cartesia tag), `raw_tag`, and `resolved_fallback` (FR20, FR21). Embodiment vocabulary is consumer-side, keyed on `payload.emotion`.
 
 **Given** a tag that exists in the `emotions:` block,
 **When** `resolve("excited", mapping)` is called,
-**Then** it returns a payload with `emotion="excited"`, `source_tag="excited"`, `raw_tag="excited"`, `resolved_fallback=None`, `expression_data=<excited expression_data>` — with no log noise.
+**Then** it returns a payload with `emotion="excited"`, `source_tag="excited"`, `raw_tag="excited"`, `resolved_fallback=None` — with no log noise.
 
 **Given** a tag in `fallback_families` mapped to a primary,
 **When** `resolve("enthusiastic", mapping)` is called,
-**Then** it returns a payload with `emotion="excited"`, `source_tag="enthusiastic"`, `raw_tag="enthusiastic"`, `resolved_fallback="high_energy_positive"`, `expression_data=<excited expression_data>` — and logs `event="speech_emotion.fallback"` at DEBUG level on first occurrence per process (de-duped via in-memory set), per FR38.
+**Then** it returns a payload with `emotion="excited"`, `source_tag="enthusiastic"`, `raw_tag="enthusiastic"`, `resolved_fallback="high_energy_positive"` — and logs `event="speech_emotion.fallback"` at DEBUG level on first occurrence per process (de-duped via in-memory set), per FR38.
 
 **Given** a tag truly absent from any family,
 **When** `resolve("neverbeforeseentag", mapping)` is called,
-**Then** it returns a payload with `emotion="neutral"`, `source_tag="neverbeforeseentag"`, `resolved_fallback="unknown"`, `expression_data=<neutral expression_data>` — and logs `event="speech_emotion.unmapped"` at WARN level (FR38).
+**Then** it returns a payload with `emotion="neutral"`, `source_tag="neverbeforeseentag"`, `resolved_fallback="unknown"` — and logs `event="speech_emotion.unmapped"` at WARN level (FR38).
 
 **Given** `LastPublishedCache` in `splitter/mapping.py`,
 **When** the same base emotion (`excited`) resolves twice consecutively within the same turn without a different emotion intervening,
@@ -1080,13 +1098,13 @@ So that segments can be handed to TTS and the resolver in lockstep without buffe
 
 As Kamal,
 I want an `EventEnvelope` mixin and four typed event classes (`MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent`) replacing the placeholder `expression_event.py` + `lifecycle_event.py` from Story 1.4,
-So that subsequent stories (3.5 publisher, 3.6 mood module, 4.3 activity FSM) consume a coherent typed-event surface with `schema_version=2`.
+So that subsequent stories (3.5 publisher, 3.6 mood module, 4.3 activity FSM) consume a coherent typed-event surface with `schema_version=3`.
 
 **Acceptance Criteria:**
 
 **Given** `src/voice_agent_pipeline/schemas/envelope.py`,
 **When** I inspect it,
-**Then** it defines `EventEnvelope` as a frozen pydantic v2 BaseModel with `model_config = ConfigDict(frozen=True, extra="forbid")` and fields: `schema_version: int = 2`, `timestamp: datetime` (UTC), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload` (typed by each subclass).
+**Then** it defines `EventEnvelope` as a frozen pydantic v2 BaseModel with `model_config = ConfigDict(frozen=True, extra="forbid")` and fields: `schema_version: int = 3`, `timestamp: datetime` (UTC), `source: Literal["voice_agent_pipeline"]`, `correlation_id: UUID`, `payload` (typed by each subclass).
 
 **Given** `src/voice_agent_pipeline/schemas/mood_event.py`,
 **When** I inspect it,
@@ -1098,7 +1116,7 @@ So that subsequent stories (3.5 publisher, 3.6 mood module, 4.3 activity FSM) co
 
 **Given** `src/voice_agent_pipeline/schemas/speech_emotion_event.py`,
 **When** I inspect it,
-**Then** it defines `SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str | None, raw_tag: str, resolved_fallback: str | None, expression_data: dict[str, Any])` and `SpeechEmotionEvent(EventEnvelope)` with `payload: SpeechEmotionPayload`. The open `expression_data` field is the documented extensibility seam (forward-compat for `expression_map.yaml` payload additions).
+**Then** it defines `SpeechEmotionPayload(emotion: str, source_tag: str, audio_frame_id: str | None, raw_tag: str, resolved_fallback: str | None)` and `SpeechEmotionEvent(EventEnvelope)` with `payload: SpeechEmotionPayload`. The wire payload is identity-only — embodiment vocabulary is consumer-side, keyed on `payload.emotion` (schema-3 boundary repair removed the prior `expression_data: dict[str, Any]` extensibility-seam field).
 
 **Given** `src/voice_agent_pipeline/schemas/vocalization_event.py`,
 **When** I inspect it,
@@ -1582,7 +1600,7 @@ So that I can tune `speech_emotion` poses live during real conversation without 
 **When** the reload runs,
 **Then** the in-memory `ExpressionMapConfig` is replaced atomically (the resolver in `splitter/mapping.py` reads via a single reference that's swapped under a lock); the next turn that emits an emotion uses the new mapping.
 
-**Given** the new `expression_map.yaml` is malformed (bad schema, unknown extra key, missing `expression_data`, `schema_version` ≠ 2),
+**Given** the new `expression_map.yaml` is malformed (bad schema, unknown extra key, missing canonical emotion, `schema_version` ≠ 3),
 **When** the reload runs,
 **Then** validation rejects, the **prior mapping is retained** (no silent-broken state), and a clear error is logged at WARN with the line number and key path.
 

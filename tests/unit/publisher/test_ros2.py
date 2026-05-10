@@ -221,7 +221,6 @@ async def test_publish_activity_speech_emotion_vocalization_dispatch_to_correct_
             source_tag="content",
             raw_tag="content",
             resolved_fallback=None,
-            expression_data={"k": "v"},
         )
     )
     voc = VocalizationEvent(payload=VocalizationPayload(tag="laughter", tts_supported=True))

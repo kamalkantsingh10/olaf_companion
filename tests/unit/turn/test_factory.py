@@ -52,7 +52,7 @@ def _build_setup(
     keeps the tests focused on routing rather than file loading.
     """
     return SetupConfig.model_construct(
-        schema_version=2,
+        schema_version=3,
         picovoice_access_key=SecretStr("stub-pico"),
         openai_api_key=SecretStr(openai_key) if openai_key else None,
         groq_api_key=SecretStr(groq_key) if groq_key else None,

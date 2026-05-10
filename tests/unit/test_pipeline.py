@@ -18,7 +18,6 @@ import pytest
 from pipecat.frames.frames import Frame, OutputAudioRawFrame
 
 from voice_agent_pipeline.config.expression_map import (
-    EmotionEntry,
     ExpressionMapConfig,
     FallbackFamily,
     UnknownEntry,
@@ -72,11 +71,8 @@ def _make_tts_client(chunks: list[bytes]) -> MagicMock:
 def _make_mapping() -> ExpressionMapConfig:
     """Minimal valid ExpressionMapConfig for processor tests."""
     return ExpressionMapConfig(
-        schema_version=2,
-        emotions={
-            "neutral": EmotionEntry(expression_data={"led_color": "#ffffff"}),
-            "content": EmotionEntry(expression_data={"led_color": "#a0e0a0"}),
-        },
+        schema_version=3,
+        emotions=["neutral", "content"],
         vocalizations={"laughter": VocalizationEntry(tts_supported=True)},
         fallback_families={
             "high_energy_positive": FallbackFamily(members=["enthusiastic"], maps_to="content")
@@ -110,7 +106,6 @@ def _make_segment(
             source_tag=emotion,
             raw_tag=emotion,
             resolved_fallback=None,
-            expression_data={"led_color": "#ffffff"},
         )
     voc_payloads = [
         VocalizationPayload(tag=tag, tts_supported=True) for tag in (vocalizations or [])

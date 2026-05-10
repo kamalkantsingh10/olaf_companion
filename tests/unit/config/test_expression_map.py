@@ -1,6 +1,6 @@
 # ruff: noqa: E501
-# YAML fixture lines naturally exceed 100 chars (mapping shorthand on a
-# single line is more readable than block-style for these test bodies).
+# YAML fixture lines naturally exceed 100 chars (the canonical 12-name
+# emotions list and its surgical-replace targets in test bodies).
 """Tests for :mod:`voice_agent_pipeline.config.expression_map`.
 
 Mirrors Story 1.2's ``test_setup.py`` pattern (tmp-path-only — no test
@@ -12,6 +12,12 @@ Each test exercises one acceptance criterion from Story 3.1 — the file
 covers AC #3 (parse / pydantic failures), AC #4 (schema_version
 mismatch), AC #5 (completeness), AC #6 (reference integrity), AC #7
 (extensibility), and AC #8 (the test surface itself).
+
+Schema-3 boundary repair (sprint-change-proposal-2026-05-10): the
+per-emotion ``expression_data`` block is gone, ``emotions:`` is now a
+list of canonical names (a vocabulary, not renderer hints), and the
+``EmotionEntry`` model has been deleted. Tests reflect the new shape
+end-to-end.
 """
 
 from pathlib import Path
@@ -28,42 +34,20 @@ from voice_agent_pipeline.config.expression_map import (
 )
 from voice_agent_pipeline.errors import ConfigError, SchemaVersionError
 
-# Minimal-but-complete YAML covering all 12 emotions + 4 vocalizations +
+# Minimal-but-complete YAML covering all 12 emotions + 6 vocalizations +
 # 1 family + unknown. Tests that need to mutate just one field do string
 # surgery (mirrors Story 1.2's _VALID_TOML pattern).
 _VALID_YAML = dedent(
     """\
-    schema_version: 2
-    emotions:
-      neutral:
-        expression_data: { base_pose: { yaw: 0, pitch: 0 }, eye_state: open, led_color: "#ffffff", led_intensity: 0.4 }
-      content:
-        expression_data: { base_pose: { yaw: 0, pitch: 0 }, eye_state: open, led_color: "#a0e0a0", led_intensity: 0.5 }
-      excited:
-        expression_data: { base_pose: { yaw: 0, pitch: 5 }, eye_state: wide, led_color: "#ffa040", led_intensity: 0.9 }
-      sad:
-        expression_data: { base_pose: { yaw: 0, pitch: -10 }, eye_state: squint, led_color: "#4060a0", led_intensity: 0.3 }
-      angry:
-        expression_data: { base_pose: { yaw: 0, pitch: -3 }, eye_state: squint, led_color: "#a02020", led_intensity: 0.8 }
-      scared:
-        expression_data: { base_pose: { yaw: -5, pitch: 0 }, eye_state: wide, led_color: "#a040a0", led_intensity: 0.7 }
-      happy:
-        expression_data: { base_pose: { yaw: 0, pitch: 3 }, eye_state: open, led_color: "#ffd060", led_intensity: 0.7 }
-      curious:
-        expression_data: { base_pose: { yaw: 5, pitch: 2 }, eye_state: open, led_color: "#60c0e0", led_intensity: 0.6 }
-      sympathetic:
-        expression_data: { base_pose: { yaw: 0, pitch: -2 }, eye_state: open, led_color: "#c0a0e0", led_intensity: 0.4 }
-      surprised:
-        expression_data: { base_pose: { yaw: 0, pitch: 5 }, eye_state: wide, led_color: "#ffff80", led_intensity: 0.8 }
-      frustrated:
-        expression_data: { base_pose: { yaw: 0, pitch: -2 }, eye_state: squint, led_color: "#e07040", led_intensity: 0.6 }
-      melancholic:
-        expression_data: { base_pose: { yaw: 0, pitch: -8 }, eye_state: squint, led_color: "#506080", led_intensity: 0.3 }
+    schema_version: 3
+    emotions: [neutral, content, excited, sad, angry, scared, happy, curious, sympathetic, surprised, frustrated, melancholic]
     vocalizations:
       laughter: { tts_supported: true }
       sigh: { tts_supported: false }
       gasp: { tts_supported: false }
       clears_throat: { tts_supported: false }
+      nod: { tts_supported: false }
+      shake: { tts_supported: false }
     fallback_families:
       high_energy_positive:
         members: [enthusiastic, gleeful]
@@ -90,14 +74,15 @@ def _write_yaml(tmp_path: Path, body: str = _VALID_YAML) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_schema_version_constant_is_2() -> None:
-    """``EXPRESSION_MAP_SCHEMA_VERSION`` is the int ``2`` per AC #2.
+def test_schema_version_constant_is_3() -> None:
+    """``EXPRESSION_MAP_SCHEMA_VERSION`` is the int ``3`` post-boundary-repair.
 
-    Story 3.4 will bump the global ``SUPPORTED_SCHEMA_VERSION`` to match;
-    this story keeps the constant module-local so the bump is decoupled
-    from ``setup.toml``'s loader.
+    Bumped from 2 to 3 in sprint-change-proposal-2026-05-10 because the
+    ``SpeechEmotionPayload.expression_data`` field was removed from the
+    wire — a breaking change to subscribers, even though no subscribers
+    exist yet.
     """
-    assert EXPRESSION_MAP_SCHEMA_VERSION == 2
+    assert EXPRESSION_MAP_SCHEMA_VERSION == 3
 
 
 def test_primary_and_secondary_emotion_lists_match_ac_1() -> None:
@@ -143,21 +128,30 @@ def test_load_happy_path(tmp_path: Path) -> None:
     config = load_from_path(yaml_path)
 
     assert isinstance(config, ExpressionMapConfig)
-    assert config.schema_version == 2
-    # All 12 emotions present.
+    assert config.schema_version == 3
+    # All 12 emotions present — emotions is now a list of canonical
+    # names; set comparison ignores order, which is fine because the
+    # vocabulary has no inherent order.
     assert set(config.emotions) == set(PRIMARY_EMOTIONS) | set(SECONDARY_EMOTIONS)
-    # All 4 vocalizations present.
-    assert set(config.vocalizations) == {"laughter", "sigh", "gasp", "clears_throat"}
+    # All 6 vocalizations present (4 audio bursts + 2 gesture cues).
+    assert set(config.vocalizations) == {
+        "laughter",
+        "sigh",
+        "gasp",
+        "clears_throat",
+        "nod",
+        "shake",
+    }
     assert config.vocalizations["laughter"].tts_supported is True
     assert config.vocalizations["sigh"].tts_supported is False
+    # nod / shake are gesture cues — never rendered as audio.
+    assert config.vocalizations["nod"].tts_supported is False
+    assert config.vocalizations["shake"].tts_supported is False
     # Fallback family + unknown wired up.
     assert "high_energy_positive" in config.fallback_families
     assert config.fallback_families["high_energy_positive"].maps_to == "excited"
     assert "enthusiastic" in config.fallback_families["high_energy_positive"].members
     assert config.unknown.maps_to == "neutral"
-    # expression_data is opaque dict[str, Any] — should round-trip with
-    # whatever the YAML had.
-    assert config.emotions["excited"].expression_data["led_intensity"] == 0.9
 
 
 def test_load_real_project_map_succeeds() -> None:
@@ -216,9 +210,9 @@ def test_missing_required_block_raises_config_error(tmp_path: Path) -> None:
 
     AC #3 — the operator needs to know which top-level key is absent.
     """
+    # Strip the entire vocalizations block (header + 6 entries).
     body = _VALID_YAML.replace("vocalizations:\n", "")
-    # Also strip the four child entries that lived under it.
-    for tag in ("laughter", "sigh", "gasp", "clears_throat"):
+    for tag in ("laughter", "sigh", "gasp", "clears_throat", "nod", "shake"):
         body = body.replace(f"  {tag}: {{ tts_supported: true }}\n", "")
         body = body.replace(f"  {tag}: {{ tts_supported: false }}\n", "")
     yaml_path = _write_yaml(tmp_path, body)
@@ -230,15 +224,16 @@ def test_missing_required_block_raises_config_error(tmp_path: Path) -> None:
 def test_extra_key_at_nested_level_raises_config_error(tmp_path: Path) -> None:
     """``extra="forbid"`` catches typos at any nested level.
 
-    AC #3 — ``emotions.content.bogus_key`` violates ``EmotionEntry``'s
+    AC #3 — adding a stray key to a VocalizationEntry violates the
     forbid rule. Pydantic surfaces the offending key in the error.
+    Pre-boundary-repair this test exercised EmotionEntry; post-repair
+    EmotionEntry is gone, so the test moves to VocalizationEntry which
+    still has a strict shape.
     """
-    # Append a stray key to the content emotion's entry. The YAML's
-    # indentation is 2 spaces under emotions:, then 4 spaces for
-    # expression_data — so a sibling key sits at 4 spaces too.
-    needle = "led_intensity: 0.5 }"
-    assert _VALID_YAML.count(needle) == 1, "needle must be unique for safe surgery"
-    body = _VALID_YAML.replace(needle, "led_intensity: 0.5 }\n    bogus_key: 1", 1)
+    body = _VALID_YAML.replace(
+        "laughter: { tts_supported: true }",
+        "laughter: { tts_supported: true, bogus_key: 1 }",
+    )
     yaml_path = _write_yaml(tmp_path, body)
     with pytest.raises(ConfigError) as exc_info:
         load_from_path(yaml_path)
@@ -246,15 +241,17 @@ def test_extra_key_at_nested_level_raises_config_error(tmp_path: Path) -> None:
 
 
 def test_wrong_type_raises_config_error(tmp_path: Path) -> None:
-    """Replacing ``expression_data`` (mapping) with a string raises.
+    """Replacing a typed field with the wrong YAML type raises.
 
     AC #3 — pydantic's type coercion fails; the wrap surfaces the
-    validation message.
+    validation message. Pre-repair this test pointed at
+    ``expression_data`` (the dict-typed field); post-repair the
+    ``emotions:`` list itself is the obvious target — passing a string
+    where a list is expected.
     """
     body = _VALID_YAML.replace(
-        'expression_data: { base_pose: { yaw: 0, pitch: 0 }, eye_state: open, led_color: "#a0e0a0", led_intensity: 0.5 }',
-        'expression_data: "string instead of mapping"',
-        1,  # only the first occurrence (content) — keep others valid
+        "emotions: [neutral, content, excited, sad, angry, scared, happy, curious, sympathetic, surprised, frustrated, melancholic]",
+        'emotions: "string instead of list"',
     )
     yaml_path = _write_yaml(tmp_path, body)
     with pytest.raises(ConfigError):
@@ -271,17 +268,17 @@ def test_schema_version_mismatch_raises_schema_version_error(tmp_path: Path) -> 
 
     AC #4 — operator-readable message names the file, the actual
     version, and the supported version. The check delegates to
-    ``config.version.assert_schema_version(supported=2, ...)`` so the
+    ``config.version.assert_schema_version(supported=3, ...)`` so the
     helper isn't duplicated here.
     """
-    body = _VALID_YAML.replace("schema_version: 2", "schema_version: 1")
+    body = _VALID_YAML.replace("schema_version: 3", "schema_version: 1")
     yaml_path = _write_yaml(tmp_path, body)
     with pytest.raises(SchemaVersionError) as exc_info:
         load_from_path(yaml_path)
     msg = str(exc_info.value)
     assert "expression_map.yaml" in msg
     assert "1" in msg
-    assert "2" in msg
+    assert "3" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -293,16 +290,10 @@ def test_missing_primary_emotion_raises_config_error(tmp_path: Path) -> None:
     """Dropping ``excited`` raises ``ConfigError`` listing it as missing.
 
     AC #5 — FR20's "no silent gaps" is enforced for both primary and
-    secondary emotion sets.
+    secondary emotion sets. Post-boundary-repair, "removing an emotion"
+    is a list-element deletion, not a block deletion.
     """
-    # Remove the 2-line excited block (the key line + its
-    # expression_data line). 2-space outer indent / 4-space inner.
-    excited_block = (
-        "  excited:\n"
-        '    expression_data: { base_pose: { yaw: 0, pitch: 5 }, eye_state: wide, led_color: "#ffa040", led_intensity: 0.9 }\n'
-    )
-    assert excited_block in _VALID_YAML, "excited block layout drifted"
-    body = _VALID_YAML.replace(excited_block, "")
+    body = _VALID_YAML.replace(", excited,", ",")
     yaml_path = _write_yaml(tmp_path, body)
     with pytest.raises(ConfigError) as exc_info:
         load_from_path(yaml_path)
@@ -314,37 +305,33 @@ def test_missing_secondary_emotion_raises_config_error(tmp_path: Path) -> None:
 
     AC #5 — completeness covers secondary emotions too.
     """
-    melancholic_block = (
-        "  melancholic:\n"
-        '    expression_data: { base_pose: { yaw: 0, pitch: -8 }, eye_state: squint, led_color: "#506080", led_intensity: 0.3 }\n'
-    )
-    assert melancholic_block in _VALID_YAML, "melancholic block layout drifted"
-    body = _VALID_YAML.replace(melancholic_block, "")
+    body = _VALID_YAML.replace(", melancholic", "")
     yaml_path = _write_yaml(tmp_path, body)
     with pytest.raises(ConfigError) as exc_info:
         load_from_path(yaml_path)
     assert "melancholic" in str(exc_info.value)
 
 
-def test_empty_expression_data_raises_config_error(tmp_path: Path) -> None:
-    """An empty ``expression_data: {}`` raises ``ConfigError(emotion=...)``.
+def test_empty_emotions_list_raises_config_error(tmp_path: Path) -> None:
+    """An empty ``emotions: []`` list raises ``ConfigError``.
 
-    AC #5 — the FR20 "every emotion has expression_data" check covers
-    both presence and non-emptiness.
+    AC #5 — the new boundary-repair-era equivalent of the old
+    ``test_empty_expression_data_raises_config_error``. The
+    completeness check fires when the required set isn't a subset of
+    the loaded vocabulary — an empty list is the maximally degenerate
+    case and reports all 12 names as missing.
     """
-    content_block = (
-        "  content:\n"
-        '    expression_data: { base_pose: { yaw: 0, pitch: 0 }, eye_state: open, led_color: "#a0e0a0", led_intensity: 0.5 }'
-    )
-    assert content_block in _VALID_YAML, "content block layout drifted"
     body = _VALID_YAML.replace(
-        content_block,
-        "  content:\n    expression_data: {}",
+        "emotions: [neutral, content, excited, sad, angry, scared, happy, curious, sympathetic, surprised, frustrated, melancholic]",
+        "emotions: []",
     )
     yaml_path = _write_yaml(tmp_path, body)
     with pytest.raises(ConfigError) as exc_info:
         load_from_path(yaml_path)
-    assert "content" in str(exc_info.value)
+    msg = str(exc_info.value)
+    # All 12 required names should appear in the missing-emotions list.
+    for required in (*PRIMARY_EMOTIONS, *SECONDARY_EMOTIONS):
+        assert required in msg, f"{required} missing from error message"
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +363,6 @@ def test_dangling_family_reference_raises_config_error(tmp_path: Path) -> None:
     AC #6 — fallback_families.<family>.maps_to gets the same check as
     unknown.maps_to.
     """
-    # Family entries are at 4-space indent: 2 for the family name,
-    # 4 for members/maps_to.
     family_block = (
         "  high_energy_positive:\n    members: [enthusiastic, gleeful]\n    maps_to: excited"
     )
@@ -406,18 +391,15 @@ def test_extensibility_new_emotion_loads(tmp_path: Path) -> None:
     `speech_emotion` Must Stay Simple" is the architectural promise:
     YAML edit alone makes a new tag first-class. The loader must accept
     the addition with no code changes.
+
+    Post-boundary-repair, "adding a new emotion" is a one-token list
+    append — the cleanest possible expression of the extensibility
+    contract. (Pre-repair, it required a full ``expression_data:`` block
+    with at least one renderer-hint key; that yaml ceremony is gone.)
     """
-    body = _VALID_YAML + dedent(
-        """\
-          serene:
-            expression_data: { base_pose: { yaw: 0, pitch: 0 }, eye_state: open, led_color: "#80c0e0", led_intensity: 0.3 }
-        """
-    )
-    # The serene block needs to land under emotions:, not at the top
-    # level — re-construct properly by inserting before vocalizations:.
     body = _VALID_YAML.replace(
-        "vocalizations:",
-        '  serene:\n        expression_data: { base_pose: { yaw: 0, pitch: 0 }, eye_state: open, led_color: "#80c0e0", led_intensity: 0.3 }\nvocalizations:',
+        ", melancholic]",
+        ", melancholic, serene]",
     )
     yaml_path = _write_yaml(tmp_path, body)
     config = load_from_path(yaml_path)

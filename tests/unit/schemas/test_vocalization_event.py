@@ -14,7 +14,7 @@ def test_minimal_valid_vocalization_event() -> None:
     assert event.payload.tag == "laughter"
     assert event.payload.tts_supported is True
     assert event.payload.audio_frame_id is None
-    assert event.schema_version == 2
+    assert event.schema_version == 3
 
 
 def test_payload_extra_forbid() -> None:

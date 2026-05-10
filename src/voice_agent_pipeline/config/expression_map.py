@@ -1,4 +1,4 @@
-"""``expression_map.yaml`` loader — Cartesia tag → speech_emotion mapping table.
+"""``expression_map.yaml`` loader — Cartesia tag → speech_emotion taxonomy.
 
 This module is the **substrate** Story 3.2's mapping resolver consumes.
 Story 3.1's contract:
@@ -7,29 +7,24 @@ Story 3.1's contract:
   pydantic schema, and refuse to load a malformed map.
 - Surface the most-specific error first so an operator reading
   ``startup.failed`` knows which key broke.
-- Keep the schema **open-ended on the inner ``expression_data`` dict** so
-  adding a new emotion is forever a YAML edit (architecture.md
-  §"Extensibility — Adding a New `speech_emotion` Must Stay Simple").
+- Carry only the **vocabulary** (canonical emotion names + Cartesia-tag
+  fallback families) — embodiment vocabulary (pose / LED / eye state)
+  belongs on the consumer side keyed on the canonical name.
 
-Why ``EXPRESSION_MAP_SCHEMA_VERSION`` is module-local
------------------------------------------------------
+Schema-3 boundary repair (sprint-change-proposal-2026-05-10)
+-----------------------------------------------------------
 
-Architecture.md §"Schema Conventions" says every config file lands at
-``schema_version=2`` post-Epic-3. But Story 3.4 is the coordinated
-migration that bumps ``setup.toml``'s schema_version + the four event
-types together. Bumping the global :data:`SUPPORTED_SCHEMA_VERSION`
-during Story 3.1 alone would break ``setup.toml``'s loader (still at
-version 1) and Stories 1.2 / 1.4's tests, which would block the commit
-under ``just check``.
+The pre-repair shape carried per-emotion ``expression_data:`` blocks
+with ``base_pose``, ``eye_state``, ``led_color``, ``led_intensity`` —
+OLAF renderer hints that the loader stamped onto every
+:class:`SpeechEmotionPayload` and shipped on the wire. That coupling
+violated the project's consumer-agnostic publisher boundary.
 
-Solution: a **module-local** :data:`EXPRESSION_MAP_SCHEMA_VERSION = 2`
-passed explicitly to the existing
-:func:`voice_agent_pipeline.config.version.assert_schema_version`
-helper. After Story 3.4 lands and the global is bumped to 2, this
-module's local constant becomes redundant in practice — but the
-indirection is harmless (it points at the same value) and explicitly
-leaves room for the two schemas to diverge again if the maintenance
-cadences ever drift apart.
+Post-repair: ``emotions:`` is a **list of canonical names** (a
+vocabulary, not renderer hints). The :class:`EmotionEntry` model is
+gone. ``ExpressionMapConfig.emotions: list[str]`` is the typed surface
+the resolver consumes; the embodiment project owns its own renderer
+mapping keyed on those names.
 
 What this module does NOT do
 ----------------------------
@@ -37,14 +32,12 @@ What this module does NOT do
 - Resolve tags into payloads — that's Story 3.2's
   :func:`voice_agent_pipeline.splitter.mapping.resolve`.
 - SIGHUP-driven hot reload — Epic 5 (Story 5.2).
-- Validate per-emotion ``expression_data`` *shape* — only that the
-  mapping is non-empty. The wire-schema (``SpeechEmotionPayload``,
-  Story 3.4) treats it as opaque ``dict[str, Any]``.
+- Carry renderer / embodiment vocabulary — that left the wire in the
+  schema-3 boundary repair (above).
 """
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -64,10 +57,12 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Schema version this build of the loader expects in
-#: ``expression_map.yaml``. **Decoupled** from the global
+#: ``expression_map.yaml``. Lockstepped to
 #: :data:`voice_agent_pipeline.config.version.SUPPORTED_SCHEMA_VERSION`
-#: until Story 3.4 lands the coordinated bump. See module docstring.
-EXPRESSION_MAP_SCHEMA_VERSION: int = 2
+#: post-boundary-repair (both at 3); the local constant is preserved as
+#: an indirection seam so the two could diverge again later if
+#: maintenance cadences ever drift apart.
+EXPRESSION_MAP_SCHEMA_VERSION: int = 3
 
 #: The 6 primary emotions every map must define as first-class entries
 #: (FR20 — no silent gaps for primary emotions). Tuple, not list — these
@@ -85,7 +80,7 @@ PRIMARY_EMOTIONS: tuple[str, ...] = (
 #: The 6 secondary emotions every map must define. Distillate v1 maps
 #: secondary → primary; the architecture promotes them to first-class
 #: in v1 because the embodiment quality bar demands distinct poses /
-#: LED colors per name.
+#: LED colors per name (rendered consumer-side post-boundary-repair).
 SECONDARY_EMOTIONS: tuple[str, ...] = (
     "happy",
     "curious",
@@ -101,33 +96,6 @@ SECONDARY_EMOTIONS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-class EmotionEntry(BaseModel):
-    """One first-class emotion's row in the YAML.
-
-    The single ``expression_data`` field is the **documented
-    open-extensibility seam** — the ``dict[str, Any]`` typing matches
-    the wire-schema field on
-    :class:`voice_agent_pipeline.schemas.speech_emotion_event.SpeechEmotionPayload`
-    (which Story 3.4 lands). Architecture.md §"Type System Conventions"
-    explicitly endorses ``Any`` here; CLAUDE.md rule #3 carves out this
-    one exception.
-
-    The ``extra="forbid"`` rule on this wrapper is what catches typos
-    like ``expresion_data`` (single 's') at startup instead of at
-    runtime.
-    """
-
-    # extra="forbid" → typos in YAML keys fail at startup with a useful
-    # pydantic message. The inner expression_data dict is open
-    # (no extra="forbid") because new keys ship via YAML edits.
-    model_config = ConfigDict(extra="forbid")
-
-    # The architecturally-allowed dict[str, Any] seam. Pydantic doesn't
-    # validate the inner shape — that's by design (architecture.md
-    # §"Extensibility").
-    expression_data: dict[str, Any]
-
-
 class VocalizationEntry(BaseModel):
     """One vocalization tag's row in the YAML (e.g. ``[laughter]``).
 
@@ -136,6 +104,17 @@ class VocalizationEntry(BaseModel):
     vocalization is rendered as audio); when ``False`` the tag is
     stripped from TTS text but still published to the ``vocalization``
     topic for embodiment.
+
+    Two flavors of vocalization live in the v1 map:
+
+    - **Audio bursts** (``laughter``, ``sigh``, ``gasp``,
+      ``clears_throat``) — non-verbal sounds. ``tts_supported=True``
+      when Cartesia can render them; otherwise the embodiment is
+      expected to fill the gap with its own audio asset (or ignore).
+    - **Gesture cues** (``nod``, ``shake``) — pure embodiment hooks
+      with ``tts_supported=False`` (they are not sounds, they are
+      visual gestures). The Talker prompt teaches the LLM when to emit
+      them; the consumer binds them to head-nod / head-shake actions.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -151,8 +130,8 @@ class FallbackFamily(BaseModel):
     requires exactly 7 such families (architecture.md §"`speech_emotion`
     Mapping Completeness").
 
-    ``maps_to`` must be the name of an entry under the top-level
-    ``emotions:`` block; the loader's reference-integrity check
+    ``maps_to`` must be the name of an entry in the top-level
+    ``emotions:`` list; the loader's reference-integrity check
     (:func:`_assert_references`) enforces this after pydantic parsing.
     """
 
@@ -186,15 +165,17 @@ class ExpressionMapConfig(BaseModel):
 
     Attributes:
         schema_version: Must equal :data:`EXPRESSION_MAP_SCHEMA_VERSION`
-            (=2) — anything else raises :class:`SchemaVersionError` at
+            (=3) — anything else raises :class:`SchemaVersionError` at
             load time per NFR27.
-        emotions: First-class emotion entries. Every name in
+        emotions: First-class emotion names, as a list. Every name in
             :data:`PRIMARY_EMOTIONS` and :data:`SECONDARY_EMOTIONS` must
-            be present (FR20).
-        vocalizations: The four v1 vocalization tags
-            (``laughter, sigh, gasp, clears_throat``). Adding more is
-            currently a YAML edit + a corresponding tag in the LLM's
-            system prompt (Story 3.7).
+            be present (FR20). The list shape replaces the pre-repair
+            mapping-of-EmotionEntry — the data is a vocabulary now,
+            not renderer hints.
+        vocalizations: Vocalization tags. v1 ships 4 audio bursts
+            (``laughter, sigh, gasp, clears_throat``) plus 2 gesture
+            cues (``nod, shake``); the Talker prompt enumerates the
+            full set and forbids the LLM from inventing others.
         fallback_families: Groups Cartesia's broader emotion vocabulary
             into 7 families (production map). Each family's
             ``maps_to`` must reference a first-class emotion.
@@ -205,7 +186,7 @@ class ExpressionMapConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int
-    emotions: dict[str, EmotionEntry]
+    emotions: list[str]
     vocalizations: dict[str, VocalizationEntry]
     fallback_families: dict[str, FallbackFamily]
     unknown: UnknownEntry
@@ -230,17 +211,17 @@ def load_from_path(path: Path) -> ExpressionMapConfig:
        ``ConfigError`` (mirrors Story 1.2's ``setup.py`` pattern).
     4. Cross-check ``schema_version`` via the existing
        :func:`assert_schema_version` helper, passing
-       ``supported=EXPRESSION_MAP_SCHEMA_VERSION`` so the global
-       constant in ``config/version.py`` (still 1 until Story 3.4) is
-       NOT touched. ``SchemaVersionError`` propagates.
+       ``supported=EXPRESSION_MAP_SCHEMA_VERSION`` so a future divergence
+       between the global and the local constant remains an explicit
+       choice rather than silent drift.
     5. Run :func:`_assert_completeness` — every primary + secondary
-       emotion must be present with non-empty ``expression_data``
-       (FR20 — no silent gaps).
+       emotion must be present in the ``emotions`` list (FR20 — no
+       silent gaps).
     6. Run :func:`_assert_references` — every ``maps_to`` resolves to
        a first-class emotion (FR21).
     7. Log ``config.expression_map.loaded`` at INFO with **counts only**
-       (no content — payload values may carry operator-private device
-       addresses).
+       (no content — vocabulary names themselves aren't sensitive but
+       the counts-only discipline is the easier rule to defend).
 
     Args:
         path: Path to ``expression_map.yaml``. Cwd-relative by default
@@ -288,8 +269,9 @@ def load_from_path(path: Path) -> ExpressionMapConfig:
     _assert_completeness(config)
     _assert_references(config)
 
-    # Counts-only at INFO — never log emotion or family contents (the
-    # expression_data values may include operator-private fields).
+    # Counts-only at INFO — the vocabulary itself isn't sensitive, but
+    # keeping the loader's logging discipline at "counts not contents"
+    # is the easier rule to defend on review.
     log.info(
         "config.expression_map.loaded",
         extra={
@@ -307,29 +289,21 @@ def load_from_path(path: Path) -> ExpressionMapConfig:
 
 
 def _assert_completeness(config: ExpressionMapConfig) -> None:
-    """Verify every primary + secondary emotion is present and populated.
+    """Verify every primary + secondary emotion is present in the list.
 
     AC #5: FR20's "no silent gaps" promise hinges on this check. The
-    pydantic schema alone can't enforce "the dict must contain these
-    specific keys" — it just enforces that the values are well-typed.
+    pydantic schema alone can't enforce "the list must contain these
+    specific names" — it just enforces that the values are well-typed
+    strings.
+
+    Pre-repair this also checked that each entry's ``expression_data``
+    was non-empty; that branch is gone with the field. Missing names
+    are reported sorted for deterministic operator-facing error output.
     """
     required = set(PRIMARY_EMOTIONS) | set(SECONDARY_EMOTIONS)
     missing = sorted(required - set(config.emotions))
     if missing:
-        # Sort the list for deterministic error rendering — operators
-        # see the same ordering on every run.
         raise ConfigError(missing_emotions=missing)
-
-    # Empty expression_data on a present entry is also a gap — the
-    # publisher would emit an empty payload, which the embodiment
-    # subscriber can't render. Catch at startup.
-    for name in required:
-        entry = config.emotions[name]
-        if not entry.expression_data:
-            raise ConfigError(
-                emotion=name,
-                reason="expression_data empty",
-            )
 
 
 def _assert_references(config: ExpressionMapConfig) -> None:
@@ -345,14 +319,16 @@ def _assert_references(config: ExpressionMapConfig) -> None:
     reference — operators fix one at a time. A "collect and report all"
     version is a future enhancement.
     """
-    if config.unknown.maps_to not in config.emotions:
+    emotion_set = set(config.emotions)
+
+    if config.unknown.maps_to not in emotion_set:
         raise ConfigError(
             reference="unknown.maps_to",
             target=config.unknown.maps_to,
         )
 
     for family_name, family in config.fallback_families.items():
-        if family.maps_to not in config.emotions:
+        if family.maps_to not in emotion_set:
             raise ConfigError(
                 reference=f"fallback_families.{family_name}.maps_to",
                 target=family.maps_to,

@@ -28,7 +28,7 @@ def test_envelope_round_trips_through_json_via_concrete_subclass() -> None:
     rebuilt = MoodEvent.model_validate_json(wire)
 
     # Envelope fields round-trip equal.
-    assert rebuilt.schema_version == original.schema_version == 2
+    assert rebuilt.schema_version == original.schema_version == 3
     assert rebuilt.source == original.source == "voice_agent_pipeline"
     assert rebuilt.correlation_id == original.correlation_id
     assert rebuilt.timestamp == original.timestamp
@@ -52,4 +52,4 @@ def test_envelope_wire_form_contains_expected_substrings() -> None:
     # Source is the locked literal.
     assert "voice_agent_pipeline" in wire
     # schema_version present on wire.
-    assert '"schema_version":2' in wire
+    assert '"schema_version":3' in wire

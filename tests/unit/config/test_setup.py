@@ -45,7 +45,7 @@ _STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK + _GOODBYE_BLOCK
 
 
 _VALID_TOML = (
-    "schema_version = 2\n"
+    "schema_version = 3\n"
     "[audio]\n"
     'input_device_name = "USB.*Mic.*"\n'
     'output_device_name = "USB.*Speaker.*"\n'
@@ -108,7 +108,7 @@ def test_load_happy_path(tmp_path: Path) -> None:
     """
     toml_path, env_path = _write_files(tmp_path)
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
-    assert config.schema_version == 2
+    assert config.schema_version == 3
     # SecretStr requires explicit unwrap — that's the whole point of using it.
     # If you ever see a test asserting on `str(config.picovoice_access_key)`,
     # that's a bug: SecretStr renders as `**********` in str/repr by design.
@@ -161,7 +161,7 @@ def test_publisher_block_overrides_loaded(tmp_path: Path) -> None:
     Verifies the per-topic + adapter knobs land correctly.
     """
     toml_body = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -193,7 +193,7 @@ def test_publisher_block_unknown_adapter_rejected(tmp_path: Path) -> None:
     from voice_agent_pipeline.errors import ConfigError
 
     toml_body = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -218,7 +218,7 @@ def test_wakeword_block_extra_key_rejected(tmp_path: Path) -> None:
     loader wraps it as ConfigError per the project's error hierarchy.
     """
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         "[wakeword]\n"
@@ -246,7 +246,7 @@ def test_wakeword_sensitivity_out_of_range_rejected(tmp_path: Path) -> None:
     cryptic native-code error message instead of a clean ConfigError.
     """
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         "[wakeword]\n"
@@ -269,7 +269,7 @@ def test_wakeword_sensitivity_default(tmp_path: Path) -> None:
     they only override when Story 5.5's soak says so.
     """
     toml_with_default = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         # Story 2.1: output_device_name is now required.
@@ -296,7 +296,7 @@ def test_missing_wakeword_block_rejected(tmp_path: Path) -> None:
     a future "headless" mode lands, this assertion needs to flip.
     """
     toml_no_wakeword = (
-        'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
+        'schema_version = 3\n[audio]\ninput_device_name = "USB.*Mic.*"\n'
         # No [wakeword] block at all.
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=toml_no_wakeword)
@@ -310,7 +310,7 @@ def test_missing_wakeword_block_rejected(tmp_path: Path) -> None:
 def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
     """Story 1.5 AC #3: `extra='forbid'` applies to the nested AudioConfig too."""
     bad_toml = (
-        'schema_version = 2\n[audio]\ninput_device_name = "USB.*Mic.*"\nunknown_audio_field = 42\n'
+        'schema_version = 3\n[audio]\ninput_device_name = "USB.*Mic.*"\nunknown_audio_field = 42\n'
     )
     toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
@@ -320,7 +320,7 @@ def test_audio_block_extra_key_rejected(tmp_path: Path) -> None:
 
 def test_audio_block_missing_input_name_rejected(tmp_path: Path) -> None:
     """Story 1.5 AC #3: `input_device_name` is required."""
-    bad_toml = "schema_version = 2\n[audio]\n"
+    bad_toml = "schema_version = 3\n[audio]\n"
     toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml + _STT_AND_GREETING_BLOCKS)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
@@ -335,7 +335,7 @@ def test_talker_block_overrides_loaded(tmp_path: Path) -> None:
     including the per-provider model sub-blocks.
     """
     toml_with_talker = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -381,7 +381,7 @@ def test_talker_max_tokens_must_be_positive(tmp_path: Path) -> None:
     Anthropic call with a 400.
     """
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -400,7 +400,7 @@ def test_talker_max_tokens_must_be_positive(tmp_path: Path) -> None:
 def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
     """Story 2.2: ``extra='forbid'`` applies to the nested TalkerConfig too."""
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -418,7 +418,7 @@ def test_talker_block_extra_key_rejected(tmp_path: Path) -> None:
 def test_stt_clarification_prompts_explicit_override(tmp_path: Path) -> None:
     """Story 4.5: ``[stt] clarification_prompts = [...]`` parses correctly."""
     toml_with_clarification = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -443,7 +443,7 @@ def test_stt_clarification_prompts_empty_raises(tmp_path: Path) -> None:
     confidence turn; the validator catches it at startup.
     """
     toml_with_empty = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -478,7 +478,7 @@ def test_greeting_defaults_with_valid_toml(tmp_path: Path) -> None:
 def test_greeting_missing_mood_raises(tmp_path: Path) -> None:
     """Story 4.5: missing a Mood Literal value → ConfigError from model_validator."""
     toml_with_missing_mood = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -510,7 +510,7 @@ def test_router_defaults(tmp_path: Path) -> None:
 def test_router_slow_path_patterns_explicit(tmp_path: Path) -> None:
     """Story 4.7: ``[router] slow_path_patterns = [...]`` parses correctly."""
     toml_with_router = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -529,7 +529,7 @@ def test_router_slow_path_patterns_explicit(tmp_path: Path) -> None:
 def test_router_default_orchestrator(tmp_path: Path) -> None:
     """Story 4.7: ``[router] default = "orchestrator"`` parses."""
     toml_with_default = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -548,7 +548,7 @@ def test_router_default_orchestrator(tmp_path: Path) -> None:
 def test_router_default_invalid_raises(tmp_path: Path) -> None:
     """Story 4.7: ``[router] default = "..."`` outside the Literal raises."""
     toml_with_bad_default = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -567,7 +567,7 @@ def test_router_default_invalid_raises(tmp_path: Path) -> None:
 def test_greeting_extra_mood_key_rejected(tmp_path: Path) -> None:
     """Story 4.5: ``ecstatic`` (not in Mood Literal) → pydantic key validation rejects."""
     toml_with_bad_mood = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -597,7 +597,7 @@ def test_stt_old_singular_clarification_prompt_rejected(tmp_path: Path) -> None:
     singular form, surfacing as a ``ConfigError`` so they update.
     """
     toml_with_old_field = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -624,7 +624,7 @@ def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
     operator pastes the GUID into setup.toml.
     """
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -641,7 +641,7 @@ def test_tts_block_missing_voice_id_rejected(tmp_path: Path) -> None:
 def test_tts_block_extra_key_rejected(tmp_path: Path) -> None:
     """Story 2.3: ``extra='forbid'`` applies to TtsConfig too."""
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -700,7 +700,7 @@ def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:
     onward — a config without a speaker regex cannot start.
     """
     bad_toml = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         # Note: input present, output deliberately missing.
         'input_device_name = "USB.*Mic.*"\n'
@@ -715,7 +715,7 @@ def test_audio_block_missing_output_name_rejected(tmp_path: Path) -> None:
 
 def test_missing_audio_block_rejected(tmp_path: Path) -> None:
     """Omitting the `[audio]` block entirely raises ConfigError naming it."""
-    toml_path, env_path = _write_files(tmp_path, toml_body="schema_version = 2\n")
+    toml_path, env_path = _write_files(tmp_path, toml_body="schema_version = 3\n")
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
     assert "audio" in str(exc_info.value).lower()
@@ -738,7 +738,7 @@ def test_extra_key_raises(tmp_path: Path) -> None:
     toml_path, env_path = _write_files(
         tmp_path,
         toml_body=(
-            "schema_version = 2\nunknown_key = 42\n"
+            "schema_version = 3\nunknown_key = 42\n"
             '[audio]\ninput_device_name = "USB.*Mic.*"\n'
             'output_device_name = "USB.*Speaker.*"\n'
             "[wakeword]\n"
@@ -796,9 +796,10 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     # Each new story that lands a required nested block must extend this
     # TOML to keep the test focused on its contract (schema_version policy).
     # Use a fully valid TOML except for the deliberately-wrong
-    # schema_version (99 — clearly not supported). Story 3.4 bumped
-    # SUPPORTED_SCHEMA_VERSION 1 → 2; this test drives 99 to keep the
-    # assertion forward-compatible across future bumps.
+    # schema_version (99 — clearly not supported). Bump history: Story
+    # 3.4 took SUPPORTED_SCHEMA_VERSION 1→2; sprint-change-proposal-
+    # 2026-05-10 took 2→3 (boundary repair). 99 keeps the assertion
+    # forward-compatible across future bumps.
     bad_toml = (
         "schema_version = 99\n"
         "[audio]\n"
@@ -821,7 +822,7 @@ def test_unsupported_schema_version_raises(tmp_path: Path) -> None:
     # this is the AC #8 contract from Story 1.2 and survives every later
     # story that touches the loader.
     assert "99" in msg
-    assert "2" in msg
+    assert "3" in msg
     assert "setup.toml" in msg
 
 
@@ -861,7 +862,7 @@ def test_daemon_enabled_false_explicit(tmp_path: Path) -> None:
     None-beliefs path; this test only verifies the config parse.
     """
     toml_with_disabled = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -883,7 +884,7 @@ def test_daemon_enabled_false_explicit(tmp_path: Path) -> None:
 def test_daemon_url_explicit_override(tmp_path: Path) -> None:
     """Story 4.1: an explicit ``[daemon] url`` overrides the default."""
     toml_with_daemon = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -908,7 +909,7 @@ def test_daemon_url_unknown_field_raises(tmp_path: Path) -> None:
     it before the pipeline tries to call the (missing) daemon.
     """
     toml_with_typo = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -935,7 +936,7 @@ def test_daemon_url_must_start_with_http(tmp_path: Path) -> None:
     rather than a clean ConfigError at startup. Catch it here.
     """
     toml_with_bad_url = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -960,7 +961,7 @@ def test_daemon_url_strips_trailing_slash(tmp_path: Path) -> None:
     at parse time keeps the stored value canonical for log readability.
     """
     toml_with_trailing = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -992,7 +993,7 @@ def test_talker_grounded_keys_explicit(tmp_path: Path) -> None:
     fetch. Story 4.1 only validates the field shape lands.
     """
     toml_with_grounded = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -1059,7 +1060,7 @@ def test_tools_defaults_both_enabled(tmp_path: Path) -> None:
 def test_tools_one_disabled(tmp_path: Path) -> None:
     """``[tools] enable_go_to_sleep = false`` parses correctly."""
     toml_with_partial = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
@@ -1082,7 +1083,7 @@ def test_tools_one_disabled(tmp_path: Path) -> None:
 def test_tools_both_disabled(tmp_path: Path) -> None:
     """Both flags false → tool registry will be empty at construction."""
     toml_with_both_off = (
-        "schema_version = 2\n"
+        "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
         'output_device_name = "USB.*Speaker.*"\n'
