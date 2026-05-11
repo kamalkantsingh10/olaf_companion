@@ -586,8 +586,8 @@ Personal-project scale, not a fleet:
 
 ### Speech Recognition
 
-- **FR6**: The pipeline can transcribe user speech to text on-device, without transmitting audio to a cloud service.
-- **FR7**: The pipeline can use the Hailo-8L NPU when present to accelerate Whisper inference; if not present, it can fall back to CPU inference with a logged warning.
+- **FR6**: The pipeline can transcribe user speech to text via a configurable STT backend selected in `setup.toml`. The v1 default is **Groq Whisper-Large-V3-Turbo** (cloud, OpenAI-compatible API). An on-device Whisper backend (`faster-whisper`) is retained as an opt-in offline alternative behind the same Protocol seam (Story 1.4). *Reversal of the original "on-device only" FR6: see `sprint-change-proposal-2026-05-12.md` for the latency / accuracy / hardware-feasibility rationale.*
+- **FR7**: The pipeline can use the Hailo-8L NPU when present to accelerate Whisper inference; if not present, it can fall back to CPU inference with a logged warning. *Note: FR7's premise — that Hailo acceleration is necessary for STT viability — was revised on 2026-05-12 (see `sprint-change-proposal-2026-05-12.md`). With cloud STT as v1 default, Hailo capacity is freed for other v2 workloads.*
 - **FR8**: The pipeline can attach a confidence score to each transcript and route low-confidence transcripts to a clarification path.
 
 ### Conversational Intelligence

@@ -52,21 +52,46 @@ min_speech_duration_ms = 250
 start_threshold = 0.5
 end_threshold = 0.35
 
-# Speech-to-text (Story 1.7). On first run faster-whisper downloads the
-# model from HuggingFace (~500 MB for "small") to ~/.cache/huggingface/.
-# Subsequent runs load from cache. Set device="cuda" if you have a GPU
-# and torch installed; "auto" probes torch.cuda.is_available() at startup.
+# Speech-to-text (Story 1.7, sprint-change-proposal-2026-05-12).
+#
+# v1 default backend: "groq" — cloud STT via Groq's openai-compatible
+# audio/transcriptions endpoint. Requires GROQ_API_KEY in .env (the
+# same key Talker uses when [talker] provider = "groq"). Whisper-large-
+# v3-turbo at ~216x real-time on Groq's LPU comfortably clears NFR3's
+# 500ms p95 end-of-speech → transcript budget. Cost is ~$0.04/hr of
+# audio — pennies at hobby scale.
+#
+# To switch to the on-device backend, change one line:
+#     backend = "whisper-cpu"
+# The faster-whisper model + compute_type + device fields below kick in
+# only on that path; the groq_model + api_key_env fields kick in only on
+# the cloud path. Behind the same STTBackend Protocol — no other config
+# edit needed for the swap.
+#
+# Why default flipped to cloud (full rationale in sprint-change-proposal-
+# 2026-05-12.md): (a) on-device deployment via Pi 5 + Hailo regresses
+# accuracy because Hailo's zoo caps at Whisper-Small with no accent
+# fine-tune at that size; (b) Indian-accent recognition on the existing
+# distil-whisper-small.en path was the original driver. Audio of every
+# utterance leaves the device for the cloud backend — operators who
+# weight privacy over accuracy flip the one line above.
 [stt]
-backend = "whisper-cpu"
-# Story 3.7 calibration: bumped from "small" to the SYSTRAN-published
-# CTranslate2 conversion of distil-whisper/distil-large-v3.
-# faster-whisper needs the CT2 model.bin format; the original
-# distil-whisper repo only ships safetensors. The Systran/faster-
-# distil-whisper-large-v3 repo is the canonical CT2 variant.
-# ~6× faster than full large-v3 with WER within ~1%; substantially
-# more accurate than small on the v1 dev PC. First run downloads
-# ~750 MB to ~/.cache/huggingface/. v2 Pi 5 port (Story 5.x) will
-# swap the entire backend, so this model choice is dev-PC-only.
+backend = "groq"
+# Groq audio model. "whisper-large-v3-turbo" is the cheapest + fastest
+# tier (~$0.04/hr); quality within ~1% of full whisper-large-v3 for
+# English. Operators can swap to "whisper-large-v3" for slightly higher
+# accuracy at ~3x cost, or any other Groq audio model.
+groq_model = "whisper-large-v3-turbo"
+# Env-var name for the Groq API key. Defaults to "GROQ_API_KEY" — the
+# same key Talker reads when [talker] provider = "groq". Override only
+# when separating STT/Talker keys for rate-limit or audit reasons.
+api_key_env = "GROQ_API_KEY"
+# faster-whisper knobs — consumed only when backend = "whisper-cpu".
+# Kept committed so an operator can flip backend without re-hunting the
+# right model/CT2-variant settings. Systran/faster-distil-whisper-small.en
+# is the offline path's calibrated choice (Story 3.7); CT2-compiled
+# distilled variant from the SYSTRAN HuggingFace org. ~6x faster than
+# full large-v3 with WER within ~1%.
 model = "Systran/faster-distil-whisper-small.en"
 compute_type = "int8"
 device = "auto"

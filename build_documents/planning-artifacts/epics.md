@@ -93,7 +93,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **Speech Recognition**
 
-- **FR6**: The pipeline can transcribe user speech to text on-device, without transmitting audio to a cloud service.
+- **FR6**: The pipeline can transcribe user speech to text via a configurable STT backend selected in `setup.toml`. The v1 default is **Groq Whisper-Large-V3-Turbo** (cloud, OpenAI-compatible API). An on-device Whisper backend (`faster-whisper`) is retained as an opt-in offline alternative behind the same Protocol seam (Story 1.4). *Reversal of the original "on-device only" FR6 — see `sprint-change-proposal-2026-05-12.md`.*
 - **FR8**: The pipeline can attach a confidence score to each transcript and route low-confidence transcripts to a clarification path.
 
 **Conversational Intelligence**
@@ -307,7 +307,7 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 | FR3 (audio playback, no buffering pause) | Epic 2 | Speaker output wired Epic 2 |
 | FR4 (audio devices by stable name) | Epic 1 (mic) → Epic 2 (speaker) | `resolve_audio_devices()` name-regex pattern established Epic 1, extended Epic 2 |
 | FR5 (barge-in detection) | **v1.5 backlog** | VAD-during-SPEAKING + sustained-voice threshold; deferred from Epic 5 in 2026-05-06 direction shift |
-| FR6 (on-device STT) | Epic 1 | `WhisperBackend` (faster-whisper, CPU/GPU as available) |
+| FR6 (STT backend) | Epic 1 | `GroqAsrBackend` (v1 default, openai-compatible Groq audio API) + `WhisperBackend` (offline alternative, faster-whisper CPU/GPU), both behind `STTBackend` Protocol |
 | FR8 (transcript confidence + clarification routing) | Epic 1 | Low-confidence escape hatch |
 | FR9 (Talker vs orchestrator routing) | Epic 2 (Talker-only) → Epic 4 (slow-path wired) | Routing logic landed in Story 2.4; Epic 4.7 wires the orchestrator branch and removes the `NotImplementedError` stub |
 | FR10 (belief-state read) | Epic 4 | `BeliefStateClient` per-turn `GET /beliefs?keys=...`, no cache (Story 4.1) |
@@ -373,7 +373,7 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 - Audio capture path: `LocalAudioTransport` (input), `resolve_audio_devices(config)` name→index resolver (refuse-to-start if no match).
 - Wake-word: `pvporcupine` async-wrapped via `asyncio.to_thread`; custom `.ppn` committed to `models/wakeword/hey_olaf.ppn`.
 - VAD: Silero (Pipecat-bundled).
-- STT: `WhisperBackend` using faster-whisper, async-wrapped, returning transcript + confidence.
+- STT: `GroqAsrBackend` (v1 default) using the openai-compatible SDK against Groq's `audio/transcriptions` endpoint, returning transcript + confidence; `WhisperBackend` (offline alternative) using faster-whisper. Both async-wrapped behind the `STTBackend` Protocol — operators choose via `setup.toml` `[stt] backend`.
 
 **FRs:** FR1, FR2, FR4 (mic side), FR6, FR8, FR31 (`setup.toml` + `.env`), FR34 (Picovoice key), FR37, FR39, FR42, FR43
 **NFRs primarily proven:** NFR3 (STT p95), NFR12, NFR13 (wake-word accuracy baseline), NFR23 (0600 perms), NFR25 (no creds in logs), NFR28 (Protocol seams), NFR29 (JSON logs)
@@ -736,9 +736,9 @@ So that I can verify the listening half-loop with a transcript I can read in `./
 **When** the captured utterance is handed to STT,
 **Then** audio capture for that turn terminates (no further frames captured this turn).
 
-**Given** `stt/whisper_cpu.py` implements `STTBackend`,
+**Given** the configured STT backend implements `STTBackend` (v1 default: `stt/groq.py`; offline alternative: `stt/whisper_cpu.py`),
 **When** `transcribe(audio)` is called,
-**Then** `faster_whisper.WhisperModel.transcribe(...)` runs inside `asyncio.to_thread(...)` and returns a `TranscriptionResult` carrying the transcript text and a confidence score (FR6, FR8).
+**Then** the backend's inference call runs inside `asyncio.to_thread(...)` (Groq SDK call or `faster_whisper.WhisperModel.transcribe(...)`) and returns a `TranscriptionResult` carrying the transcript text and a confidence score (FR6, FR8). *AC text updated 2026-05-12 to match the Protocol seam's actual coverage — see `sprint-change-proposal-2026-05-12.md`.*
 
 **Given** a transcript completes,
 **When** it is emitted,

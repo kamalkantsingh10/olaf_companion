@@ -39,7 +39,7 @@ These are the decisions an LLM implementing this component **must not violate**.
 - **Audio I/O** — mic capture, speaker playback, local audio devices or WebRTC transport.
 - **Wake-word detection** — always-on, low-power, on-device. Active **only** while `activity = sleeping`; gates the `sleeping → waking` transition. Mic is the single audio stream consumer in either mode (wake-word listener while sleeping; VAD + STT while AWAKE).
 - **Continuous mic capture while AWAKE** — `activity ∈ {listening, working, speaking}` keeps the mic open without re-arming the wake word; turns flow back-to-back.
-- **STT (on-device)** — local Whisper or equivalent on the Pi, accelerated via Hailo-8L where viable. No cloud dependency.
+- **STT (configurable)** — v1 default: **Groq Whisper-Large-V3-Turbo** (cloud, openai-compatible API), reached via the same `openai` SDK Talker uses. Offline alternative: on-device `faster-whisper` behind the same `STTBackend` Protocol seam (Story 1.4). Cloud round-trip sits inside NFR3's ≤500 ms p95 budget via Groq's LPU. Audio of every utterance leaves the device for the cloud backend; operators flip one `setup.toml` line (`backend = "whisper-cpu"`) to revert to the offline path. *Brief Core Decision #3 was reversed on 2026-05-12 — see `sprint-change-proposal-2026-05-12.md`.*
 - **Turn dispatch** — send user transcripts to the orchestrator daemon over HTTP/WebSocket; receive structured response stream.
 - **Talker (tool-using fast-path)** — provider-agnostic in-pipeline LLM (OpenAI / Groq / Gemini via openai-compatible API surface). Two invocation modes:
   - **conversational** — generate spoken reply, may emit tool-calls (`go_to_sleep`, `set_mood`) in parallel.
@@ -80,7 +80,7 @@ These are the decisions an LLM implementing this component **must not violate**.
   │  Mic → Wake-word detector ────fires──────▶ activity → waking ────▶ Talker (greeting mode)                     │
   │  (only consumer of mic                     │    │                  + current mood → 2–8 word reply             │
   │  while sleeping)                           │    │                                                              │
-  │                                           │    │  Mic → VAD → On-device STT (Whisper + Hailo-8L)              │
+  │                                           │    │  Mic → VAD → STT (Groq cloud / Whisper offline — configurable)│
   │                                           │    │                          ↓                                    │
   │                                           │    │                  [user transcript]                           │
   │                                           │    │                          ↓                                    │
@@ -502,14 +502,14 @@ A conversation feels alive when these hold. Numbers below are the v1 commitments
 - **Voice / `speech_emotion` alignment.** Audio-anchored expression matches voice within a **30–80ms anticipatory** window at p95 (NFR5) — outside this is a defect.
 - **Robust unmapped-tag handling.** `speech_emotion` payload always carries `raw_tag + resolved_fallback`; truly unknown tags fall to `neutral` with a logged warning. No silent gaps.
 - **Wake-word reliability.** False-positive rate **≤ 1 per hour** of typical household ambient (NFR12); false-negative rate **≤ 5%** in normal speaking conditions (NFR13).
-- **On-device STT latency.** Whisper + Hailo-8L on Pi: **≤ 500ms** at p95 (NFR3).
+- **STT latency.** End-of-speech → transcript ready: **≤ 500ms** at p95 (NFR3). Budget applies regardless of backend; Groq's LPU clears it for the cloud default.
 - **Talker tool-call decision overhead** must add **≤ 100ms** to the simple-turn budget at p95 (NFR32).
 
 ## 13. Scope
 
 ### 13.1 In scope (v1, Phases 0-3)
 
-- Audio I/O, wake-word, on-device STT, Cartesia TTS, four-topic ROS 2 publish (`mood`, `activity`, `speech_emotion`, `vocalization`), activity FSM
+- Audio I/O, wake-word, STT (Groq cloud default; on-device Whisper opt-in), Cartesia TTS, four-topic ROS 2 publish (`mood`, `activity`, `speech_emotion`, `vocalization`), activity FSM
 - Continuous mic capture while AWAKE (no per-turn wake word)
 - Talker fast-path (in-pipeline LLM, provider-agnostic factory across OpenAI / Groq / Gemini)
 - Talker tool-using — `go_to_sleep()` and `set_mood(mood)` with typed Pydantic input schemas
@@ -542,7 +542,7 @@ A conversation feels alive when these hold. Numbers below are the v1 commitments
 
 | Phase | Goal | Validation |
 |---|---|---|
-| **0** | Bare voice loop: Pipecat with on-device STT and Cartesia TTS, push-to-talk trigger, single hardcoded prompt. Run on laptop or Pi with mic + speakers. | Audio I/O, STT latency on Pi, transport |
+| **0** | Bare voice loop: Pipecat with STT (Groq cloud default; on-device Whisper opt-in) and Cartesia TTS, push-to-talk trigger, single hardcoded prompt. Run on laptop or Pi with mic + speakers. | Audio I/O, STT latency end-to-end, transport |
 | **1** | Wake-word + continuous capture + daemon dispatch + tag splitter + Talker tool-emit + greeting mode. Replace push-to-talk with always-on wake-word; STT is continuously available while AWAKE. Wire in orchestrator daemon. Implement streaming SSML parser, segment-on-emotion-or-vocalization-or-sentence logic, and the Talker tool-call path (`go_to_sleep`, `set_mood`). OLAF still mocked (log adapter behind `EventPublisher` Protocol). | Streaming parser correctness, segment logic, daemon integration, Talker tool-call FP/FN baseline, greeting timing |
 | **2** | Real OLAF expression via four-topic publisher. Replace log adapter with `Ros2EventPublisher` (publishes `mood`, `activity`, `speech_emotion`, `vocalization`). Validate first that ROS 2 messages arrive on each of the four topics with the right QoS, then validate audio-anchored timing for `speech_emotion` and `vocalization`. | ROS 2 message arrival on all four topics, latched semantics for `mood`/`activity`, audio-anchored alignment ≤ 80ms |
 | **3** | Activity FSM full coverage + mapping completeness + soak. Implement the full activity state set with `working` sub-modes; intent-sleep deferred-transition path; mood lifecycle with cooldown; full secondary-emotion + family-fallback coverage of the Cartesia vocab. Soak in real ambient conditions for ≥ 7 days. | LLM emits unusual emotions; sleep-intent FP/FN within target; mood cadence within NFR31; no flicker; 30-min session pass criteria from PRD §Measurable Outcomes |

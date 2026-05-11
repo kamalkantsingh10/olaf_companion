@@ -13,6 +13,7 @@ Hierarchy (read top-down, indentation marks subclass relationships)::
     ├── StartupValidationError
     ├── ExternalServiceError      (CLAUDE.md rule #4: NEVER caught in v1)
     │   ├── CartesiaError
+    │   ├── GroqAsrError
     │   ├── OrchestratorError
     │   └── TalkerError
     ├── PublisherError
@@ -119,6 +120,16 @@ class CartesiaError(ExternalServiceError):
     """Cartesia TTS API failure (Story 2.3 + downstream)."""
 
 
+class GroqAsrError(ExternalServiceError):
+    """Groq STT API failure (sprint-change-proposal-2026-05-12, Cloud STT swap).
+
+    Raised by :class:`voice_agent_pipeline.stt.groq.GroqAsrBackend` on any
+    ``openai.APIError`` subclass from Groq's ``audio/transcriptions``
+    endpoint. Same fail-fast posture as :class:`TalkerError` /
+    :class:`CartesiaError` — never caught in v1 code paths.
+    """
+
+
 class OrchestratorError(ExternalServiceError):
     """Orchestrator daemon failure — HTTP 4xx/5xx, SSE stream broken, etc. (Stories 4.1, 4.2)."""
 
@@ -157,6 +168,7 @@ __all__ = [
     "CartesiaError",
     "ConfigError",
     "ExternalServiceError",
+    "GroqAsrError",
     "OrchestratorError",
     "PublisherError",
     "SchemaVersionError",

@@ -133,7 +133,11 @@ async def run_sequential_loop(config: SetupConfig) -> None:
 
         # Pre-load STT — the model's first inference would otherwise
         # add ~2s to the first turn's latency.
-        stt = build_stt_backend(config.stt)
+        # 2026-05-12: factory now takes the full SetupConfig (was config.stt)
+        # because the "groq" backend needs config.groq_api_key in addition
+        # to the nested stt block. Mirrors how ``build_talker(config)``
+        # works on the Talker side.
+        stt = build_stt_backend(config)
         await stt.load()
 
         # Cartesia TTS client. Streaming SSE happens per ``speak`` call.

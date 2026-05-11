@@ -238,30 +238,52 @@ class TalkerConfig(BaseModel):
 
 
 class SttConfig(BaseModel):
-    """STT backend selection + tuning knobs (Story 1.7).
+    """STT backend selection + tuning knobs (Story 1.7, sprint-change-2026-05-12).
 
     The :func:`build_stt_backend` factory in
     :mod:`voice_agent_pipeline.stt` reads :attr:`backend` and switches on it.
-    v1 supports only ``"whisper-cpu"``; v2 adds ``"hailo-whisper"`` for
-    Pi 5 + Hailo-8L deployments — the Protocol seam from Story 1.4 keeps
-    callers unchanged across that swap.
+
+    Backend matrix:
+
+    - ``"groq"`` — **v1 default.** Cloud STT against Groq's
+      openai-compatible ``audio/transcriptions`` endpoint
+      (sprint-change-proposal-2026-05-12.md). Consumes :attr:`groq_model`
+      + ``GROQ_API_KEY`` (or whichever env var :attr:`api_key_env` points
+      at). The ``model`` / ``compute_type`` / ``device`` fields are
+      ignored on this backend.
+    - ``"whisper-cpu"`` — on-device fallback. Consumes :attr:`model` /
+      :attr:`compute_type` / :attr:`device` for the faster-whisper
+      configuration. Retained as the opt-in offline alternative —
+      operators flip ``backend = "whisper-cpu"`` and STT goes local.
 
     Attributes:
-        backend: Backend identifier. v1: ``"whisper-cpu"``.
-        model: faster-whisper model size — ``"tiny" / "base" / "small" /
-            "medium" / "large-v3"``. ``"small"`` is the dev-host default
-            (~500 MB, ~150ms inference per 1s audio on a modern CPU).
+        backend: Backend identifier — ``"groq"`` (default) or
+            ``"whisper-cpu"``.
+        groq_model: Groq audio model identifier when ``backend = "groq"``.
+            Default ``"whisper-large-v3-turbo"`` (cheapest + fastest tier
+            in Groq's catalog as of 2026-05-12; quality within ~1% of full
+            ``whisper-large-v3`` for English).
+        api_key_env: Name of the environment variable holding the Groq
+            API key. Default ``"GROQ_API_KEY"`` — same key Talker reads
+            when ``[talker] provider = "groq"`` is active, so one secret
+            powers both surfaces. Override only when an operator wants
+            to separate the keys (e.g., different rate-limit pools).
+        model: faster-whisper model size when ``backend = "whisper-cpu"`` —
+            ``"tiny" / "base" / "small" / "medium" / "large-v3"`` or any
+            HuggingFace/Systran CT2-compiled variant id.
         compute_type: faster-whisper compute precision. ``"int8"`` is the
             CPU sweet-spot — ~3x faster than ``"float16"`` with negligible
             accuracy loss for English transcription.
         device: ``"cpu" / "cuda" / "auto"``. ``"auto"`` consults
             ``torch.cuda.is_available()`` if torch is importable; falls
-            back to ``"cpu"`` otherwise. v2's Hailo backend ignores this
-            field.
+            back to ``"cpu"`` otherwise.
         low_confidence_threshold: Transcripts with confidence below this
             value emit an additional ``stt.low_confidence`` WARN log,
             and (Story 2.4 onward) trigger a clarification prompt.
-            ``exp(avg_logprob)`` units; 0.5 is conservative.
+            ``exp(avg_logprob)`` units; 0.5 is conservative. Both Groq
+            and Whisper backends report confidence in the same
+            ``exp(mean(avg_logprob))`` shape, so the threshold transfers
+            across the swap (Story 5.5 soak validates).
         clarification_prompts: List of operator-authored static strings
             used when STT confidence is below
             ``low_confidence_threshold``. Story 4.5 replaces Story 2.4's
@@ -280,7 +302,17 @@ class SttConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    backend: str = "whisper-cpu"
+    # 2026-05-12: default flipped from "whisper-cpu" to "groq" per the
+    # sprint-change proposal. Operators wanting the on-device path flip
+    # this one TOML line; no other config edit needed.
+    backend: Literal["groq", "whisper-cpu"] = "groq"
+    # Groq-side knobs (consumed when backend = "groq").
+    groq_model: str = "whisper-large-v3-turbo"
+    api_key_env: str = "GROQ_API_KEY"
+    # Whisper-side knobs (consumed when backend = "whisper-cpu"). Kept as
+    # fields rather than a nested sub-block because the offline backend
+    # is the minority path and a flat shape is simpler to read when
+    # auditing a setup.toml.
     model: str = "small"
     compute_type: str = "int8"
     device: str = "auto"

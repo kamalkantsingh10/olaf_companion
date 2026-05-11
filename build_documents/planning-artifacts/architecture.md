@@ -80,7 +80,7 @@ The component is **consumer-agnostic**. The event envelope, the four topic-speci
 | Cluster | FRs | Architectural implication (v1) |
 |---|---|---|
 | Audio I/O & Capture | FR1–FR5 | Always-on wake-word + VAD-bounded capture + mic-mode-aware capture in one Pipecat input stage; device pinning by stable name. FR5 (barge-in) deferred to v1.5. |
-| Speech Recognition | FR6–FR8 | On-device Whisper running on host CPU/GPU as available; confidence-based clarification routing. No Hailo dependency in v1. |
+| Speech Recognition | FR6–FR8 | Configurable STT backend (`STTBackend` Protocol, Story 1.4). v1 default: **Groq Whisper-Large-V3-Turbo** (cloud, openai-compatible API). Offline alternative: on-device `faster-whisper` (CPU/GPU). Confidence-based clarification routing unchanged. *Reversed from on-device-only on 2026-05-12 — see `sprint-change-proposal-2026-05-12.md`.* |
 | Conversational Intelligence | FR9–FR14 | TurnRouter decides Talker vs orchestrator; in-pipeline tool-using LLM client; belief-state HTTP client; orchestrator SSE consumer; greeting-mode invocation surface (FR12). |
 | Voice Synthesis | FR15–FR17 | Cartesia streaming client; FR16 (degraded mode) deferred to v2 resilience layer. |
 | Embodiment Expression | FR18–FR25 | Streaming SSML parser, segmentation, mapping table (full primary + secondary + family fallback), audio-frame metadata threading, **publish to `speech_emotion` and `vocalization` topics via `EventPublisher`**, last-published cache. **Top-priority v1 quality bar.** |
@@ -491,7 +491,7 @@ downstream embodiment project consumes the wire as-is or not at all.
 1. **Bootstrap** — `uv init`, dependencies, `pyproject.toml`, `justfile`, `CLAUDE.md`, `.env.example`, `.gitignore`, project layout. ✅ landed (Stories 1.1–1.3)
 2. **Config + secrets** — `pydantic-settings` models for `setup.toml` + `.env`, schema validation. ✅ landed; `expression_map.yaml` SIGHUP loader pending Epic 3.
 3. **Logging** — structlog setup with redaction processor + rotating file handlers in `./logs/`. ✅ landed
-4. **STT inference interface + WhisperBackend** — async `transcribe`, `asyncio.to_thread` wrapping faster-whisper. ✅ landed (Story 1.7)
+4. **STT inference interface + Whisper/Groq backends** — async `transcribe`, `asyncio.to_thread` wrapping faster-whisper or the openai-compatible Groq client. ✅ landed (Story 1.7, Whisper); Groq backend + default flip landed 2026-05-12 (see `sprint-change-proposal-2026-05-12.md`).
 5. **Wake-word + VAD + audio I/O** — Pipecat LocalAudioTransport, `pvporcupine` integration, audio device pinning. ✅ landed (Stories 1.6, 2.1); mic-mode flip wiring pending Epic 3.
 6. **Talker (provider-agnostic factory) + TurnRouter + TurnDispatch** — single-channel, no tools, low-confidence clarification, simple-turn loop. ✅ landed (Stories 2.2 + 2.4 + 2.5)
 7. **Cartesia TTS streaming client** — `tts.generate_sse`, raw S16LE PCM. ✅ landed (Story 2.3)
@@ -517,6 +517,10 @@ downstream embodiment project consumes the wire as-is or not at all.
 - `STTBackend` interface (item 4) is depended on by audio I/O (item 5) — already satisfied.
 - Logging (item 3) is depended on by everything — already landed.
 - Config (item 2) is the substrate — already landed; `setup.toml` schema extended for the new `[publisher]`, `[mood]`, `[greeting]`, `[tools]` sections in items 10/13/14/16.
+
+#### STT backend default reversal (2026-05-12)
+
+Brief Problem #3 ("cloud-dependent transcription… not acceptable") and Core Decision #3 ("cloud STT explicitly excluded for v1") were reversed deliberately on 2026-05-12. Driver: degraded accuracy on Indian-accented English, plus the finding that Hailo's GenAI Model Zoo caps at Whisper-Small with no Indian-accent fine-tune in that size class — so the embedded-deploy path *regresses* accuracy vs the current PC `distil-small.en`. Cloud STT (Groq Whisper-Large-V3-Turbo) decouples accuracy from embedded-compute and clears NFR3's ≤500 ms p95 budget via Groq's LPU. Privacy footprint (audio leaves device) is acknowledged as a deliberate trade, not eliminated — operators retain `backend = "whisper-cpu"` as an opt-in offline path. See `sprint-change-proposal-2026-05-12.md` for the full rationale, trade-offs considered, and rejected alternatives.
 
 ## Implementation Patterns & Consistency Rules
 
@@ -934,7 +938,7 @@ flowchart TD
 | FR cluster | FRs (v1-active) | Source files |
 |---|---|---|
 | Audio I/O | FR1–FR4 (FR5 → v1.5 barge-in) | `audio/transport.py`, `audio/wakeword.py`, `audio/vad.py`, `audio/devices.py` |
-| STT | FR6, FR8 | `stt/whisper_cpu.py`, `stt/backend.py` |
+| STT | FR6, FR8 | `stt/groq.py` (v1 default), `stt/whisper_cpu.py` (offline alternative), `stt/backend.py` |
 | Conversational Intelligence | FR9–FR12, FR14 | `turn/router.py`, `turn/talker.py`, `turn/orchestrator.py`, `turn/beliefs.py` |
 | Voice Synthesis | FR15, FR17 | `tts/cartesia.py`, `tts/client.py` |
 | Embodiment Expression | FR18–FR25 | `splitter/state_machine.py`, `splitter/segmenter.py`, `splitter/mapping.py`, `schemas/speech_emotion_event.py`, `schemas/vocalization_event.py`, `publisher/ros2.py`, `audio/transport.py` |

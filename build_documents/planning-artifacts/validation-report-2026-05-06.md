@@ -95,7 +95,7 @@ externalGap: 'NFR26 compliance — brief and distillate must be updated to match
 |---|---|---|
 | **Vision** (Pipecat-based voice loop + embodiment surface; Talker fast-path; single fan-out splitter) | ✅ Fully Covered | Executive Summary preserved + extended with continuous-conversation, intent-sleep, 4-topic publish |
 | **Target users** (Kamal, single user; consumers: orchestrator, OLAF renderer, future motion controller) | ✅ Fully Covered | Project Classification + Stakeholder lists preserved |
-| **Problem statement** (3 failure modes: dead air, drift, cloud STT) | ✅ Fully Covered | Dead air → NFR1/NFR2; Drift → NFR5 + single fan-out; Cloud STT → FR6 |
+| **Problem statement** (3 failure modes: dead air, drift, cloud STT) | ✅ Fully Covered | Dead air → NFR1/NFR2; Drift → NFR5 + single fan-out; Cloud STT → FR6 *(coverage framing inverted on 2026-05-12: brief Problem #3 reframed and FR6 now permits cloud STT with on-device as opt-in — see `sprint-change-proposal-2026-05-12.md`. Coverage is still via a concrete backend choice; the default flipped.)* |
 | **Key features** (audio I/O, wake-word, on-device STT, Talker fast-path, turn dispatch, tag splitter, Cartesia TTS, expression publisher, lifecycle signaling) | ✅ Fully Covered | All present in FR1–FR53 |
 | **Architectural decisions** (5 listed in brief) | ✅ Fully Covered + EXTENDED | PRD now lists 6 decisions; new #5 (continuous-conversation/intent-sleep) and #6 (multi-topic publish) reflect the direction shift |
 | **Goals / success criteria** (TBD ms targets) | ✅ Fully Covered + HARDENED | TBDs replaced with concrete NFRs (NFR1=1500ms, NFR2=1000ms, NFR3=500ms, NFR5=30–80ms, NFR12=≤1/hr, NFR13=≤5%); new NFR30/31/32 added |

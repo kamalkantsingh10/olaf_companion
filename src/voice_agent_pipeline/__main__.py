@@ -37,6 +37,7 @@ from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
 from voice_agent_pipeline.logging.startup import StartupReporter
 from voice_agent_pipeline.sequential_loop import run_sequential_loop
+from voice_agent_pipeline.stt import validate_credentials as validate_stt_credentials
 from voice_agent_pipeline.tts.cartesia import (
     validate_credentials as validate_cartesia_credentials,
 )
@@ -147,6 +148,21 @@ async def main() -> int:
             async with reporter.stage("cartesia", "cartesia validated"):
                 await validate_cartesia_credentials(config)
             log.info("startup.validated.cartesia")
+
+            # sprint-change-proposal-2026-05-12: probe the active STT
+            # backend. For ``backend = "groq"`` (v1 default), hits Groq's
+            # models.retrieve endpoint to validate the API key + model id
+            # in one call (same pattern as the Talker probe). For
+            # ``backend = "whisper-cpu"`` this is a no-op — the local
+            # model load is its own startup checklist line, run later by
+            # the sequential loop. The backend name is in the description
+            # so the operator sees which backend was probed.
+            async with reporter.stage(
+                "stt",
+                f"stt validated      ({config.stt.backend})",
+            ):
+                await validate_stt_credentials(config)
+            log.info("startup.validated.stt", backend=config.stt.backend)
         except VoiceAgentError as e:
             # Unpack the exception's structured context (stage, reason,
             # url, ...) into top-level log fields so they're individually

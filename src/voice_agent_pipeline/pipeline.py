@@ -1176,7 +1176,10 @@ async def run_pipeline(
     # startup step (multi-second cold load on first run, sub-second
     # afterwards), so it gets its own checklist line.
     async with rep.stage("stt_model", "stt model loaded"):
-        stt_backend = build_stt_backend(config.stt)
+        # 2026-05-12: factory now takes the full SetupConfig (was config.stt)
+        # to access ``groq_api_key`` for the new "groq" backend. Mirrors
+        # ``build_talker(config)``.
+        stt_backend = build_stt_backend(config)
         await stt_backend.load()
 
     cartesia_client = CartesiaClient(config.tts, config.cartesia_api_key)
