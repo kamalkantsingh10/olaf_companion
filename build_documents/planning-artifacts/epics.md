@@ -239,7 +239,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **v1 fail-fast posture (Architecture §"V1 Posture"):**
 
-- Startup validates: Cartesia API key + reachable, active Talker provider's API key + reachable (one of OpenAI / Groq / Gemini per `setup.toml`), Picovoice access key valid, orchestrator daemon reachable + `GET /health` 200, `EventPublisher` initialized with all four topic publishers (`mood`, `activity`, `speech_emotion`, `vocalization`), audio devices resolvable by name, Talker tool registry loadable + validates against typed Pydantic input schemas.
+- Startup validates: Cartesia API key + reachable, active Talker provider's API key + reachable (one of OpenAI / Groq / Gemini per `setup.toml`), active STT backend's credentials + reachable (Groq `models.retrieve` for `backend = "groq"`; no-op for `whisper-cpu`), Picovoice access key valid, orchestrator daemon reachable + `GET /health` 200, `EventPublisher` initialized with all four topic publishers (`mood`, `activity`, `speech_emotion`, `vocalization`), audio devices resolvable by name **AND openable at the configured 16 kHz mono S16LE format (mic also passes a 3-chunk read to catch "opens but yields no samples" USB mics)**, Talker tool registry loadable + validates against typed Pydantic input schemas.
 - Any failure → process refuses to start with a clear error.
 - At runtime, external-service failures crash the process; systemd restarts. **No retry, no in-process recovery, no partial-mode fallbacks in v1.**
 

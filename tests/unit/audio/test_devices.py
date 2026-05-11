@@ -15,6 +15,7 @@ from voice_agent_pipeline.audio import devices as devices_mod
 from voice_agent_pipeline.audio.devices import (
     AudioDeviceIndices,
     enumerate_devices,
+    probe_devices_openable,
     resolve_audio_devices,
 )
 from voice_agent_pipeline.errors import StartupValidationError
@@ -186,3 +187,221 @@ def test_no_audio_bytes_in_logs(
     for record in caplog.records:
         assert "audio_bytes" not in record.getMessage()
         assert "audio_bytes" not in str(getattr(record, "args", ""))
+
+
+# ---------------------------------------------------------------------------
+# probe_devices_openable — startup-time mic + speaker openability check
+# ---------------------------------------------------------------------------
+#
+# The probe constructs its own PyAudio() instance and calls open(...) on
+# the configured device indices. The fakes below mirror just enough of
+# the PyAudio API surface — open(), stream.read(), stream.stop_stream(),
+# stream.close(), the paInt16 constant — to exercise the probe end-to-end
+# without real audio hardware.
+
+
+class _FakeStream:
+    """Drop-in for ``pyaudio.Stream``. Records read calls, optionally raises."""
+
+    def __init__(
+        self,
+        open_kwargs: dict[str, Any],
+        read_error: Exception | None = None,
+    ) -> None:
+        self.open_kwargs = open_kwargs
+        self.read_calls: int = 0
+        self.stopped = False
+        self.closed = False
+        self._read_error = read_error
+
+    def read(self, frames: int, exception_on_overflow: bool = True) -> bytes:
+        del exception_on_overflow
+        self.read_calls += 1
+        if self._read_error is not None:
+            raise self._read_error
+        # Return silence — 16-bit mono samples == 2 bytes per frame.
+        return b"\x00\x00" * frames
+
+    def stop_stream(self) -> None:
+        self.stopped = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeOpenablePyAudio:
+    """Extended fake supporting open(); records every open call.
+
+    Configurable failure modes: ``open_error`` raises on open;
+    ``read_error`` raises on read.
+    """
+
+    def __init__(
+        self,
+        open_error: Exception | None = None,
+        read_error: Exception | None = None,
+    ) -> None:
+        self.open_calls: list[dict[str, Any]] = []
+        self.streams: list[_FakeStream] = []
+        self.terminate_count = 0
+        self._open_error = open_error
+        self._read_error = read_error
+
+    # Match the resolver-side surface so the same fake can serve both tests.
+    def get_device_count(self) -> int:
+        return 0
+
+    def get_device_info_by_index(self, index: int) -> dict[str, Any]:
+        raise IndexError(index)
+
+    def open(self, **kwargs: Any) -> _FakeStream:
+        self.open_calls.append(kwargs)
+        if self._open_error is not None:
+            raise self._open_error
+        stream = _FakeStream(kwargs, read_error=self._read_error)
+        self.streams.append(stream)
+        return stream
+
+    def terminate(self) -> None:
+        self.terminate_count += 1
+
+
+class _FakeOpenableModule:
+    """Fake pyaudio module exposing PyAudio + the paInt16 format constant."""
+
+    paInt16 = 8  # noqa: N815 -- mimic real pyaudio.paInt16 attribute (mixed-case is the SDK's choice)
+
+    def __init__(self, pa: _FakeOpenablePyAudio) -> None:
+        self._pa = pa
+
+    def PyAudio(self) -> _FakeOpenablePyAudio:  # noqa: N802 -- mimic real PyAudio() name
+        return self._pa
+
+
+@pytest.fixture
+def fake_openable_pyaudio(monkeypatch: pytest.MonkeyPatch) -> _FakeOpenablePyAudio:
+    """Install a fake pyaudio whose open() succeeds; return the singleton for inspection."""
+    pa = _FakeOpenablePyAudio()
+    monkeypatch.setattr(devices_mod, "pyaudio", _FakeOpenableModule(pa))
+    return pa
+
+
+def test_probe_opens_mic_and_speaker_at_configured_format(
+    fake_openable_pyaudio: _FakeOpenablePyAudio,
+) -> None:
+    """Both sides open at 16 kHz mono S16LE; mic reads 3 chunks; both close cleanly."""
+    probe_devices_openable(AudioDeviceIndices(input_index=2, output_index=5))
+
+    # Two open calls — mic first, speaker second.
+    assert len(fake_openable_pyaudio.open_calls) == 2
+    mic_open, spk_open = fake_openable_pyaudio.open_calls
+
+    # Mic side carries input=True + the configured device index.
+    assert mic_open["input"] is True
+    assert mic_open["input_device_index"] == 2
+    assert mic_open["rate"] == 16_000
+    assert mic_open["channels"] == 1
+    assert mic_open["format"] == 8  # paInt16
+
+    # Speaker side carries output=True + the configured device index.
+    assert spk_open["output"] is True
+    assert spk_open["output_device_index"] == 5
+    assert spk_open["rate"] == 16_000
+
+    # Both streams closed.
+    assert all(s.closed for s in fake_openable_pyaudio.streams)
+    # Mic stream specifically read 3 chunks.
+    mic_stream = fake_openable_pyaudio.streams[0]
+    assert mic_stream.read_calls == 3
+    # Speaker stream NEVER reads (it's an output stream) and NEVER writes
+    # (avoids audible noise at startup).
+    spk_stream = fake_openable_pyaudio.streams[1]
+    assert spk_stream.read_calls == 0
+    # PyAudio() instance terminated exactly once.
+    assert fake_openable_pyaudio.terminate_count == 1
+
+
+def test_probe_skips_none_input(fake_openable_pyaudio: _FakeOpenablePyAudio) -> None:
+    """``input_index=None`` skips the mic probe entirely; output still runs."""
+    probe_devices_openable(AudioDeviceIndices(input_index=None, output_index=3))
+    # Only one open call — the speaker's.
+    assert len(fake_openable_pyaudio.open_calls) == 1
+    assert fake_openable_pyaudio.open_calls[0]["output"] is True
+
+
+def test_probe_skips_none_output(fake_openable_pyaudio: _FakeOpenablePyAudio) -> None:
+    """``output_index=None`` skips the speaker probe; mic still runs."""
+    probe_devices_openable(AudioDeviceIndices(input_index=4, output_index=None))
+    assert len(fake_openable_pyaudio.open_calls) == 1
+    assert fake_openable_pyaudio.open_calls[0]["input"] is True
+
+
+def test_probe_skips_both_when_indices_are_none(
+    fake_openable_pyaudio: _FakeOpenablePyAudio,
+) -> None:
+    """All-None indices: no opens, but PyAudio() is still terminated."""
+    probe_devices_openable(AudioDeviceIndices(input_index=None, output_index=None))
+    assert fake_openable_pyaudio.open_calls == []
+    assert fake_openable_pyaudio.terminate_count == 1
+
+
+def test_probe_mic_open_failure_wraps_in_startup_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PyAudio OSError on mic open → StartupValidationError(stage="audio.mic")."""
+    pa = _FakeOpenablePyAudio(open_error=OSError("device busy"))
+    monkeypatch.setattr(devices_mod, "pyaudio", _FakeOpenableModule(pa))
+
+    with pytest.raises(StartupValidationError) as exc_info:
+        probe_devices_openable(AudioDeviceIndices(input_index=1, output_index=2))
+    assert exc_info.value.context["stage"] == "audio.mic"
+    assert exc_info.value.context["device_index"] == 1
+    assert "device busy" in exc_info.value.context["reason"]
+    # Even on failure, PyAudio() must terminate (cleanup discipline).
+    assert pa.terminate_count == 1
+
+
+def test_probe_mic_read_failure_wraps_in_startup_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mic opens but read() raises → StartupValidationError(stage="audio.mic").
+
+    Catches the "opens but yields no samples" failure on flaky USB mics —
+    a read() that raises rather than blocking forever.
+    """
+    pa = _FakeOpenablePyAudio(read_error=OSError("input overflowed"))
+    monkeypatch.setattr(devices_mod, "pyaudio", _FakeOpenableModule(pa))
+
+    with pytest.raises(StartupValidationError) as exc_info:
+        probe_devices_openable(AudioDeviceIndices(input_index=1, output_index=None))
+    assert exc_info.value.context["stage"] == "audio.mic"
+    # Stream that failed mid-read must still close (probe owns cleanup).
+    assert pa.streams[0].closed
+
+
+def test_probe_speaker_failure_wraps_in_startup_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Speaker open OSError → StartupValidationError(stage="audio.speaker").
+
+    Only the speaker side fails: mic succeeds and gets cleaned up first.
+    """
+
+    class _PaFailOutputOnly(_FakeOpenablePyAudio):
+        def open(self, **kwargs: Any) -> _FakeStream:
+            if kwargs.get("output"):
+                raise OSError("speaker mute")
+            return super().open(**kwargs)
+
+    pa = _PaFailOutputOnly()
+    monkeypatch.setattr(devices_mod, "pyaudio", _FakeOpenableModule(pa))
+
+    with pytest.raises(StartupValidationError) as exc_info:
+        probe_devices_openable(AudioDeviceIndices(input_index=1, output_index=2))
+    assert exc_info.value.context["stage"] == "audio.speaker"
+    assert exc_info.value.context["device_index"] == 2
+    assert "speaker mute" in exc_info.value.context["reason"]
+    # Mic stream from before the speaker failure must have closed cleanly.
+    assert pa.streams[0].closed
+    # PyAudio() terminated despite the speaker failure.
+    assert pa.terminate_count == 1

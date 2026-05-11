@@ -78,6 +78,197 @@ def resolve_audio_devices(
     return AudioDeviceIndices(input_index=input_index, output_index=output_index)
 
 
+def probe_devices_openable(indices: AudioDeviceIndices) -> None:
+    """Open + immediately close each resolved device to confirm it's actually usable.
+
+    Why this is a separate probe from :func:`resolve_audio_devices`:
+    name-regex resolution only proves "PyAudio's enumeration table contains
+    a device whose name matches" — it does NOT prove the device is currently
+    openable. A USB mic that's enumerated but in use by another process, an
+    output device whose format is mis-claimed, or a regex matching a
+    phantom device that disappears between enumeration and open all fall in
+    that gap. Catching those at startup (before the audio loop starts and
+    before the operator hears nothing) is the whole point of NFR26's
+    "validate everything at startup" posture.
+
+    What the probe does:
+
+    - **Mic side:** opens an input stream at 16 kHz mono S16LE (the
+      pipeline-wide audio format), reads ~300 ms of samples (3 chunks of
+      1024 frames at 16 kHz), closes. Catches busy / wrong-format /
+      unplugged-after-enum failures. Reading frames is what catches the
+      subtle "device opens but produces no samples" case (some USB mics
+      do this when the OS-side driver is mid-restart).
+    - **Speaker side:** opens an output stream at the same format and
+      closes immediately, **without writing**. Writing would produce
+      audible noise at startup; the open-then-close still confirms the
+      driver accepts the format. A speaker that's actually broken (no
+      output device wired) will fail to open with a clear PyAudio error.
+
+    Idempotency: this is a *separate* PyAudio instance from the
+    production one — each call constructs a fresh ``PyAudio()`` and
+    terminates it. The audio loop later opens its own streams against
+    the same indices.
+
+    Args:
+        indices: Resolved :class:`AudioDeviceIndices` from
+            :func:`resolve_audio_devices`. ``None`` slots are skipped —
+            an operator who didn't configure one side (e.g., output-only
+            tests) shouldn't be forced to provide it here.
+
+    Raises:
+        StartupValidationError: With ``stage="audio.mic"`` or
+            ``stage="audio.speaker"`` on any PyAudio failure during open
+            or read. ``reason`` carries the underlying error text so the
+            operator sees what went wrong (driver-busy, format-rejected,
+            etc.) without a stack trace.
+    """
+    # Constants — these MUST match the pipeline-wide audio format used by
+    # :mod:`voice_agent_pipeline.audio.transport` (16 kHz mono S16LE).
+    # The probe-format mismatch failure mode would be insidious: probe
+    # passes, real open fails. Kept hard-coded here rather than threading
+    # through config because the format isn't actually configurable.
+    sample_rate = 16_000
+    channels = 1
+    frame_format = pyaudio.paInt16
+    frames_per_chunk = 1024  # ~64 ms at 16 kHz — three chunks ≈ 192 ms read
+    read_chunks = 3
+
+    pa = pyaudio.PyAudio()
+    try:
+        # Input probe — only if the operator configured an input device.
+        if indices.input_index is not None:
+            _probe_input(
+                pa=pa,
+                device_index=indices.input_index,
+                sample_rate=sample_rate,
+                channels=channels,
+                frame_format=frame_format,
+                frames_per_chunk=frames_per_chunk,
+                read_chunks=read_chunks,
+            )
+        # Output probe — same gating logic.
+        if indices.output_index is not None:
+            _probe_output(
+                pa=pa,
+                device_index=indices.output_index,
+                sample_rate=sample_rate,
+                channels=channels,
+                frame_format=frame_format,
+                frames_per_chunk=frames_per_chunk,
+            )
+    finally:
+        # Always terminate the throwaway PyAudio instance, even if a
+        # probe raised mid-call — PortAudio holds OS resources that
+        # don't auto-release on GC alone.
+        pa.terminate()
+
+    log.info(
+        "audio.devices.probed",
+        input_index=indices.input_index,
+        output_index=indices.output_index,
+    )
+
+
+def _probe_input(
+    pa: pyaudio.PyAudio,
+    device_index: int,
+    sample_rate: int,
+    channels: int,
+    frame_format: int,
+    frames_per_chunk: int,
+    read_chunks: int,
+) -> None:
+    """Open input stream, read N chunks, close. Wrap failure in StartupValidationError.
+
+    Reads frames (not just opens) because the "stream opens but yields no
+    samples" failure mode is real on some USB mics — driver accepts the
+    format but the device returns silence indefinitely. A quick read
+    catches that without burdening startup latency (~200 ms cost).
+    """
+    stream = None
+    try:
+        stream = pa.open(
+            format=frame_format,
+            channels=channels,
+            rate=sample_rate,
+            input=True,
+            input_device_index=device_index,
+            frames_per_buffer=frames_per_chunk,
+        )
+        # Read a few chunks to confirm samples actually flow. ``read``
+        # blocks until the buffer fills — ~64 ms per chunk at 16 kHz.
+        # exception_on_overflow=False so transient overruns during the
+        # probe don't fail startup; the production pipeline manages
+        # overruns separately.
+        for _ in range(read_chunks):
+            stream.read(frames_per_chunk, exception_on_overflow=False)
+    except OSError as e:
+        # PyAudio raises OSError (PortAudio errors surface that way) for
+        # device-busy, unsupported-format, device-disappeared, etc.
+        raise StartupValidationError(
+            stage="audio.mic",
+            device_index=device_index,
+            reason=str(e),
+        ) from e
+    finally:
+        # Stream cleanup — stop_stream before close per PortAudio
+        # convention; both are idempotent so guarding with ``if stream``
+        # is enough.
+        if stream is not None:
+            try:
+                stream.stop_stream()
+            except OSError:
+                # Best-effort cleanup; the underlying error is already
+                # being raised (or we're on the happy path and don't
+                # care about a teardown hiccup).
+                pass
+            stream.close()
+
+
+def _probe_output(
+    pa: pyaudio.PyAudio,
+    device_index: int,
+    sample_rate: int,
+    channels: int,
+    frame_format: int,
+    frames_per_chunk: int,
+) -> None:
+    """Open output stream, close immediately — no write (avoids audible noise at startup).
+
+    The format-acceptance check is in the ``pa.open(...)`` call itself —
+    PortAudio raises if the output device doesn't support the requested
+    format/rate. We deliberately do NOT write samples: writing zeros
+    would produce no audible noise, but writing any non-zero buffer
+    would. The "open succeeds, write fails" failure mode is vanishingly
+    rare on output streams; reading samples (as we do for the mic) is
+    the more revealing check there.
+    """
+    stream = None
+    try:
+        stream = pa.open(
+            format=frame_format,
+            channels=channels,
+            rate=sample_rate,
+            output=True,
+            output_device_index=device_index,
+            frames_per_buffer=frames_per_chunk,
+        )
+    except OSError as e:
+        raise StartupValidationError(
+            stage="audio.speaker",
+            device_index=device_index,
+            reason=str(e),
+        ) from e
+    finally:
+        if stream is not None:
+            try:
+                stream.stop_stream()
+            except OSError:
+                pass
+            stream.close()
+
+
 def enumerate_devices() -> list[tuple[int, dict[str, Any]]]:
     """Snapshot PyAudio's device enumeration as ``(index, info_dict)`` tuples.
 

@@ -32,6 +32,7 @@ import sys
 import pvporcupine  # pyright: ignore[reportMissingTypeStubs]
 import structlog
 
+from voice_agent_pipeline.audio.devices import probe_devices_openable, resolve_audio_devices
 from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
@@ -163,6 +164,26 @@ async def main() -> int:
             ):
                 await validate_stt_credentials(config)
             log.info("startup.validated.stt", backend=config.stt.backend)
+
+            # 2026-05-12 (separate from the Groq STT change): probe that
+            # the mic + speaker resolve AND actually open at the
+            # pipeline's audio format. The name-regex resolution catches
+            # "no device matches the regex"; the openability probe
+            # catches "device matches but is busy, unplugged, or has a
+            # format mismatch". Without the second probe, operators see
+            # an empty audio stream at run-time and have to dig — this
+            # surfaces the same failure at startup with a clear stage
+            # label. Probing is off-thread because PyAudio's open/read
+            # are blocking C calls; the ~200 ms cost is acceptable for
+            # the surfaced reliability.
+            async with reporter.stage("audio", "audio devices openable"):
+                indices = await asyncio.to_thread(
+                    resolve_audio_devices,
+                    config.audio.input_device_name,
+                    config.audio.output_device_name,
+                )
+                await asyncio.to_thread(probe_devices_openable, indices)
+            log.info("startup.validated.audio")
         except VoiceAgentError as e:
             # Unpack the exception's structured context (stage, reason,
             # url, ...) into top-level log fields so they're individually
