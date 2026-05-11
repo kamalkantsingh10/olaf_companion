@@ -160,15 +160,22 @@ clarification_prompts = [
 # (`provider = "..."`) and restart. Each provider's matching API key
 # must be present in `.env`:
 #
-#   provider = "openai"  -> needs OPENAI_API_KEY  (default)
-#   provider = "groq"    -> needs GROQ_API_KEY
+#   provider = "openai"  -> needs OPENAI_API_KEY
+#   provider = "groq"    -> needs GROQ_API_KEY  (v1 default since 2026-05-12)
 #   provider = "gemini"  -> needs GEMINI_API_KEY
+#
+# 2026-05-12: operator-level swap from OpenAI to Groq. Measured TTFT on
+# `gpt-5.4-nano` over a real session ranged 0.5-4.7s (median ~2s),
+# blowing NFR1's 1500ms end-to-end budget. Groq + `openai/gpt-oss-120b`
+# delivers ~0.4-0.7s TTFT via Groq's LPU, with comparable instruction-
+# following / tool-call reliability. Same `openai` SDK — no code
+# change, just this provider flip + the [talker.groq] model below.
 #
 # `max_tokens = 512` keeps replies to 1-2 sentences; raising it risks
 # verbose answers that blow NFR1. Edit `prompts/talker_system.md` (not
 # env vars) to change OLAF's voice / personality.
 [talker]
-provider = "openai"
+provider = "groq"
 max_tokens = 512
 system_prompt_path = "prompts/talker_system.md"
 # Story 4.1: belief-state grounding. List of keys to fetch from the
@@ -187,12 +194,21 @@ grounded_keys = []
 [talker.openai]
 model = "gpt-5.4-nano"
 
-# Groq Llama 3.1 8B Instant: fastest TTFB available (~50-150 ms) on
-# Groq's custom inference hardware. Cheapest of the three. Quality is
-# adequate for short conversational replies; Epic 3 tag-emission
-# reliability is the main risk — bump to a 70B Llama if needed.
+# Groq + `openai/gpt-oss-120b`: OpenAI's open-weight GPT model
+# (117B MoE, 5.1B active) hosted on Groq's LPU. ~0.4-0.7s TTFT,
+# strong instruction-following and tool-call reliability, Apache-2.0
+# license, $0.15/M input + $0.60/M output. This is the v1 Talker
+# default since 2026-05-12.
+#
+# Alternative Groq models if you want to experiment:
+#   "llama-3.3-70b-versatile"  -> ~0.3-0.4s TTFT, similar quality, less
+#                                  reliable on inline SSML tag adherence
+#   "qwen/qwen3-32b"           -> ~0.2-0.3s TTFT, cheaper, noticeably
+#                                  weaker on tool-call JSON discipline
+#   "llama-3.1-8b-instant"     -> ~0.1-0.15s TTFT, fastest, but tag/
+#                                  tool drift is real at this size
 [talker.groq]
-model = "llama-3.1-8b-instant"
+model = "openai/gpt-oss-120b"
 
 # Gemini 2.5 Flash: Google's mid-tier latency model, ~200-300 ms TTFB,
 # strong at structured output. Reached via Gemini's openai-compatible
