@@ -200,29 +200,41 @@ def test_build_talker_raises_when_gemini_key_missing(
 # --- validate_credentials ---
 
 
-def test_validate_credentials_calls_models_retrieve_with_active_model(
+def _make_page(model_ids: list[str]) -> Any:
+    """Build a fake AsyncPage-like object exposing ``.data`` of stubs with ``.id``."""
+    page = MagicMock()
+    page.data = [MagicMock(id=mid) for mid in model_ids]
+    return page
+
+
+def test_validate_credentials_calls_models_list_and_accepts_present_model(
     system_prompt_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Probe issues ``models.retrieve(<active_provider_model>)`` against the right base_url."""
+    """Probe issues ``models.list()`` against the right base_url + accepts the active model.
+
+    The probe shape changed from ``retrieve(model)`` to ``list()`` on
+    2026-05-12 because Groq's router 404s on the openai SDK's
+    URL-percent-encoded slash in ids like ``openai/gpt-oss-120b``.
+    ``list()`` puts nothing in the URL path, sidestepping that.
+    """
     import asyncio
 
     sink: dict[str, Any] = {}
     fake_module = MagicMock()
     fake_client = MagicMock()
-    retrieve_calls: list[Any] = []
+    list_call_count: list[int] = []
 
-    async def _retrieve(model_id: str) -> Any:
-        retrieve_calls.append(model_id)
-        return MagicMock()
+    async def _list() -> Any:
+        list_call_count.append(1)
+        return _make_page(["llama-3.1-8b-instant", "llama-3.3-70b-versatile"])
 
-    fake_client.models.retrieve = _retrieve
+    fake_client.models.list = _list
 
     def _construct_client(**kw: Any) -> Any:
         sink.update(kw)
         return fake_client
 
-    fake_client.models.retrieve = _retrieve
     fake_module.AsyncOpenAI = MagicMock(side_effect=_construct_client)
     fake_module.APIError = type("APIError", (Exception,), {})
     # ``validate_credentials`` lives in turn/__init__.py and imports openai
@@ -237,19 +249,50 @@ def test_validate_credentials_calls_models_retrieve_with_active_model(
     )
     asyncio.run(validate_credentials(config))
 
-    # Right base_url + key for Groq, AND the retrieve was called with
-    # the Groq sub-block's model — proves _resolve picks the matching
-    # model identifier per provider.
+    # Right base_url + key for Groq, AND list() was called exactly once —
+    # proves the probe reaches the Groq endpoint with the matching key.
     assert sink["base_url"] == "https://api.groq.com/openai/v1"
     assert sink["api_key"] == "real-groq-key"
-    assert retrieve_calls == ["llama-3.1-8b-instant"]
+    assert list_call_count == [1]
+
+
+def test_validate_credentials_raises_when_active_model_not_in_catalog(
+    system_prompt_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the configured model id isn't in the provider's list, probe fails clean."""
+    import asyncio
+
+    fake_module = MagicMock()
+    fake_client = MagicMock()
+
+    async def _list() -> Any:
+        # Active provider's configured model (``llama-3.1-8b-instant`` for
+        # provider="groq") is deliberately ABSENT from this catalog.
+        return _make_page(["llama-3.3-70b-versatile", "openai/gpt-oss-120b"])
+
+    fake_client.models.list = _list
+    fake_module.AsyncOpenAI = MagicMock(return_value=fake_client)
+    fake_module.APIError = type("APIError", (Exception,), {})
+    monkeypatch.setattr(turn_module, "openai", fake_module)
+
+    config = _build_setup(
+        provider="groq",
+        groq_key="real-groq-key",
+        system_prompt_path=system_prompt_file,
+    )
+    with pytest.raises(StartupValidationError) as exc_info:
+        asyncio.run(validate_credentials(config))
+    assert exc_info.value.context.get("stage") == "talker"
+    assert exc_info.value.context.get("provider") == "groq"
+    assert exc_info.value.context.get("model") == "llama-3.1-8b-instant"
 
 
 def test_validate_credentials_wraps_failure_as_startup_validation_error(
     system_prompt_file: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bad key / removed model surfaces as StartupValidationError, not raw SDK error."""
+    """Bad key / network error from models.list surfaces as StartupValidationError."""
     import asyncio
 
     fake_module = MagicMock()
@@ -258,10 +301,10 @@ def test_validate_credentials_wraps_failure_as_startup_validation_error(
     fake_api_error = type("APIError", (Exception,), {})
     boom = fake_api_error("401 unauthorized")
 
-    async def _retrieve(model_id: str) -> Any:
+    async def _list() -> Any:
         raise boom
 
-    fake_client.models.retrieve = _retrieve
+    fake_client.models.list = _list
     fake_module.AsyncOpenAI = MagicMock(return_value=fake_client)
     fake_module.APIError = fake_api_error
     monkeypatch.setattr(turn_module, "openai", fake_module)

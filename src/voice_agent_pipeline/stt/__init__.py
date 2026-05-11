@@ -102,10 +102,13 @@ async def validate_credentials(config: SetupConfig) -> None:
     Called by ``__main__.py`` Stage 3 before pipeline assembly. Dispatches
     on the active backend:
 
-    - ``"groq"``: probe Groq's ``models.retrieve(<model>)`` via the openai
-      SDK. Same pattern as the Talker probe — validates the API key
-      (401/403 on bad key) AND the model identifier (404 if the model
-      isn't in Groq's catalog) in one call, with no token burn.
+    - ``"groq"``: probe Groq's ``models.list()`` via the openai SDK and
+      check that the configured model id is in the returned catalog.
+      Same pattern as the Talker probe — validates the API key (401/403
+      on bad key) AND the model identifier (membership failure) in one
+      call, with no token burn. See the comment in the implementation
+      for why ``list()`` rather than ``retrieve(model)`` — slash-bearing
+      model ids would URL-encode incorrectly.
     - ``"whisper-cpu"``: no network surface to probe. The faster-whisper
       load can take 1-30 s and isn't free to validate "for real" without
       that cost, so we keep this branch a no-op and let
@@ -127,16 +130,22 @@ async def validate_credentials(config: SetupConfig) -> None:
                 backend="groq",
                 missing_env_var=stt.api_key_env,
             )
-        # Same probe shape as ``turn.validate_credentials`` (Talker side).
-        # We don't reuse the Talker client because they may use different
-        # api_keys / base_urls in principle, and constructing a tiny
-        # throwaway client at startup costs nothing.
+        # Same probe shape as ``turn.validate_credentials`` (Talker side):
+        # ``models.list()`` + Python membership check, NOT
+        # ``models.retrieve(model)``. The retrieve variant URL-encodes
+        # slash-bearing ids (``openai/gpt-oss-120b`` → ``openai%2Fgpt-
+        # oss-120b``) and Groq's router 404s on the encoded form. Today
+        # the Whisper model id (``whisper-large-v3-turbo``) has no
+        # slashes so retrieve would work, but matching the Talker
+        # pattern future-proofs the STT probe for slash-named audio
+        # models that providers may ship.
         client = openai.AsyncOpenAI(
             api_key=api_key.get_secret_value(),
             base_url="https://api.groq.com/openai/v1",
         )
         try:
-            await client.models.retrieve(stt.groq_model)
+            page = await client.models.list()
+            available = [m.id for m in page.data]
         except openai.APIError as e:
             raise StartupValidationError(
                 stage="stt",
@@ -144,6 +153,14 @@ async def validate_credentials(config: SetupConfig) -> None:
                 model=stt.groq_model,
                 reason=str(e),
             ) from e
+
+        if stt.groq_model not in available:
+            raise StartupValidationError(
+                stage="stt",
+                backend="groq",
+                model=stt.groq_model,
+                reason=(f"model not in Groq catalog (sample of available: {available[:5]})"),
+            )
         return
 
     if stt.backend == "whisper-cpu":

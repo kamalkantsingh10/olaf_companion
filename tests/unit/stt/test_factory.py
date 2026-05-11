@@ -107,16 +107,37 @@ async def test_validate_credentials_noop_for_whisper_cpu() -> None:
     await validate_credentials(_setup(_stt("whisper-cpu")))
 
 
-async def test_validate_credentials_calls_groq_models_retrieve(
+class _StubModel:
+    """Minimal stand-in for openai.types.Model — only ``id`` is read."""
+
+    def __init__(self, model_id: str) -> None:
+        self.id = model_id
+
+
+class _StubModelsPage:
+    """Stand-in for openai.pagination.AsyncPage[Model]; only ``.data`` is read."""
+
+    def __init__(self, model_ids: list[str]) -> None:
+        self.data = [_StubModel(mid) for mid in model_ids]
+
+
+async def test_validate_credentials_calls_groq_models_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Groq probe calls AsyncOpenAI.models.retrieve with the configured model."""
+    """The Groq probe calls AsyncOpenAI.models.list and checks membership.
+
+    The probe switched from ``retrieve(model)`` to ``list()`` after
+    Groq returned 404 on the URL-encoded slash in ``openai/gpt-oss-120b``
+    — same bug would bite a slash-named STT model. ``list()`` puts no
+    user data in the URL path, sidestepping the SDK's path-segment
+    percent-encoding.
+    """
     captured: dict[str, object] = {}
 
     class _StubModels:
-        async def retrieve(self, model: str) -> object:
-            captured["model"] = model
-            return object()
+        async def list(self) -> _StubModelsPage:
+            captured["list_called"] = True
+            return _StubModelsPage(["whisper-large-v3-turbo", "whisper-large-v3"])
 
     class _StubAsyncOpenAI:
         def __init__(self, **kwargs: object) -> None:
@@ -129,23 +150,47 @@ async def test_validate_credentials_calls_groq_models_retrieve(
 
     await validate_credentials(_setup(_stt("groq", groq_model="whisper-large-v3-turbo")))
 
-    assert captured["model"] == "whisper-large-v3-turbo"
+    assert captured["list_called"] is True
     init_kwargs = captured["init_kwargs"]
     assert isinstance(init_kwargs, dict)
     assert init_kwargs["base_url"] == "https://api.groq.com/openai/v1"
 
 
+async def test_validate_credentials_raises_when_model_not_in_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured model id absent from the provider's catalog fails startup."""
+
+    class _StubModels:
+        async def list(self) -> _StubModelsPage:
+            # Configured model NOT in this list — probe should reject.
+            return _StubModelsPage(["whisper-large-v3", "distil-whisper-large-v3-en"])
+
+    class _StubAsyncOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            self.models = _StubModels()
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _StubAsyncOpenAI)
+
+    with pytest.raises(StartupValidationError) as exc_info:
+        await validate_credentials(
+            _setup(_stt("groq", groq_model="whisper-large-v3-turbo")),
+        )
+    assert exc_info.value.context["stage"] == "stt"
+    assert exc_info.value.context["backend"] == "groq"
+    assert exc_info.value.context["model"] == "whisper-large-v3-turbo"
+
+
 async def test_validate_credentials_wraps_api_error_for_groq(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An openai.APIError surfaces as StartupValidationError, not the raw SDK error."""
+    """An openai.APIError from models.list surfaces as StartupValidationError."""
 
     class _StubModels:
-        async def retrieve(self, model: str) -> object:
-            del model
-            # APIError requires (message, request, body); shorthand using a
-            # bare BadRequestError is simpler but the base APIError is what
-            # the production code catches.
+        async def list(self) -> _StubModelsPage:
+            # APIError requires (message, request, body); the base
+            # APIError is what the production code catches.
             raise openai.APIError("nope", request=None, body=None)  # type: ignore[arg-type]
 
     class _StubAsyncOpenAI:

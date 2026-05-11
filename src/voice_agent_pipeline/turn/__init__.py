@@ -132,16 +132,27 @@ async def validate_credentials(config: SetupConfig) -> None:
     """Startup probe — confirm the active provider's key + model work.
 
     Called by ``__main__.py`` before pipeline assembly. Uses
-    :meth:`AsyncOpenAI.models.retrieve` because:
+    :meth:`AsyncOpenAI.models.list` + a Python membership check rather
+    than :meth:`models.retrieve(model)` because:
 
     1. It validates **both** the API key (401/403 on bad key) and the
-       configured model (404 if the model name doesn't exist), in one
-       call. Same call works against every openai-compatible endpoint.
+       configured model (KeyError-equivalent in Python if missing), in
+       one call. Same call works against every openai-compatible endpoint.
     2. It burns no tokens — unlike a token-1 ``chat.completions.create``
        probe, which would generate billable output.
+    3. **It tolerates slash-bearing model ids** like
+       ``openai/gpt-oss-120b`` on Groq. ``models.retrieve(<id>)`` puts
+       the id in the URL path, which the openai SDK percent-encodes
+       (``/`` → ``%2F``), and Groq's router rejects the encoded form
+       with a 404 even though the model exists. ``models.list()`` puts
+       no user data in the URL path, so the encoding bug is sidestepped.
+       (Discovered 2026-05-12 when the Talker swap to
+       ``openai/gpt-oss-120b`` hit ``404 model_not_found`` at startup
+       while the runtime chat completions worked fine.)
 
     Raises:
-        StartupValidationError: On any ``openai.APIError`` — the
+        StartupValidationError: On any ``openai.APIError`` OR when the
+            configured model id isn't in the provider's catalog. The
             operator sees a clean ``startup.failed`` log + non-zero
             exit, not a stack trace from inside the SDK.
         ConfigError: If the active provider's API key is missing.
@@ -149,13 +160,26 @@ async def validate_credentials(config: SetupConfig) -> None:
     api_key, model, base_url = _resolve(config)
     client = openai.AsyncOpenAI(api_key=api_key.get_secret_value(), base_url=base_url)
     try:
-        await client.models.retrieve(model)
+        # AsyncPage is iterable; collecting into a list once is cheap
+        # (providers return ~50-300 entries) and lets us produce a
+        # useful error message naming what *was* available if the
+        # operator's configured model isn't found.
+        page = await client.models.list()
+        available = [m.id for m in page.data]
     except openai.APIError as e:
         raise StartupValidationError(
             stage="talker",
             provider=config.talker.provider,
             reason=str(e),
         ) from e
+
+    if model not in available:
+        raise StartupValidationError(
+            stage="talker",
+            provider=config.talker.provider,
+            model=model,
+            reason=f"model not in provider catalog (sample of available: {available[:5]})",
+        )
 
 
 __all__ = [
