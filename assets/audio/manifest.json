@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-05-12T01:21:55.305609Z",
+  "generated_at": "2026-05-12T01:41:21.761015Z",
   "voice_id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
   "tts_model": "sonic-3",
   "entries": [
@@ -242,7 +242,7 @@
       "phrase_hash": "3ee049a15421b367",
       "phrase": "uh",
       "path": "assets/audio/fillers/grumpy/02.wav",
-      "duration_ms": 1114
+      "duration_ms": 975
     },
     {
       "surface": "greeting",
@@ -357,134 +357,6 @@
       "duration_ms": 510
     },
     {
-      "surface": "filler",
-      "mood": "sleepy",
-      "phrase_hash": "741a7e21ff21b613",
-      "phrase": "mmh",
-      "path": "assets/audio/fillers/sleepy/01.wav",
-      "duration_ms": 1160
-    },
-    {
-      "surface": "filler",
-      "mood": "calm",
-      "phrase_hash": "19b81de2ab131e68",
-      "phrase": "hmm",
-      "path": "assets/audio/fillers/calm/01.wav",
-      "duration_ms": 1300
-    },
-    {
-      "surface": "filler",
-      "mood": "calm",
-      "phrase_hash": "e64908631c166643",
-      "phrase": "uh",
-      "path": "assets/audio/fillers/calm/02.wav",
-      "duration_ms": 510
-    },
-    {
-      "surface": "filler",
-      "mood": "calm",
-      "phrase_hash": "05b85b7c1a8886fa",
-      "phrase": "let me think",
-      "path": "assets/audio/fillers/calm/04.wav",
-      "duration_ms": 743
-    },
-    {
-      "surface": "filler",
-      "mood": "calm",
-      "phrase_hash": "1150d1abe11fd321",
-      "phrase": "okay",
-      "path": "assets/audio/fillers/calm/06.wav",
-      "duration_ms": 975
-    },
-    {
-      "surface": "filler",
-      "mood": "calm",
-      "phrase_hash": "7981dc44ce7fed70",
-      "phrase": "right",
-      "path": "assets/audio/fillers/calm/07.wav",
-      "duration_ms": 1393
-    },
-    {
-      "surface": "filler",
-      "mood": "curious",
-      "phrase_hash": "e67effaeed55a0fe",
-      "phrase": "ooh",
-      "path": "assets/audio/fillers/curious/02.wav",
-      "duration_ms": 603
-    },
-    {
-      "surface": "filler",
-      "mood": "curious",
-      "phrase_hash": "4c894032045cb433",
-      "phrase": "uhh",
-      "path": "assets/audio/fillers/curious/04.wav",
-      "duration_ms": 928
-    },
-    {
-      "surface": "filler",
-      "mood": "excited",
-      "phrase_hash": "e9d6109fd1c72767",
-      "phrase": "oh!",
-      "path": "assets/audio/fillers/excited/01.wav",
-      "duration_ms": 603
-    },
-    {
-      "surface": "filler",
-      "mood": "excited",
-      "phrase_hash": "b002f4670955b952",
-      "phrase": "wait wait",
-      "path": "assets/audio/fillers/excited/04.wav",
-      "duration_ms": 975
-    },
-    {
-      "surface": "filler",
-      "mood": "grumpy",
-      "phrase_hash": "ce52f3019c357c6f",
-      "phrase": "hmm",
-      "path": "assets/audio/fillers/grumpy/01.wav",
-      "duration_ms": 1253
-    },
-    {
-      "surface": "filler",
-      "mood": "grumpy",
-      "phrase_hash": "e2ac5278c9f9c927",
-      "phrase": "right",
-      "path": "assets/audio/fillers/grumpy/03.wav",
-      "duration_ms": 650
-    },
-    {
-      "surface": "filler",
-      "mood": "grumpy",
-      "phrase_hash": "f8c3a42fdf482f02",
-      "phrase": "okay",
-      "path": "assets/audio/fillers/grumpy/04.wav",
-      "duration_ms": 789
-    },
-    {
-      "surface": "filler",
-      "mood": "grumpy",
-      "phrase_hash": "324ff39c3d2632f4",
-      "phrase": "let me see",
-      "path": "assets/audio/fillers/grumpy/05.wav",
-      "duration_ms": 1578
-    },
-    {
-      "surface": "filler",
-      "mood": "playful",
-      "phrase_hash": "a8259f1f49581d1d",
-      "phrase": "lemme see",
-      "path": "assets/audio/fillers/playful/04.wav",
-      "duration_ms": 1114
-    },
-    {
-      "surface": "filler",
-      "mood": "sleepy",
-      "phrase_hash": "8f3f9797bfccaad2",
-      "phrase": "hmm",
-      "path": "assets/audio/fillers/sleepy/04.wav",
-      "duration_ms": 1160
-    },
-    {
       "surface": "greeting",
       "mood": "playful",
       "phrase_hash": "4489b8f112c8bb7a",
@@ -547,6 +419,14 @@
       "phrase": "hello hello",
       "path": "assets/audio/greetings/playful/09.wav",
       "duration_ms": 789
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "741a7e21ff21b613",
+      "phrase": "mmh",
+      "path": "assets/audio/fillers/sleepy/01.wav",
+      "duration_ms": 1021
     },
     {
       "surface": "greeting",
@@ -1191,18 +1071,18 @@
     {
       "surface": "filler",
       "mood": "calm",
-      "phrase_hash": "21231da618a2c46a",
-      "phrase": "umm",
-      "path": "assets/audio/fillers/calm/03.wav",
-      "duration_ms": 650
+      "phrase_hash": "19b81de2ab131e68",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/calm/01.wav",
+      "duration_ms": 1300
     },
     {
       "surface": "filler",
       "mood": "calm",
-      "phrase_hash": "458c177954946b5f",
-      "phrase": "one moment",
-      "path": "assets/audio/fillers/calm/05.wav",
-      "duration_ms": 1764
+      "phrase_hash": "e64908631c166643",
+      "phrase": "uh",
+      "path": "assets/audio/fillers/calm/02.wav",
+      "duration_ms": 510
     },
     {
       "surface": "filler",
@@ -1215,6 +1095,14 @@
     {
       "surface": "filler",
       "mood": "curious",
+      "phrase_hash": "e67effaeed55a0fe",
+      "phrase": "ooh",
+      "path": "assets/audio/fillers/curious/02.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
       "phrase_hash": "68e6cbfe4ccc37c8",
       "phrase": "lemme think",
       "path": "assets/audio/fillers/curious/03.wav",
@@ -1223,10 +1111,26 @@
     {
       "surface": "filler",
       "mood": "curious",
+      "phrase_hash": "4c894032045cb433",
+      "phrase": "uhh",
+      "path": "assets/audio/fillers/curious/04.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
       "phrase_hash": "104dd732fcfe0999",
       "phrase": "okay so",
       "path": "assets/audio/fillers/curious/05.wav",
       "duration_ms": 1346
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
+      "phrase_hash": "e9d6109fd1c72767",
+      "phrase": "oh!",
+      "path": "assets/audio/fillers/excited/01.wav",
+      "duration_ms": 603
     },
     {
       "surface": "filler",
@@ -1247,10 +1151,50 @@
     {
       "surface": "filler",
       "mood": "excited",
+      "phrase_hash": "b002f4670955b952",
+      "phrase": "wait wait",
+      "path": "assets/audio/fillers/excited/04.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
       "phrase_hash": "e7d94e7632979c33",
       "phrase": "uhh",
       "path": "assets/audio/fillers/excited/05.wav",
       "duration_ms": 603
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "ce52f3019c357c6f",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/grumpy/01.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "e2ac5278c9f9c927",
+      "phrase": "right",
+      "path": "assets/audio/fillers/grumpy/03.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "f8c3a42fdf482f02",
+      "phrase": "okay",
+      "path": "assets/audio/fillers/grumpy/04.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "324ff39c3d2632f4",
+      "phrase": "let me see",
+      "path": "assets/audio/fillers/grumpy/05.wav",
+      "duration_ms": 1578
     },
     {
       "surface": "filler",
@@ -1319,6 +1263,14 @@
     {
       "surface": "filler",
       "mood": "playful",
+      "phrase_hash": "a8259f1f49581d1d",
+      "phrase": "lemme see",
+      "path": "assets/audio/fillers/playful/04.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "filler",
+      "mood": "playful",
       "phrase_hash": "8e48ad047560d7d4",
       "phrase": "wait wait",
       "path": "assets/audio/fillers/playful/05.wav",
@@ -1339,6 +1291,14 @@
       "phrase": "lemme see",
       "path": "assets/audio/fillers/sleepy/03.wav",
       "duration_ms": 743
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "8f3f9797bfccaad2",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/sleepy/04.wav",
+      "duration_ms": 1160
     },
     {
       "surface": "filler",
@@ -1387,6 +1347,62 @@
       "phrase": "mm-hmm",
       "path": "assets/audio/fillers/thoughtful/05.wav",
       "duration_ms": 1718
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "05b85b7c1a8886fa",
+      "phrase": "let me think",
+      "path": "assets/audio/fillers/calm/03.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "458c177954946b5f",
+      "phrase": "one moment",
+      "path": "assets/audio/fillers/calm/04.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "1150d1abe11fd321",
+      "phrase": "okay",
+      "path": "assets/audio/fillers/calm/05.wav",
+      "duration_ms": 510
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "7981dc44ce7fed70",
+      "phrase": "right",
+      "path": "assets/audio/fillers/calm/06.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "52e59aaa8fe37718",
+      "phrase": "well",
+      "path": "assets/audio/fillers/calm/07.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "d2c1f969a9b80748",
+      "phrase": "so...",
+      "path": "assets/audio/fillers/calm/08.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "439cdd8da5d34dd4",
+      "phrase": "mhm",
+      "path": "assets/audio/fillers/calm/09.wav",
+      "duration_ms": 835
     }
   ]
 }

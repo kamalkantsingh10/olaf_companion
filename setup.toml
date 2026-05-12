@@ -419,11 +419,20 @@ phrases = [
 # leave the filler abandoned mid-syllable. Keep playful / casual; this
 # is what Ooppi mutters while thinking.
 [filler]
-min_pause_ms = 400
+# 2026-05-12 tuning: bumped from 400 to 600 ms after the first soak —
+# 400 ms felt too instant; the filler stepped on the last consonant of
+# the user's speech and made conversation feel jumpy. 600 ms gives a
+# natural beat before Ooppi acknowledges thinking.
+min_pause_ms = 600
 max_consecutive_repeat = 0
 
 [filler.phrases_by_mood]
-calm = ["hmm", "uh", "umm", "let me think", "one moment", "okay", "right"]
+# 2026-05-12 tuning: "umm" replaced (Tessa's render felt unnatural) by
+# "well", "so...", "mhm" — three classic conversational fillers that
+# cover different beats (deliberation / setting-up-response / soft-
+# acknowledgement). New entries appended at the tail so existing
+# canonical paths (01-06) stay stable; new ones land at 07-09.
+calm = ["hmm", "uh", "let me think", "one moment", "okay", "right", "well", "so...", "mhm"]
 happy = ["oh!", "ooh", "hmm yeah", "okay!", "let me see"]
 playful = ["oo!", "hmm hmm", "huh", "lemme see", "wait wait"]
 curious = ["hmm interesting", "ooh", "lemme think", "uhh", "okay so"]
