@@ -71,7 +71,7 @@ editHistory:
 
 This document provides the complete epic and story breakdown for the **voice-agent-pipeline** component of `olaf_companion`, decomposing the requirements from the PRD, brief, distillate, and Architecture documents into implementable stories.
 
-**Scope:** 5 epics, 30 v1 stories. Epic 1 + 2 (12 stories) are complete; Epic 3 + 4 + 5 (18 stories) remain. v1.5-deferred items (barge-in, cross-restart mood persistence, expanded `working` sub-modes, idle auto-sleep fallback) are captured in `## v1.5 Backlog (Post-v1)` for traceability but do not produce v1 stories. v2-deferred FRs/NFRs (resilience layer, Pi/Hailo port) are tracked in frontmatter.
+**Scope:** 5 epics, 31 v1 stories. Epic 1 + 2 (12 stories) are complete; Epic 3 + 4 + 5 (19 stories) remain — Epic 5 gained Story 5.5 on 2026-05-12 (cached audio for deterministic phrases). v1.5-deferred items (barge-in, cross-restart mood persistence, expanded `working` sub-modes, idle auto-sleep fallback) are captured in `## v1.5 Backlog (Post-v1)` for traceability but do not produce v1 stories. v2-deferred FRs/NFRs (resilience layer, Pi/Hailo port) are tracked in frontmatter.
 
 **Approach:** lean-first, then progressive complexity. Each sprint adds one new capability layer on top of a runnable artifact from the prior sprint.
 
@@ -1760,7 +1760,69 @@ So that I can declare voice-agent-pipeline v1 done with confidence and cut the r
 
 **Given** the sign-off completes,
 **When** I cut the v1 release tag,
-**Then** the release notes summarize: epics shipped (5 epics, 30 stories), NFR results table (target vs measured), known **v1.5-deferred items** (barge-in, cross-restart mood persistence, expanded `working` sub-modes, configurable idle auto-sleep), known **v2-deferred items** (Hailo port, resilience layer, Pi resource calibration), and any architecture deviations. The v1 canonical spec quartet (PRD, brief, distillate, architecture) is tagged at the same commit.
+**Then** the release notes summarize: epics shipped (5 epics, 31 stories), NFR results table (target vs measured), known **v1.5-deferred items** (barge-in, cross-restart mood persistence, expanded `working` sub-modes, configurable idle auto-sleep), known **v2-deferred items** (Hailo port, resilience layer, Pi resource calibration), and any architecture deviations. The v1 canonical spec quartet (PRD, brief, distillate, architecture) is tagged at the same commit.
+
+---
+
+### Story 5.5: Pre-rendered cached audio for deterministic phrases (greetings, goodbyes, clarifications, thinking fillers)
+
+As Kamal,
+I want every deterministic-text audio surface (wake greetings, goodbyes, low-confidence clarifications, and a new "thinking" filler that fires while STT+Talker+TTS run) to play from pre-rendered cached WAV files rather than hitting Cartesia at runtime,
+so that (a) Cartesia spend drops to near-zero for these four surfaces — they're called every wake/sleep/clarification/turn even though their text never varies; (b) end-of-speech → first audio frame perceived latency improves because the cached filler fires ~50 ms after VAD end-of-speech while the real Talker+Cartesia chain (~1.5-2 s) runs in parallel; (c) the wake-greeting / goodbye / clarification paths gain ~700-1500 ms by not waiting for Cartesia TTFB on text that never changes.
+
+**Execution-order note:** numerically last in Epic 5 but **must land before Story 5.4** (the soak measures NFR1 latency and Cartesia cost characteristics; without cached-audio playback in place, the soak measures the wrong baseline). Recommended Epic 5 order: 5.1 → 5.2 → 5.3 → **5.5** → 5.4.
+
+**Acceptance Criteria:**
+
+**Given** the four deterministic-text audio surfaces — wake greetings (`[greeting.greetings_by_mood]`), goodbyes (`[goodbye] phrases`), STT clarifications (`[stt] clarification_prompts`), and the new thinking fillers (`[filler.phrases_by_mood]`),
+**When** `just regenerate-audio` runs (new recipe; calls existing `CartesiaClient.generate` for each phrase),
+**Then** WAVs are written under `assets/audio/{surface}/[<mood>/]NN.wav` at 16 kHz mono S16LE (pipeline format), and `assets/audio/manifest.json` records each entry's `phrase_hash = sha256(phrase + voice_id + tts_model)`, `path`, `duration_ms`.
+
+**Given** the pipeline starts up,
+**When** `__main__.py` Stage 3 reaches the new `audio_assets` probe,
+**Then** `load_and_validate_manifest(config, manifest_path)` verifies (a) manifest exists and parses; (b) `voice_id` and `tts_model` match `setup.toml`; (c) every phrase in the four surface lists has a matching `phrase_hash` in the manifest; (d) every manifest entry's file exists on disk. Any failure raises `StartupValidationError(stage="audio_assets")` with the operator action `"run \`just regenerate-audio\`"`.
+
+**Given** the wake-word fires and `activity/greeting.py:trigger_greeting` picks a greeting for the current mood,
+**When** `sequential_loop` plays it,
+**Then** the audio plays from `audio/cached.py:play_cached(...)` (parses WAV via stdlib `wave`, streams to PyAudio output stream) instead of `_speak(...)` — **no Cartesia network call** for greetings. Same swap for goodbyes and clarifications.
+
+**Given** end-of-speech is signaled (VAD captures the utterance),
+**When** the FSM transitions to `working`, a parallel `_maybe_play_filler` task starts a `min_pause_ms` (default 400) timer,
+**Then** if the real Talker+Cartesia chain hasn't produced its first audio frame by the timer's expiry, a mood-matched filler plays from `assets/audio/fillers/<mood>/NN.wav`; if the real audio fires first (fast turn), the filler is suppressed (no audible artifact).
+
+**Given** the filler picker for a turn,
+**When** it selects a phrase from the current mood's bucket,
+**Then** the last `max_consecutive_repeat + 1` recently-played fillers are excluded (small ring buffer; default `max_consecutive_repeat = 0` excludes the immediately-previous one); if the bucket is empty after exclusion, the buffer resets and the bucket is picked from again. Mood fallback to `calm` mirrors `trigger_greeting`'s pattern.
+
+**Given** the filler audio is still playing when the real Talker+Cartesia first frame arrives,
+**When** `_speak` is called for the real reply,
+**Then** the real audio queues naturally behind the filler (PyAudio's output stream serializes writes); no cut or crossfade.
+
+**Given** `setup.toml` is edited (a phrase added/removed/changed in any of the four surface blocks, OR `voice_id` / `tts_model` changed),
+**When** the operator restarts the pipeline without running `just regenerate-audio`,
+**Then** the Stage 3 `audio_assets` probe fails with a clear message naming the action; the operator runs the recipe; subsequent starts pass.
+
+**Given** the integration test `tests/integration/test_cached_greeting.py`,
+**When** the wake path runs end-to-end with `CartesiaClient.generate` mocked,
+**Then** the assertion that the mock was **NEVER called for the greeting** passes (the cached path is reached). Same for goodbye and clarification integration tests.
+
+**Given** the integration test `tests/integration/test_filler_timing.py`,
+**When** an end-of-speech event fires and the mock TTS first-frame is delayed by 800 ms,
+**Then** filler audio is observed starting at ~400 ms (within tolerance); when the mock first-frame fires at 200 ms instead, no filler audio is played.
+
+**Given** the `[filler.phrases_by_mood]` block in `setup.toml`,
+**When** `FillerConfig.model_validator(mode="after")` runs at config load,
+**Then** every `Mood` Literal value has ≥1 filler entry; missing buckets raise `ValueError(f"filler.phrases_by_mood missing entries for mood: {missing}")` at startup, mirroring `GreetingConfig`'s pattern.
+
+**Given** the spec-as-contract rule (NFR26) and the new top-level `assets/` directory,
+**When** this story lands,
+**Then** `architecture.md`'s repo-layout diagram and "Architectural Boundaries" section list `assets/audio/` and add `audio/cached.py` as the third allowed `pyaudio` import site (alongside `audio/devices.py` and `audio/transport.py`) in the same commit. README gains an "Audio assets" section covering `just regenerate-audio` and when to re-run.
+
+**FRs touched (refined, not added):** FR8 (clarification path), FR44 (wake greeting), FR46 (deferred-sleep / goodbye) — this story changes *how* these are delivered (cached audio) without changing what they do.
+
+**NFRs primarily proven:** NFR1 (simple-turn ≤1500ms p95 — the filler portion masks the gap), Brief Problem #1 (dead air on complex turns — fillers directly target this without any LLM call).
+
+**Full implementation spec:** `build_documents/implementation-artifacts/5-5-cached-audio-deterministic-phrases.md`.
 
 ---
 

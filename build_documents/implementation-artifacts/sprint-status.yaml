@@ -1,5 +1,5 @@
 # generated: 2026-05-05
-# last_updated: 2026-05-07
+# last_updated: 2026-05-12
 # 2026-05-05: Epic 2 stories prepared (Amelia / bmad-agent-dev / bmad-create-story);
 #             epic-2 -> in-progress, all 5 stories -> ready-for-dev.
 # 2026-05-06: bmad-correct-course ran against the spec-triple direction shift
@@ -9,6 +9,9 @@
 #             (12 stories at 'review') untouched.
 # 2026-05-07: Stories 3.1-3.7 prepared (Amelia / bmad-agent-dev / bmad-create-story);
 #             epic-3 -> in-progress, all 7 stories -> ready-for-dev.
+# 2026-05-12: Story 5-5 added (cached audio for deterministic phrases:
+#             greetings, goodbyes, clarifications, thinking fillers).
+#             v1 story count: 30 -> 31. Status -> ready-for-dev.
 # project: olaf_companion
 # project_key: NOKEY
 # tracking_system: file-system
@@ -110,6 +113,13 @@ development_status:
   5-1-sighup-atomic-swap: backlog
   5-2-security-and-config-hardening: backlog
   5-3-systemd-service-deployment: backlog
+  # 5-5 was added 2026-05-12 (cached audio for deterministic phrases:
+  # greetings, goodbyes, clarifications, thinking fillers). Must land
+  # BEFORE 5-4 — the soak measures NFR1 latency + Cartesia cost baselines,
+  # which 5-5 changes substantially. Numerical ordering here is historical
+  # (5-1..5-4 originally, 5-5 inserted); execution order is
+  # 5-1 → 5-2 → 5-3 → 5-5 → 5-4.
+  5-5-cached-audio-deterministic-phrases: ready-for-dev
   5-4-soak-tuning-and-v1-signoff: backlog
   epic-5-retrospective: optional
 
