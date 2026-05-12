@@ -40,8 +40,23 @@ _STT_BLOCK = '[stt]\nclarification_prompts = ["huh?"]\n'
 # building custom TOMLs append a minimal block.
 _GOODBYE_BLOCK = '[goodbye]\nphrases = ["bye"]\n'
 
+# Story 5.5 (2026-05-12): filler block is required at startup; the
+# model_validator demands ≥1 entry per Mood Literal value. Minimal
+# valid set used by tests that don't define their own [filler] block.
+_FILLER_BLOCK = (
+    "[filler.phrases_by_mood]\n"
+    'calm = ["hmm"]\n'
+    'happy = ["oh!"]\n'
+    'playful = ["oo!"]\n'
+    'curious = ["hmm interesting"]\n'
+    'thoughtful = ["mm"]\n'
+    'sleepy = ["mmh"]\n'
+    'grumpy = ["uh"]\n'
+    'excited = ["ooh!"]\n'
+)
+
 # Combined snippet — most custom-TOML tests use this.
-_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK + _GOODBYE_BLOCK
+_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK + _GOODBYE_BLOCK + _FILLER_BLOCK
 
 
 _VALID_TOML = (
@@ -430,7 +445,8 @@ def test_stt_clarification_prompts_explicit_override(tmp_path: Path) -> None:
         'voice_id = "v"\n'
     )
     toml_path, env_path = _write_files(
-        tmp_path, toml_body=toml_with_clarification + _GREETING_BLOCK + _GOODBYE_BLOCK
+        tmp_path,
+        toml_body=toml_with_clarification + _GREETING_BLOCK + _GOODBYE_BLOCK + _FILLER_BLOCK,
     )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.stt.clarification_prompts == ["huh?", "say again?"]
@@ -1101,3 +1117,109 @@ def test_tools_both_disabled(tmp_path: Path) -> None:
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.tools.enable_go_to_sleep is False
     assert config.tools.enable_set_mood is False
+
+
+# ---------------------------------------------------------------------------
+# Story 5.5 — FillerConfig validation
+# ---------------------------------------------------------------------------
+
+
+def test_filler_defaults_with_valid_toml(tmp_path: Path) -> None:
+    """Story 5.5: ``[filler.phrases_by_mood]`` from TOML round-trips with defaults.
+
+    The starter set ships in setup.toml; tests load it and assert every
+    mood bucket is non-empty (the model_validator would reject otherwise)
+    and the min_pause_ms/max_consecutive_repeat defaults apply when
+    those fields aren't specified.
+    """
+    toml_path, env_path = _write_files(tmp_path)  # uses _VALID_TOML
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Every Mood key has at least one entry.
+    for mood, bucket in config.filler.phrases_by_mood.items():
+        assert bucket, f"mood {mood!r} has empty filler bucket"
+    # Threshold + suppression defaults.
+    assert config.filler.min_pause_ms == 400
+    assert config.filler.max_consecutive_repeat == 0
+
+
+def test_filler_missing_mood_raises(tmp_path: Path) -> None:
+    """Story 5.5: missing a Mood Literal value → ConfigError from model_validator.
+
+    Mirrors the greeting test — same validator pattern, same failure
+    shape. Operator misconfigures by adding a new mood to the enum
+    without populating its filler bucket → startup catches it.
+    """
+    toml_with_missing_mood = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        + _STT_BLOCK
+        + _GREETING_BLOCK
+        + _GOODBYE_BLOCK
+        + "[filler.phrases_by_mood]\n"
+        # Only "calm" — missing the other 7 mood keys.
+        + 'calm = ["hmm"]\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_missing_mood)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    # Error message names the missing-bucket failure.
+    assert "missing or empty entries" in str(exc_info.value)
+    assert "filler" in str(exc_info.value)
+
+
+def test_filler_extra_mood_key_rejected(tmp_path: Path) -> None:
+    """Story 5.5: ``ecstatic`` (not in Mood Literal) → pydantic rejects the key.
+
+    Catches operator typos at parse time — typing ``"excited"`` is
+    fine but ``"ecstatic"`` should fail loudly so the operator notices
+    before runtime.
+    """
+    toml_with_bad_mood = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        + _STT_BLOCK
+        + _GREETING_BLOCK
+        + _GOODBYE_BLOCK
+        + "[filler.phrases_by_mood]\n"
+        'calm = ["hmm"]\n'
+        'happy = ["oh!"]\n'
+        'playful = ["oo!"]\n'
+        'curious = ["hmm interesting"]\n'
+        'thoughtful = ["mm"]\n'
+        'sleepy = ["mmh"]\n'
+        'grumpy = ["uh"]\n'
+        'excited = ["ooh!"]\n'
+        'ecstatic = ["wow!"]\n'  # not in Mood Literal
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_mood)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+def test_filler_threshold_must_be_positive(tmp_path: Path) -> None:
+    """Story 5.5: ``min_pause_ms = 0`` is rejected (gt=0 constraint)."""
+    toml_with_zero_threshold = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n' + _STT_AND_GREETING_BLOCKS + "[filler]\nmin_pause_ms = 0\n"
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_zero_threshold)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)

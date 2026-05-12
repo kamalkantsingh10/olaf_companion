@@ -644,6 +644,81 @@ class GreetingConfig(BaseModel):
         return self
 
 
+class FillerConfig(BaseModel):
+    """Per-mood thinking-filler bucket lists (Story 5.5).
+
+    The thinking filler is a short cached audio clip (~300-700 ms) that
+    plays on VAD end-of-speech IF the real Talker+Cartesia chain hasn't
+    produced its first audio frame within :attr:`min_pause_ms`. Targets
+    brief Problem #1 ("dead air on complex turns") by masking the gap
+    with a human-like "hmm" / "ah" / "let me think" while the real
+    response is being generated.
+
+    Design mirrors :class:`GreetingConfig`:
+
+    - Static random pick from per-mood bucket; no LLM, no TTS at runtime
+      (Cartesia is hit once via ``just regenerate-audio`` to produce the
+      cached WAVs under ``assets/audio/fillers/<mood>/NN.wav``).
+    - :class:`model_validator` requires every :data:`Mood` Literal to
+      have ≥1 entry — missing buckets raise :class:`ConfigError` at
+      startup, not at first fire.
+
+    The threshold + suppression design prevent fillers feeling tic-y:
+
+    - :attr:`min_pause_ms` (default 400 ms) skips the filler entirely
+      when the real response arrives quickly. On a fast turn no audible
+      artifact appears.
+    - :attr:`max_consecutive_repeat` is a small ring-buffer cap on how
+      many of the last-played fillers to exclude from the next pick.
+      Default 0 → don't pick the same one twice in a row. The picker
+      resets the exclusion buffer if the bucket is exhausted.
+
+    Source-of-truth design (matches greetings/clarifications/goodbyes):
+    the actual filler strings live in ``setup.toml`` under
+    ``[filler.phrases_by_mood]``, NOT as a Python constant.
+
+    Attributes:
+        min_pause_ms: Time in milliseconds after VAD end-of-speech to
+            wait before firing a filler. If the real Talker+Cartesia
+            first audio frame arrives before this expires, the filler
+            is suppressed. Default 400 ms — empirically the threshold
+            below which a pause is imperceptible and a filler would
+            feel intrusive.
+        max_consecutive_repeat: How many most-recently-played fillers
+            to exclude from the next pick. Default 0 → exclude only
+            the immediately-previous one. Raise to 1 or 2 for more
+            variety in short rapid-fire sessions.
+        phrases_by_mood: Mapping of mood → list of filler strings.
+            Defaults to an empty dict so a missing TOML block fails
+            the model_validator with a clear error rather than silently
+            using hidden Python defaults.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    min_pause_ms: int = Field(default=400, gt=0)
+    max_consecutive_repeat: int = Field(default=0, ge=0)
+    # Annotated empty-dict default — same pattern as GreetingConfig so
+    # pyright resolves the type as ``dict[Mood, list[str]]``.
+    phrases_by_mood: dict[Mood, list[str]] = Field(
+        default_factory=lambda: dict[Mood, list[str]](),
+    )
+
+    @model_validator(mode="after")
+    def _validate_all_moods_have_entries(self) -> "FillerConfig":
+        """Every :data:`Mood` Literal value must have ≥1 filler."""
+        all_moods = set(get_args(Mood))
+        present = {m for m, entries in self.phrases_by_mood.items() if entries}
+        missing = all_moods - present
+        if missing:
+            raise ValueError(
+                f"filler.phrases_by_mood missing or empty entries for mood(s): "
+                f"{sorted(missing)}. Populate them under [filler.phrases_by_mood] "
+                f"in setup.toml.",
+            )
+        return self
+
+
 class ToolsConfig(BaseModel):
     """Toggle Talker's individual tools on/off (Story 4.4).
 
@@ -750,6 +825,12 @@ class SetupConfig(BaseSettings):
     # sleeps. The actual strings live in setup.toml; an empty list
     # fails the model_validator at startup.
     goodbye: GoodbyeConfig = Field(default_factory=GoodbyeConfig)
+    # Story 5.5 (2026-05-12): mood-bucketed thinking fillers played
+    # while STT+Talker+TTS run. Required at startup — the
+    # model_validator catches missing/empty mood buckets. The actual
+    # filler strings live in setup.toml under [filler.phrases_by_mood],
+    # NOT in Python defaults (same source-of-truth pattern as greeting).
+    filler: FillerConfig = Field(default_factory=FillerConfig)
     # Story 4.1: orchestrator daemon endpoint. Optional with defaults
     # (localhost:8001). Story 4.1 wires the BeliefStateClient against
     # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer

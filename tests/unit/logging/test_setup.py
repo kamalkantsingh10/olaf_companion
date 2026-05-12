@@ -36,10 +36,15 @@ def stub_config() -> SetupConfig:
     fields off it). Using a real load_setup_config call would force the
     test to write a TOML + .env pair that's irrelevant here.
     """
-    # Story 4.5: pass minimal stt + greeting so SetupConfig's
-    # default_factory chain doesn't trip on the (now-required)
-    # non-empty clarification_prompts and per-mood greeting buckets.
-    from tests._factories import minimal_goodbye_config, minimal_greeting_config, minimal_stt_config
+    # Story 4.5 / 5.5: pass minimal stt + greeting + goodbye + filler so
+    # SetupConfig's default_factory chain doesn't trip on the (now-required)
+    # non-empty clarification_prompts and per-mood greeting/filler buckets.
+    from tests._factories import (
+        minimal_filler_config,
+        minimal_goodbye_config,
+        minimal_greeting_config,
+        minimal_stt_config,
+    )
 
     return SetupConfig.model_construct(
         schema_version=1,
@@ -47,6 +52,7 @@ def stub_config() -> SetupConfig:
         stt=minimal_stt_config(),
         greeting=minimal_greeting_config(),
         goodbye=minimal_goodbye_config(),
+        filler=minimal_filler_config(),
     )
 
 

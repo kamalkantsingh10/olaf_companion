@@ -552,9 +552,18 @@ tests/
 ├── unit/                    # mirrors src/ structure: tests/unit/splitter/test_state.py
 ├── integration/             # full-pipeline tests with mocked external services
 └── contract/                # pydantic + DDS round-trip schema stability
+assets/                      # Story 5.5 (2026-05-12): committed binary artifacts
+└── audio/                   # pre-rendered cached WAVs + manifest.json
+    ├── manifest.json        # phrase_hash → path map; built by `just regenerate-audio`
+    ├── greetings/<mood>/    # per-mood wake-greeting WAVs
+    ├── goodbyes/            # pre-sleep goodbye WAVs (flat list, no mood)
+    ├── clarifications/      # STT low-confidence prompts (flat list)
+    └── fillers/<mood>/      # thinking fillers played while STT+Talker+TTS run
 ```
 
 **Rule:** new functionality goes in the domain package it belongs to. Cross-domain helpers go in a new package, never in a misc `utils/` dumping ground.
+
+**Top-level `assets/` directory (Story 5.5, 2026-05-12):** binary audio artifacts live outside `src/` because they're generated content, not Python. Operators run `just regenerate-audio` to (re)render them from `setup.toml`'s phrase lists via Cartesia. Files are committed (~6-15 MB total) so `git clone` produces a working pipeline without forcing every operator to spend Cartesia credits on a re-render. The Stage 3 `audio_assets` startup probe verifies the manifest matches setup.toml + every WAV is present, refusing to start otherwise.
 
 ### Naming Conventions
 
@@ -860,13 +869,13 @@ voice-agent-pipeline/
 
 | External | Lives in | Notes |
 |---|---|---|
-| Audio devices (PyAudio) | `audio/transport.py`, `audio/devices.py` | Only files that call PyAudio APIs |
+| Audio devices (PyAudio) | `audio/transport.py`, `audio/devices.py`, `audio/cached.py` | Only files that call PyAudio APIs. `audio/cached.py` added 2026-05-12 (Story 5.5) for cached-audio playback. |
 | Wake-word (Porcupine) | `audio/wakeword.py` | Only file that imports `pvporcupine` |
 | VAD (Silero) | `audio/vad.py` | Only file with VAD bindings |
 | Whisper STT (faster-whisper) | `stt/whisper_cpu.py` | Only file that imports `faster_whisper` |
 | OpenAI / Groq / Gemini API (Talker) | `turn/talker.py` | Only file that imports `openai`; all three providers reach this SDK via openai-compatible endpoints |
 | Orchestrator HTTP/SSE | `turn/orchestrator.py`, `turn/beliefs.py` | Only files that import `httpx`, `httpx-sse` |
-| Cartesia API | `tts/cartesia.py` | Only file that imports `cartesia` |
+| Cartesia API | `tts/cartesia.py` (+ `audio/regenerate.py` for offline asset rendering) | Runtime imports `cartesia` only in `tts/cartesia.py`. `audio/regenerate.py` reuses `CartesiaClient` — same SDK, second caller. |
 | ROS 2 / DDS | `publisher/ros2.py` | Only file that imports `rclpy` |
 | File system (logs, configs, models) | `logging/setup.py`, `config/*` | All FS access concentrated here |
 

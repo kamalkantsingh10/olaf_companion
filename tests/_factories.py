@@ -18,7 +18,12 @@ inside ``model_construct`` calls, where pytest fixtures aren't in
 scope. A regular Python module fits both.
 """
 
-from voice_agent_pipeline.config.setup import GoodbyeConfig, GreetingConfig, SttConfig
+from voice_agent_pipeline.config.setup import (
+    FillerConfig,
+    GoodbyeConfig,
+    GreetingConfig,
+    SttConfig,
+)
 from voice_agent_pipeline.schemas.mood_event import Mood
 
 
@@ -62,3 +67,28 @@ def minimal_goodbye_config(**overrides: object) -> GoodbyeConfig:
     """Build a :class:`GoodbyeConfig` with a single dummy goodbye."""
     overrides.setdefault("phrases", minimal_goodbye_phrases())
     return GoodbyeConfig(**overrides)  # type: ignore[arg-type]
+
+
+def minimal_fillers_by_mood() -> dict[Mood, list[str]]:
+    """Return one filler per mood — the smallest valid bucket dict.
+
+    Story 5.5: every :data:`Mood` Literal value must have ≥1 filler
+    entry or the FillerConfig model_validator raises. Tests that
+    construct configs via ``model_construct`` need this.
+    """
+    return {
+        "calm": ["hmm"],
+        "happy": ["oh!"],
+        "playful": ["oo!"],
+        "curious": ["hmm interesting"],
+        "thoughtful": ["mm"],
+        "sleepy": ["mmh"],
+        "grumpy": ["uh"],
+        "excited": ["ooh!"],
+    }
+
+
+def minimal_filler_config(**overrides: object) -> FillerConfig:
+    """Build a :class:`FillerConfig` with one filler per mood."""
+    overrides.setdefault("phrases_by_mood", minimal_fillers_by_mood())
+    return FillerConfig(**overrides)  # type: ignore[arg-type]

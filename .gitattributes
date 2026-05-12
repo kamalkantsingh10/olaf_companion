@@ -1,0 +1,5 @@
+# Story 5.5: cached audio assets are binary WAVs. Mark explicitly so
+# git doesn't try to compute text diffs (which would be useless and
+# noisy on every regenerate) and so end-of-line normalization is
+# skipped (the WAV header has 0x0A bytes that aren't line endings).
+assets/audio/**/*.wav binary

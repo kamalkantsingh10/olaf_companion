@@ -324,7 +324,13 @@ def test_synthesize_logs_first_frame_ttfb(
 def setup_config(tmp_path: Path, tts_config: TtsConfig) -> SetupConfig:
     """A SetupConfig good enough for the credentials probe."""
     # Story 4.5: pass minimal stt + greeting (see tests/conftest.py).
-    from tests._factories import minimal_goodbye_config, minimal_greeting_config, minimal_stt_config
+    # Story 5.5: same pattern for the new [filler] block.
+    from tests._factories import (
+        minimal_filler_config,
+        minimal_goodbye_config,
+        minimal_greeting_config,
+        minimal_stt_config,
+    )
 
     return SetupConfig.model_construct(
         schema_version=3,
@@ -336,6 +342,7 @@ def setup_config(tmp_path: Path, tts_config: TtsConfig) -> SetupConfig:
         stt=minimal_stt_config(),
         greeting=minimal_greeting_config(),
         goodbye=minimal_goodbye_config(),
+        filler=minimal_filler_config(),
     )
 
 

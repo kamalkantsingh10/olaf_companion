@@ -1,0 +1,1392 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-12T01:21:55.305609Z",
+  "voice_id": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+  "tts_model": "sonic-3",
+  "entries": [
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "6ae012102683125c",
+      "phrase": "hey",
+      "path": "assets/audio/greetings/calm/01.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "4a8aa6fdd3b5651d",
+      "phrase": "yeah?",
+      "path": "assets/audio/greetings/calm/02.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "6b0797c94a6d5109",
+      "phrase": "yes?",
+      "path": "assets/audio/greetings/calm/03.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "f6091eaa406eba8c",
+      "phrase": "what's up?",
+      "path": "assets/audio/greetings/calm/04.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "abc720e287cfb96b",
+      "phrase": "I'm here",
+      "path": "assets/audio/greetings/calm/05.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "cd1ca21745a650b1",
+      "phrase": "hi",
+      "path": "assets/audio/greetings/calm/06.wav",
+      "duration_ms": 557
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "310a6a8b5db9f7ef",
+      "phrase": "yeah, hi",
+      "path": "assets/audio/greetings/calm/07.wav",
+      "duration_ms": 1300
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "ab9418529f73cc0f",
+      "phrase": "what's up",
+      "path": "assets/audio/greetings/calm/08.wav",
+      "duration_ms": 1439
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "206d885ed89cfdae",
+      "phrase": "hello",
+      "path": "assets/audio/greetings/calm/09.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "greeting",
+      "mood": "calm",
+      "phrase_hash": "b443955fc7ab1167",
+      "phrase": "hi there",
+      "path": "assets/audio/greetings/calm/10.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "b29c4160b5c90684",
+      "phrase": "yeah?",
+      "path": "assets/audio/greetings/curious/01.wav",
+      "duration_ms": 1207
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "8a2d483725d33aef",
+      "phrase": "tell me",
+      "path": "assets/audio/greetings/curious/02.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "4939f63cc8c48f40",
+      "phrase": "what's up?",
+      "path": "assets/audio/greetings/curious/03.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "9fb9b49da54e2e1d",
+      "phrase": "what's on your mind",
+      "path": "assets/audio/greetings/curious/04.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "3af2d28b1f8840c4",
+      "phrase": "hi, what is it",
+      "path": "assets/audio/greetings/curious/05.wav",
+      "duration_ms": 1207
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "eb9dbe4bdef3c727",
+      "phrase": "yes?",
+      "path": "assets/audio/greetings/curious/06.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "61d937fb014f5f78",
+      "phrase": "yeah, hi",
+      "path": "assets/audio/greetings/curious/07.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "greeting",
+      "mood": "curious",
+      "phrase_hash": "7ee234ec65550c5a",
+      "phrase": "go on",
+      "path": "assets/audio/greetings/curious/08.wav",
+      "duration_ms": 557
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "0cb0ca31232d3fa0",
+      "phrase": "hey!",
+      "path": "assets/audio/greetings/excited/01.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "2baf4776411874fd",
+      "phrase": "yes!",
+      "path": "assets/audio/greetings/excited/02.wav",
+      "duration_ms": 696
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "5955aa9682ebe0c4",
+      "phrase": "what's up!!",
+      "path": "assets/audio/greetings/excited/03.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "c9058e9bd559aa9c",
+      "phrase": "heyy",
+      "path": "assets/audio/greetings/excited/04.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "a945ae91fd8a6b05",
+      "phrase": "hi hi!",
+      "path": "assets/audio/greetings/excited/05.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "9d1e74f8e6d65424",
+      "phrase": "yo!",
+      "path": "assets/audio/greetings/excited/06.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "9c446eb3e60ca7ce",
+      "phrase": "yeah hi!",
+      "path": "assets/audio/greetings/excited/07.wav",
+      "duration_ms": 1300
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "98e5854e2b51d34b",
+      "phrase": "hello!",
+      "path": "assets/audio/greetings/excited/08.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "greeting",
+      "mood": "excited",
+      "phrase_hash": "f75821b480f1f17f",
+      "phrase": "yes yes!",
+      "path": "assets/audio/greetings/excited/09.wav",
+      "duration_ms": 1346
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "95dd14ddfa9437c1",
+      "phrase": "yeah",
+      "path": "assets/audio/greetings/grumpy/01.wav",
+      "duration_ms": 464
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "55b555607978864d",
+      "phrase": "what?",
+      "path": "assets/audio/greetings/grumpy/02.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "3ee049a15421b367",
+      "phrase": "uh",
+      "path": "assets/audio/fillers/grumpy/02.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "c01fa2321eaeba59",
+      "phrase": "yeah hi",
+      "path": "assets/audio/greetings/grumpy/04.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "8784dd8117aa87d8",
+      "phrase": "what is it",
+      "path": "assets/audio/greetings/grumpy/05.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "e06ee6b7fe061a35",
+      "phrase": "yes",
+      "path": "assets/audio/greetings/grumpy/06.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "cfd8d3388f6f3dda",
+      "phrase": "hm",
+      "path": "assets/audio/greetings/grumpy/07.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "greeting",
+      "mood": "grumpy",
+      "phrase_hash": "939ae94ccff73744",
+      "phrase": "go on",
+      "path": "assets/audio/greetings/grumpy/08.wav",
+      "duration_ms": 557
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "af8c61cd8f96d5a2",
+      "phrase": "hey there!",
+      "path": "assets/audio/greetings/happy/01.wav",
+      "duration_ms": 1393
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "19959fceac28b451",
+      "phrase": "hi!",
+      "path": "assets/audio/greetings/happy/02.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "27575dae866a673e",
+      "phrase": "what's up!",
+      "path": "assets/audio/greetings/happy/03.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "fc1ad63e775256f5",
+      "phrase": "good to see you",
+      "path": "assets/audio/greetings/happy/04.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "c157a8cef99854e0",
+      "phrase": "hey hey",
+      "path": "assets/audio/greetings/happy/05.wav",
+      "duration_ms": 1625
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "94eb6bdf6fb2ec4c",
+      "phrase": "yes!",
+      "path": "assets/audio/greetings/happy/06.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "eb4ad5421ca519f9",
+      "phrase": "hiya",
+      "path": "assets/audio/greetings/happy/07.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "greeting",
+      "mood": "happy",
+      "phrase_hash": "c3f285a85be666a6",
+      "phrase": "hi there!",
+      "path": "assets/audio/greetings/happy/08.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "4702272d84fa5748",
+      "phrase": "yo",
+      "path": "assets/audio/greetings/playful/01.wav",
+      "duration_ms": 510
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "741a7e21ff21b613",
+      "phrase": "mmh",
+      "path": "assets/audio/fillers/sleepy/01.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "19b81de2ab131e68",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/calm/01.wav",
+      "duration_ms": 1300
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "e64908631c166643",
+      "phrase": "uh",
+      "path": "assets/audio/fillers/calm/02.wav",
+      "duration_ms": 510
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "05b85b7c1a8886fa",
+      "phrase": "let me think",
+      "path": "assets/audio/fillers/calm/04.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "1150d1abe11fd321",
+      "phrase": "okay",
+      "path": "assets/audio/fillers/calm/06.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "7981dc44ce7fed70",
+      "phrase": "right",
+      "path": "assets/audio/fillers/calm/07.wav",
+      "duration_ms": 1393
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
+      "phrase_hash": "e67effaeed55a0fe",
+      "phrase": "ooh",
+      "path": "assets/audio/fillers/curious/02.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
+      "phrase_hash": "4c894032045cb433",
+      "phrase": "uhh",
+      "path": "assets/audio/fillers/curious/04.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
+      "phrase_hash": "e9d6109fd1c72767",
+      "phrase": "oh!",
+      "path": "assets/audio/fillers/excited/01.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
+      "phrase_hash": "b002f4670955b952",
+      "phrase": "wait wait",
+      "path": "assets/audio/fillers/excited/04.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "ce52f3019c357c6f",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/grumpy/01.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "e2ac5278c9f9c927",
+      "phrase": "right",
+      "path": "assets/audio/fillers/grumpy/03.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "f8c3a42fdf482f02",
+      "phrase": "okay",
+      "path": "assets/audio/fillers/grumpy/04.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "filler",
+      "mood": "grumpy",
+      "phrase_hash": "324ff39c3d2632f4",
+      "phrase": "let me see",
+      "path": "assets/audio/fillers/grumpy/05.wav",
+      "duration_ms": 1578
+    },
+    {
+      "surface": "filler",
+      "mood": "playful",
+      "phrase_hash": "a8259f1f49581d1d",
+      "phrase": "lemme see",
+      "path": "assets/audio/fillers/playful/04.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "8f3f9797bfccaad2",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/sleepy/04.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "4489b8f112c8bb7a",
+      "phrase": "what's up",
+      "path": "assets/audio/greetings/playful/02.wav",
+      "duration_ms": 557
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "4fcfa3a8a186433e",
+      "phrase": "heya",
+      "path": "assets/audio/greetings/playful/03.wav",
+      "duration_ms": 510
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "52664f09a0e544f4",
+      "phrase": "sup",
+      "path": "assets/audio/greetings/playful/04.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "7d53a7475254c36d",
+      "phrase": "hey hey",
+      "path": "assets/audio/greetings/playful/05.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "21a7233d82e624e8",
+      "phrase": "yo what's up",
+      "path": "assets/audio/greetings/playful/06.wav",
+      "duration_ms": 1857
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "27d5812e5b91523e",
+      "phrase": "yes? yes?",
+      "path": "assets/audio/greetings/playful/07.wav",
+      "duration_ms": 1393
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "7442a58b978aa2f0",
+      "phrase": "hm hm hm hi",
+      "path": "assets/audio/greetings/playful/08.wav",
+      "duration_ms": 2739
+    },
+    {
+      "surface": "greeting",
+      "mood": "playful",
+      "phrase_hash": "675067dcbee34285",
+      "phrase": "hello hello",
+      "path": "assets/audio/greetings/playful/09.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "2ac34cffb3f9289b",
+      "phrase": "yeah?",
+      "path": "assets/audio/greetings/sleepy/02.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "3c222ccc5f6cfb5b",
+      "phrase": "hi",
+      "path": "assets/audio/greetings/sleepy/03.wav",
+      "duration_ms": 417
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "6003514a800ff4d8",
+      "phrase": "hmm what?",
+      "path": "assets/audio/greetings/sleepy/04.wav",
+      "duration_ms": 2182
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "efc0d10c31169e0f",
+      "phrase": "mm yes?",
+      "path": "assets/audio/greetings/sleepy/05.wav",
+      "duration_ms": 1671
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "91d1d41974cb1166",
+      "phrase": "yeah hi",
+      "path": "assets/audio/greetings/sleepy/06.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "2bb59ac2de02a846",
+      "phrase": "I'm here",
+      "path": "assets/audio/greetings/sleepy/07.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "greeting",
+      "mood": "sleepy",
+      "phrase_hash": "6883bf9fd0f33050",
+      "phrase": "mmh yeah",
+      "path": "assets/audio/greetings/sleepy/08.wav",
+      "duration_ms": 1207
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "e0b249cddca0663a",
+      "phrase": "hmm yes?",
+      "path": "assets/audio/greetings/thoughtful/01.wav",
+      "duration_ms": 1625
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "a8b3b2226a56b48f",
+      "phrase": "yeah",
+      "path": "assets/audio/greetings/thoughtful/02.wav",
+      "duration_ms": 464
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "e036e2f410ca1ff2",
+      "phrase": "mm",
+      "path": "assets/audio/greetings/thoughtful/03.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "107804eed7a132dc",
+      "phrase": "yes",
+      "path": "assets/audio/greetings/thoughtful/04.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "1cf66aec1d53a016",
+      "phrase": "go on",
+      "path": "assets/audio/greetings/thoughtful/05.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "5a1388a2b4dc56f1",
+      "phrase": "I'm listening",
+      "path": "assets/audio/greetings/thoughtful/06.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "a98fd7c01d94b9c7",
+      "phrase": "yeah, hi",
+      "path": "assets/audio/greetings/thoughtful/07.wav",
+      "duration_ms": 1486
+    },
+    {
+      "surface": "greeting",
+      "mood": "thoughtful",
+      "phrase_hash": "eaa36512c65e4159",
+      "phrase": "tell me",
+      "path": "assets/audio/greetings/thoughtful/08.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "9db19c84ec627018",
+      "phrase": "goodnight",
+      "path": "assets/audio/goodbyes/01.wav",
+      "duration_ms": 510
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "76b7438e48cefcf6",
+      "phrase": "sleep well",
+      "path": "assets/audio/goodbyes/02.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "105a73e7d6a5503a",
+      "phrase": "bye for now",
+      "path": "assets/audio/goodbyes/03.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "b0a777efbb3ea0bd",
+      "phrase": "see you later",
+      "path": "assets/audio/goodbyes/04.wav",
+      "duration_ms": 789
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "6b9108c6183dadea",
+      "phrase": "catch you next time",
+      "path": "assets/audio/goodbyes/05.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "056ab6426f4cc386",
+      "phrase": "goodnight, sweet dreams",
+      "path": "assets/audio/goodbyes/06.wav",
+      "duration_ms": 1764
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "db94c2a84bc8204e",
+      "phrase": "talk soon",
+      "path": "assets/audio/goodbyes/07.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "ed3981876fb098dd",
+      "phrase": "bye bye",
+      "path": "assets/audio/goodbyes/08.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "c57f69f9e0a8564c",
+      "phrase": "see you in a bit",
+      "path": "assets/audio/goodbyes/09.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "2c2e461d35d43673",
+      "phrase": "until next time",
+      "path": "assets/audio/goodbyes/10.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "1c3f508642552a2a",
+      "phrase": "rest well",
+      "path": "assets/audio/goodbyes/11.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "d3f8aa0e63d8fcfa",
+      "phrase": "later",
+      "path": "assets/audio/goodbyes/12.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "669d988f2ac76469",
+      "phrase": "ciao for now",
+      "path": "assets/audio/goodbyes/13.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "8eb3627a8b37cc82",
+      "phrase": "see ya",
+      "path": "assets/audio/goodbyes/14.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "6ae1ef54bb3ab798",
+      "phrase": "goodnight then",
+      "path": "assets/audio/goodbyes/15.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "27c8ff6fd4882d3b",
+      "phrase": "see you when I see you",
+      "path": "assets/audio/goodbyes/16.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "36841f2ff267d286",
+      "phrase": "be well",
+      "path": "assets/audio/goodbyes/17.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "a46f9c4031dbcef8",
+      "phrase": "alright, bye",
+      "path": "assets/audio/goodbyes/18.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "cc2cfc4db2dac8ab",
+      "phrase": "going quiet now",
+      "path": "assets/audio/goodbyes/19.wav",
+      "duration_ms": 1718
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "54a42e8e7577dfd5",
+      "phrase": "talk soon, friend",
+      "path": "assets/audio/goodbyes/20.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "f14b7350f333a7aa",
+      "phrase": "bye, sleep tight",
+      "path": "assets/audio/goodbyes/21.wav",
+      "duration_ms": 1300
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "c7bd9badf8ba7b52",
+      "phrase": "have a good one",
+      "path": "assets/audio/goodbyes/22.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "39eaddd8f316a6ab",
+      "phrase": "alright, see you",
+      "path": "assets/audio/goodbyes/23.wav",
+      "duration_ms": 1346
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "53a503e976f68adc",
+      "phrase": "off I go",
+      "path": "assets/audio/goodbyes/24.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "goodbye",
+      "mood": null,
+      "phrase_hash": "773e7f7497793d8a",
+      "phrase": "okay, off to rest",
+      "path": "assets/audio/goodbyes/25.wav",
+      "duration_ms": 2182
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "606c1200d59dbafb",
+      "phrase": "huh?",
+      "path": "assets/audio/clarifications/01.wav",
+      "duration_ms": 417
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "2644012b26f3b903",
+      "phrase": "wait, what?",
+      "path": "assets/audio/clarifications/02.wav",
+      "duration_ms": 1764
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "64cec5ade78f65b8",
+      "phrase": "say that again?",
+      "path": "assets/audio/clarifications/03.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "b3adc323c75f3d52",
+      "phrase": "hm — one more time?",
+      "path": "assets/audio/clarifications/04.wav",
+      "duration_ms": 1718
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "69dc2ed4795952a2",
+      "phrase": "oof, missed that",
+      "path": "assets/audio/clarifications/05.wav",
+      "duration_ms": 1346
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "100bae389a08311e",
+      "phrase": "sorry — what was that?",
+      "path": "assets/audio/clarifications/06.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "4993401c090a95bc",
+      "phrase": "didn't quite catch that",
+      "path": "assets/audio/clarifications/07.wav",
+      "duration_ms": 1578
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "4733a6a40704aabf",
+      "phrase": "come again?",
+      "path": "assets/audio/clarifications/08.wav",
+      "duration_ms": 696
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "0c613d6e37e12ccc",
+      "phrase": "ah, say again?",
+      "path": "assets/audio/clarifications/09.wav",
+      "duration_ms": 2043
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "2e676fceb298856f",
+      "phrase": "what was that, sorry?",
+      "path": "assets/audio/clarifications/10.wav",
+      "duration_ms": 2136
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "8c4db92a6a669c02",
+      "phrase": "uh, repeat?",
+      "path": "assets/audio/clarifications/11.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "15f2d8e0dd3d53e8",
+      "phrase": "hmm — once more?",
+      "path": "assets/audio/clarifications/12.wav",
+      "duration_ms": 2739
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "b5fcb5aca6f170fb",
+      "phrase": "missed it, try again?",
+      "path": "assets/audio/clarifications/13.wav",
+      "duration_ms": 1857
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "88acba3f699fa156",
+      "phrase": "didn't hear you",
+      "path": "assets/audio/clarifications/14.wav",
+      "duration_ms": 835
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "ff5a8283b88a26e6",
+      "phrase": "sorry — one more?",
+      "path": "assets/audio/clarifications/15.wav",
+      "duration_ms": 2043
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "a072ac6b2bb78765",
+      "phrase": "what? say again?",
+      "path": "assets/audio/clarifications/16.wav",
+      "duration_ms": 1857
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "7fc4385c3c3953c4",
+      "phrase": "oof — repeat that?",
+      "path": "assets/audio/clarifications/17.wav",
+      "duration_ms": 2089
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "6eeb8b8ae392e321",
+      "phrase": "hm, what was that?",
+      "path": "assets/audio/clarifications/18.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "b3b6394149be12cf",
+      "phrase": "sorry, missed it",
+      "path": "assets/audio/clarifications/19.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "bc54df85cbeedf1b",
+      "phrase": "didn't get that",
+      "path": "assets/audio/clarifications/20.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "709d5130390a12d7",
+      "phrase": "once more?",
+      "path": "assets/audio/clarifications/21.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "9a2a20ede36fd072",
+      "phrase": "say again?",
+      "path": "assets/audio/clarifications/22.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "16c6b4f8d052bfb7",
+      "phrase": "what was that?",
+      "path": "assets/audio/clarifications/23.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "8e4b8fe63e0f1dd6",
+      "phrase": "missed that — again?",
+      "path": "assets/audio/clarifications/24.wav",
+      "duration_ms": 2136
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "485e08e108103cd9",
+      "phrase": "hm? what?",
+      "path": "assets/audio/clarifications/25.wav",
+      "duration_ms": 2554
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "9b3a6821cac6c096",
+      "phrase": "what'd you say?",
+      "path": "assets/audio/clarifications/26.wav",
+      "duration_ms": 1207
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "de603d3b91becc8a",
+      "phrase": "lost that one",
+      "path": "assets/audio/clarifications/27.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "bf6d881054a6d748",
+      "phrase": "missed you there",
+      "path": "assets/audio/clarifications/28.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "ae64e875eba2d598",
+      "phrase": "say once more?",
+      "path": "assets/audio/clarifications/29.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "db5d5e1f3e824d70",
+      "phrase": "didn't catch that",
+      "path": "assets/audio/clarifications/30.wav",
+      "duration_ms": 1300
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "32b48d62b3ff132f",
+      "phrase": "ah, missed it",
+      "path": "assets/audio/clarifications/31.wav",
+      "duration_ms": 1532
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "cd9e515f674c1354",
+      "phrase": "uh sorry, what?",
+      "path": "assets/audio/clarifications/32.wav",
+      "duration_ms": 1346
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "fa66cfa7f4a28847",
+      "phrase": "wait — say again",
+      "path": "assets/audio/clarifications/33.wav",
+      "duration_ms": 2136
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "941a30f23b956eca",
+      "phrase": "hmm, repeat?",
+      "path": "assets/audio/clarifications/34.wav",
+      "duration_ms": 1764
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "0d35bc8d2dd324f8",
+      "phrase": "what was that, hm?",
+      "path": "assets/audio/clarifications/35.wav",
+      "duration_ms": 1904
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "3110e98e566692cd",
+      "phrase": "didn't get it",
+      "path": "assets/audio/clarifications/36.wav",
+      "duration_ms": 1068
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "2dc5b93e717b1c23",
+      "phrase": "ah hm — say again?",
+      "path": "assets/audio/clarifications/37.wav",
+      "duration_ms": 2089
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "094e56cf1c1cbb1a",
+      "phrase": "uh, missed that",
+      "path": "assets/audio/clarifications/38.wav",
+      "duration_ms": 2136
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "e3ab5ed37430bf48",
+      "phrase": "say it once more?",
+      "path": "assets/audio/clarifications/39.wav",
+      "duration_ms": 1114
+    },
+    {
+      "surface": "clarification",
+      "mood": null,
+      "phrase_hash": "9e9cd42b6c1f1095",
+      "phrase": "what? one more time?",
+      "path": "assets/audio/clarifications/40.wav",
+      "duration_ms": 2275
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "21231da618a2c46a",
+      "phrase": "umm",
+      "path": "assets/audio/fillers/calm/03.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "filler",
+      "mood": "calm",
+      "phrase_hash": "458c177954946b5f",
+      "phrase": "one moment",
+      "path": "assets/audio/fillers/calm/05.wav",
+      "duration_ms": 1764
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
+      "phrase_hash": "510ce0eb4e567c70",
+      "phrase": "hmm interesting",
+      "path": "assets/audio/fillers/curious/01.wav",
+      "duration_ms": 1439
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
+      "phrase_hash": "68e6cbfe4ccc37c8",
+      "phrase": "lemme think",
+      "path": "assets/audio/fillers/curious/03.wav",
+      "duration_ms": 1346
+    },
+    {
+      "surface": "filler",
+      "mood": "curious",
+      "phrase_hash": "104dd732fcfe0999",
+      "phrase": "okay so",
+      "path": "assets/audio/fillers/curious/05.wav",
+      "duration_ms": 1346
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
+      "phrase_hash": "0fa3da4596703431",
+      "phrase": "ooh!",
+      "path": "assets/audio/fillers/excited/02.wav",
+      "duration_ms": 1253
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
+      "phrase_hash": "3959c12769be55f2",
+      "phrase": "okay okay",
+      "path": "assets/audio/fillers/excited/03.wav",
+      "duration_ms": 975
+    },
+    {
+      "surface": "filler",
+      "mood": "excited",
+      "phrase_hash": "e7d94e7632979c33",
+      "phrase": "uhh",
+      "path": "assets/audio/fillers/excited/05.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "filler",
+      "mood": "happy",
+      "phrase_hash": "09bcbb7a7ac251e7",
+      "phrase": "oh!",
+      "path": "assets/audio/fillers/happy/01.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "filler",
+      "mood": "happy",
+      "phrase_hash": "d49722c69bff3aa8",
+      "phrase": "ooh",
+      "path": "assets/audio/fillers/happy/02.wav",
+      "duration_ms": 650
+    },
+    {
+      "surface": "filler",
+      "mood": "happy",
+      "phrase_hash": "cf16e5d68ca23a02",
+      "phrase": "hmm yeah",
+      "path": "assets/audio/fillers/happy/03.wav",
+      "duration_ms": 2275
+    },
+    {
+      "surface": "filler",
+      "mood": "happy",
+      "phrase_hash": "dd784f89c761ac44",
+      "phrase": "okay!",
+      "path": "assets/audio/fillers/happy/04.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "filler",
+      "mood": "happy",
+      "phrase_hash": "da5119db7fb5a778",
+      "phrase": "let me see",
+      "path": "assets/audio/fillers/happy/05.wav",
+      "duration_ms": 928
+    },
+    {
+      "surface": "filler",
+      "mood": "playful",
+      "phrase_hash": "8ad79280f5f40322",
+      "phrase": "oo!",
+      "path": "assets/audio/fillers/playful/01.wav",
+      "duration_ms": 696
+    },
+    {
+      "surface": "filler",
+      "mood": "playful",
+      "phrase_hash": "4380801c0c977f89",
+      "phrase": "hmm hmm",
+      "path": "assets/audio/fillers/playful/02.wav",
+      "duration_ms": 1671
+    },
+    {
+      "surface": "filler",
+      "mood": "playful",
+      "phrase_hash": "697fe9ebd22a46c2",
+      "phrase": "huh",
+      "path": "assets/audio/fillers/playful/03.wav",
+      "duration_ms": 557
+    },
+    {
+      "surface": "filler",
+      "mood": "playful",
+      "phrase_hash": "8e48ad047560d7d4",
+      "phrase": "wait wait",
+      "path": "assets/audio/fillers/playful/05.wav",
+      "duration_ms": 882
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "f065a2f1439621b0",
+      "phrase": "uh",
+      "path": "assets/audio/fillers/sleepy/02.wav",
+      "duration_ms": 1160
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "01f7e47ab2854636",
+      "phrase": "lemme see",
+      "path": "assets/audio/fillers/sleepy/03.wav",
+      "duration_ms": 743
+    },
+    {
+      "surface": "filler",
+      "mood": "sleepy",
+      "phrase_hash": "f1c4209ea1114be6",
+      "phrase": "mm okay",
+      "path": "assets/audio/fillers/sleepy/05.wav",
+      "duration_ms": 1393
+    },
+    {
+      "surface": "filler",
+      "mood": "thoughtful",
+      "phrase_hash": "1b3bddd9b148eb65",
+      "phrase": "hmm",
+      "path": "assets/audio/fillers/thoughtful/01.wav",
+      "duration_ms": 603
+    },
+    {
+      "surface": "filler",
+      "mood": "thoughtful",
+      "phrase_hash": "fc6c4c213865bc86",
+      "phrase": "let me think",
+      "path": "assets/audio/fillers/thoughtful/02.wav",
+      "duration_ms": 1021
+    },
+    {
+      "surface": "filler",
+      "mood": "thoughtful",
+      "phrase_hash": "f8ed60182bfd9604",
+      "phrase": "right",
+      "path": "assets/audio/fillers/thoughtful/03.wav",
+      "duration_ms": 464
+    },
+    {
+      "surface": "filler",
+      "mood": "thoughtful",
+      "phrase_hash": "f76a813f4bcef1eb",
+      "phrase": "okay",
+      "path": "assets/audio/fillers/thoughtful/04.wav",
+      "duration_ms": 557
+    },
+    {
+      "surface": "filler",
+      "mood": "thoughtful",
+      "phrase_hash": "e1d5f6347b57ffd6",
+      "phrase": "mm-hmm",
+      "path": "assets/audio/fillers/thoughtful/05.wav",
+      "duration_ms": 1718
+    }
+  ]
+}

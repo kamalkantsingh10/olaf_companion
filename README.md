@@ -13,11 +13,12 @@ uv sync
 ## Run
 
 ```bash
-just run             # starts the pipeline; full simple-turn loop is alive (Story 2.5)
-just check           # lint + type-check + unit tests (must pass before commit)
-just test            # full test suite (including the integration test)
-just list-devices    # print PyAudio devices for setup.toml regex tuning
-just play-test-tone  # 1-second 440Hz beep through the configured speaker
+just run                # starts the pipeline; full simple-turn loop is alive (Story 2.5)
+just check              # lint + type-check + unit tests (must pass before commit)
+just test               # full test suite (including the integration test)
+just list-devices       # print PyAudio devices for setup.toml regex tuning
+just play-test-tone     # 1-second 440Hz beep through the configured speaker
+just regenerate-audio   # Story 5.5: pre-render cached audio assets (~3 min, hits Cartesia)
 ```
 
 After `just run`, say **"Hey OLAF, what time is it?"** — within ~1.5s
@@ -176,6 +177,38 @@ input_device_name = "USB.*Mic.*Array"  # regex, matched case-insensitively
 The match uses Python's `re.search` semantics, so partial matches work.
 If no device matches the regex at startup, the pipeline exits within ~1s
 and prints the available device names — no need to dig through stack traces.
+
+## Audio assets — cached deterministic-text playback (Story 5.5)
+
+Wake greetings, goodbyes, low-confidence clarifications, and "thinking"
+fillers are **pre-rendered cached WAVs** under `assets/audio/` rather
+than synthesized at runtime. Two wins: zero per-turn Cartesia cost for
+these surfaces, and the thinking filler can fire within ~50 ms of
+end-of-speech (much faster than Cartesia's ~700-1500 ms TTFB) to mask
+the gap while STT + Talker + Cartesia produce the real reply.
+
+The cache is keyed by `phrase + voice_id + tts_model + mood`. **Any
+edit to those forces a regeneration** — the Stage 3 startup probe
+verifies every phrase in `setup.toml` has a matching WAV and refuses to
+start otherwise. Operator workflow:
+
+```bash
+# After editing any phrase list ([greeting.greetings_by_mood],
+# [goodbye] phrases, [stt] clarification_prompts, [filler.phrases_by_mood])
+# or changing [tts] voice_id / [tts] model:
+just regenerate-audio              # idempotent — skips unchanged phrases
+
+# Other modes:
+just regenerate-audio --dry-run    # print the plan, no API calls
+just regenerate-audio --force      # re-render every phrase
+```
+
+`just regenerate-audio` reads `setup.toml`, calls Cartesia once per
+phrase, writes WAVs to canonical paths under `assets/audio/`, and
+refreshes `assets/audio/manifest.json`. Total ~3 minutes for a fresh
+~175-phrase generation; idempotent re-runs touch only what changed.
+WAV files are committed (~6-15 MB) so `git clone` gets you a working
+pipeline without a per-operator Cartesia regeneration step.
 
 ## Wake-word setup (per project)
 

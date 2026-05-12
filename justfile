@@ -40,3 +40,17 @@ list-devices:
 # Story 2.1 playback path independent of Cartesia.
 play-test-tone:
     uv run python -m voice_agent_pipeline.audio.play_test_tone
+
+# Story 5.5: pre-render cached WAVs for deterministic-text surfaces
+# (greetings, goodbyes, clarifications, thinking fillers) via Cartesia.
+# Writes WAVs under `assets/audio/` and refreshes `manifest.json`.
+# Idempotent — phrases whose phrase_hash is already in the manifest +
+# whose file exists are skipped. Run after editing any phrase list in
+# `setup.toml` or after changing `[tts] voice_id` / `[tts] model` —
+# the Stage 3 startup probe will refuse to start otherwise.
+#
+# Flags: `--force` regenerates every entry; `--dry-run` prints the
+# plan without API calls. Pass them after `--`, e.g.
+# `just regenerate-audio --force`.
+regenerate-audio *FLAGS:
+    uv run python -m voice_agent_pipeline.audio.regenerate {{FLAGS}}

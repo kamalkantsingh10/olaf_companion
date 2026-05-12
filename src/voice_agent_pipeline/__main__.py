@@ -32,6 +32,7 @@ import sys
 import pvporcupine  # pyright: ignore[reportMissingTypeStubs]
 import structlog
 
+from voice_agent_pipeline.audio.cached import load_and_validate_manifest
 from voice_agent_pipeline.audio.devices import probe_devices_openable, resolve_audio_devices
 from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import StartupValidationError, VoiceAgentError
@@ -184,6 +185,28 @@ async def main() -> int:
                 )
                 await asyncio.to_thread(probe_devices_openable, indices)
             log.info("startup.validated.audio")
+
+            # Story 5.5: verify the cached-audio manifest is in sync
+            # with setup.toml. Refuses to start if any phrase is
+            # missing from the manifest, any WAV is missing on disk,
+            # or the manifest's voice_id / tts_model drifts from
+            # setup.toml. Off-thread because manifest parsing + N
+            # file-existence checks are blocking IO.
+            #
+            # The returned manifest is plumbed down to
+            # ``run_sequential_loop`` so the runtime greeting / goodbye
+            # / clarification / filler lookups don't re-parse the
+            # JSON. ``indices`` is also plumbed through so the loop
+            # doesn't re-resolve audio devices it just probed.
+            async with reporter.stage("audio_assets", "audio assets present"):
+                manifest = await asyncio.to_thread(
+                    load_and_validate_manifest,
+                    config,
+                )
+            log.info(
+                "startup.validated.audio_assets",
+                entries=len(manifest.entries),
+            )
         except VoiceAgentError as e:
             # Unpack the exception's structured context (stage, reason,
             # url, ...) into top-level log fields so they're individually
@@ -212,7 +235,11 @@ async def main() -> int:
         # explicitly before kicking off the loop so the closing rule
         # prints before any per-turn log lines.
         reporter.mark_startup_complete()
-        pipeline_task = asyncio.create_task(run_sequential_loop(config))
+        # Story 5.5: thread the validated manifest into the loop so
+        # cached-audio call sites (greeting/goodbye/clarification/filler)
+        # can do O(1) lookups against pre-loaded entries instead of
+        # re-parsing manifest.json at runtime.
+        pipeline_task = asyncio.create_task(run_sequential_loop(config, manifest=manifest))
         shutdown_task = asyncio.create_task(shutdown.wait())
         _, pending = await asyncio.wait(
             [pipeline_task, shutdown_task],

@@ -40,7 +40,9 @@ import asyncio
 import random
 import struct
 import time
-from typing import Any
+from collections import deque
+from pathlib import Path
+from typing import Any, cast
 
 import pvporcupine  # pyright: ignore[reportMissingTypeStubs]
 import pyaudio  # pyright: ignore[reportMissingTypeStubs]
@@ -51,7 +53,9 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from voice_agent_pipeline.activity import trigger_greeting
 from voice_agent_pipeline.activity.machine import ActivityFSM
 from voice_agent_pipeline.audio._silence import suppress_native_stderr
+from voice_agent_pipeline.audio.cached import CachedAudioManifest, play_cached
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
+from voice_agent_pipeline.audio.filler import maybe_play_filler
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.mood.controller import MoodController
 from voice_agent_pipeline.mood.state import MoodState
@@ -84,13 +88,25 @@ _AUDIO_DRAIN_TAIL_MS = 250
 _MAX_UTTERANCE_SECONDS = 30.0
 
 
-async def run_sequential_loop(config: SetupConfig) -> None:
+async def run_sequential_loop(
+    config: SetupConfig,
+    manifest: CachedAudioManifest,
+) -> None:
     """Run the half-duplex sequential voice loop until cancelled.
 
     Builds all v1 components in the same order as
     ``pipeline.run_pipeline`` so the operator-facing setup checklist
     matches: publisher → mood → FSM → talker → STT → cartesia.
     Then enters the wake-greet-converse-sleep loop.
+
+    Args:
+        config: Validated :class:`SetupConfig` from the loader.
+        manifest: Story 5.5 cached-audio manifest from the Stage 3
+            startup probe. Greeting, goodbye, and clarification call
+            sites do ``manifest.lookup(...)`` + ``play_cached(...)``
+            instead of hitting Cartesia at runtime. Required —
+            ``__main__.py`` always passes it; the Stage 3 probe
+            refuses to start if the manifest isn't loadable.
     """
     # PyAudio's `__init__` probes every device — emits ALSA/JACK noise
     # on stderr. Silence the C-level output (same trick the Pipecat
@@ -168,12 +184,32 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                 mood_state.current,
                 config.greeting.greetings_by_mood,
             )
-            await _speak(pa, indices, tts, greeting)
+            # Story 5.5: play from the cached WAV instead of hitting
+            # Cartesia at runtime. The Stage 3 probe guarantees a
+            # cached entry exists for this (mood, greeting) tuple, so
+            # the lookup never misses in production. output_index is
+            # required in v1 (FR4) and was validated by the audio probe
+            # at startup; cast narrows the type for play_cached.
+            greeting_entry = manifest.lookup("greeting", greeting, mood=mood_state.current)
+            await play_cached(
+                pa,
+                cast(int, indices.output_index),
+                Path(greeting_entry.path),
+            )
             # Note: greeting plays during ``waking`` state. We do NOT
             # call ``on_first_audio_frame`` / ``on_last_audio_frame``
             # for the greeting — those FSM transitions only apply to
             # bot replies (working → speaking → listening). The
             # greeting is a pre-turn nicety.
+
+            # Story 5.5: ring buffer of recently-played filler hashes.
+            # Persists across turns within a single wake session so the
+            # last-N suppression actually suppresses across turns.
+            # maxlen = max_consecutive_repeat + 1 → at minimum the
+            # immediately-previous filler is excluded.
+            recent_fillers: deque[str] = deque(
+                maxlen=config.filler.max_consecutive_repeat + 1,
+            )
 
             # Conversation loop — runs until the bot calls
             # ``go_to_sleep``, which sets ``fsm.sleep_pending``; the
@@ -193,6 +229,28 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                 # no-op when already in listening).
                 await fsm.on_speech_started()
                 await fsm.on_speech_ended()
+
+                # Story 5.5: spawn the filler task immediately after
+                # VAD end-of-speech. The task sleeps up to
+                # `min_pause_ms`; if `audio_started` fires before then
+                # (fast turn), it returns without playing. The
+                # downstream paths (clarification + real Talker reply)
+                # both signal `audio_started` and `await filler_task`
+                # before opening their output streams — that's how we
+                # serialize filler vs real audio without sharing a
+                # stream.
+                audio_started = asyncio.Event()
+                filler_task = asyncio.create_task(
+                    maybe_play_filler(
+                        pa=pa,
+                        indices=indices,
+                        mood=mood_state.current,
+                        manifest=manifest,
+                        min_pause_ms=config.filler.min_pause_ms,
+                        audio_started=audio_started,
+                        recent=recent_fillers,
+                    ),
+                )
 
                 stt_result = await stt.transcribe(audio)
                 # Privacy: heard text logged at INFO under ``heard``
@@ -218,8 +276,27 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                         config.stt.clarification_prompts,
                     )
                     log.info("clarification.picked", text=clarification_text)
+                    # Story 5.5: signal "real audio is about to start"
+                    # to the filler task, then await it. If the filler
+                    # hadn't started yet, it returns immediately; if
+                    # it had, we wait for it to finish playing so the
+                    # output stream is free before we open ours.
+                    audio_started.set()
+                    await filler_task
                     await fsm.on_first_audio_frame()
-                    await _speak(pa, indices, tts, clarification_text)
+                    # Clarifications are deterministic text; play from
+                    # cached WAV instead of hitting Cartesia. No mood
+                    # bucket — clarifications are a flat list.
+                    clar_entry = manifest.lookup(
+                        "clarification",
+                        clarification_text,
+                        mood=None,
+                    )
+                    await play_cached(
+                        pa,
+                        cast(int, indices.output_index),
+                        Path(clar_entry.path),
+                    )
                     await fsm.on_last_audio_frame()
                     conversation_history.append(
                         {"role": "user", "content": stt_result.text},
@@ -248,6 +325,8 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                     tool_registry,
                     stt_result.text,
                     fsm,
+                    audio_started=audio_started,
+                    filler_task=filler_task,
                     history=conversation_history,
                 )
 
@@ -289,7 +368,18 @@ async def run_sequential_loop(config: SetupConfig) -> None:
                         config.goodbye.phrases,
                     )
                     log.info("goodbye.picked", text=goodbye_text)
-                    await _speak(pa, indices, tts, goodbye_text)
+                    # Story 5.5: goodbye is deterministic, mood-less;
+                    # play from cached WAV.
+                    goodbye_entry = manifest.lookup(
+                        "goodbye",
+                        goodbye_text,
+                        mood=None,
+                    )
+                    await play_cached(
+                        pa,
+                        cast(int, indices.output_index),
+                        Path(goodbye_entry.path),
+                    )
 
                 # Bot finishes (speaking → listening, OR via deferred-
                 # sleep chain → going_to_sleep → sleeping if a
@@ -493,6 +583,8 @@ async def _stream_and_speak(
     tool_registry: ToolRegistry,
     prompt: str,
     fsm: ActivityFSM,
+    audio_started: asyncio.Event,
+    filler_task: asyncio.Task[None],
     history: list[dict[str, str]] | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Stream Talker tokens; speak each sentence as it forms.
@@ -513,17 +605,13 @@ async def _stream_and_speak(
     them post-speech (matches the half-duplex ordering — speech
     completes, then tool side effects fire).
     """
-    # Open ONE output stream for the whole reply. Each sentence's
-    # Cartesia chunks write into this stream sequentially. PyAudio's
-    # blocking write naturally rate-limits us to playback speed.
-    with suppress_native_stderr():
-        out_stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=_SAMPLE_RATE,
-            output=True,
-            output_device_index=indices.output_index,
-        )
+    # Story 5.5: the output stream is opened LAZILY on the first
+    # sentence's first chunk. This serializes against any concurrent
+    # filler audio: we signal `audio_started` + await `filler_task`
+    # right before opening, so the filler stream is closed before our
+    # stream opens. Pre-5.5 we opened the stream eagerly at function
+    # entry; that would race with the filler.
+    out_stream: Any = None
 
     text_buffer = ""
     full_text_parts: list[str] = []
@@ -532,14 +620,31 @@ async def _stream_and_speak(
 
     async def _speak_sentence(sentence: str) -> None:
         """Synthesize ONE sentence via Cartesia; write chunks to out_stream."""
-        nonlocal fsm_speaking_fired
+        nonlocal fsm_speaking_fired, out_stream
         if not sentence.strip():
             return
         # Fire the FSM transition right before the first sentence's
         # first chunk lands — that's the "user hears the bot" moment.
         if not fsm_speaking_fired:
+            # Story 5.5: signal the filler task that real audio is
+            # about to start. If the filler is still sleeping
+            # (threshold not yet expired), it returns immediately.
+            # If the filler is mid-playback, we wait for it to
+            # finish — guarantees its output stream is closed before
+            # we open ours.
+            audio_started.set()
+            await filler_task
             await fsm.on_first_audio_frame()
             fsm_speaking_fired = True
+            # Open the output stream now that the filler is done.
+            with suppress_native_stderr():
+                out_stream = pa.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=_SAMPLE_RATE,
+                    output=True,
+                    output_device_index=indices.output_index,
+                )
         log.info("tts.sentence_speak", text=sentence.strip())
         async for chunk in tts.synthesize(sentence):
             await asyncio.to_thread(out_stream.write, chunk)
@@ -572,67 +677,35 @@ async def _stream_and_speak(
             await _speak_sentence(text_buffer)
 
         # If the LLM produced no text at all (tool-call-only reply),
-        # we never fired ``on_first_audio_frame``. Fire it now so the
-        # FSM still advances to ``speaking`` and the caller's
-        # ``on_last_audio_frame`` lands cleanly.
+        # we never fired ``on_first_audio_frame`` and never opened the
+        # output stream. Fire the FSM transition + await the filler
+        # task (in case it's still running) so the caller's
+        # ``on_last_audio_frame`` lands cleanly. Story 5.5: the filler
+        # await is what handles the "Talker emitted only tools, but a
+        # filler is mid-playback" edge case — the filler still gets
+        # to finish its play before we yield control.
         if not fsm_speaking_fired:
+            audio_started.set()
+            await filler_task
             await fsm.on_first_audio_frame()
 
         # Trailing drain — let the OS finish playing buffered audio.
-        await asyncio.sleep(_AUDIO_DRAIN_TAIL_MS / 1000)
+        # Only if we actually opened the stream (out_stream is None
+        # for tool-only replies).
+        if out_stream is not None:
+            await asyncio.sleep(_AUDIO_DRAIN_TAIL_MS / 1000)
     finally:
-        out_stream.stop_stream()
-        out_stream.close()
+        if out_stream is not None:
+            out_stream.stop_stream()
+            out_stream.close()
 
     full_text = "".join(full_text_parts)
     return full_text, tool_calls
 
 
-async def _speak(
-    pa: pyaudio.PyAudio,
-    indices: Any,
-    tts: CartesiaClient,
-    text: str,
-) -> None:
-    """Synthesize ``text`` via Cartesia and play through the speaker.
-
-    Half-duplex contract: this function blocks until audio playback
-    finishes. Mic input is NOT recorded during this window — the
-    caller must have closed any open input stream before calling.
-
-    Empty ``text`` is a valid no-op (used when the Talker emits only
-    tool calls with no text response). Just returns.
-    """
-    if not text:
-        return
-    log.info("tts.speak.start", text=text)
-
-    with suppress_native_stderr():
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=_SAMPLE_RATE,
-            output=True,
-            output_device_index=indices.output_index,
-        )
-    try:
-        chunk_count = 0
-        byte_total = 0
-        async for chunk in tts.synthesize(text):
-            chunk_count += 1
-            byte_total += len(chunk)
-            # PyAudio's blocking write returns when there's space in
-            # the OS audio buffer — naturally rate-limits us to
-            # playback speed so we don't pile up audio mid-segment.
-            await asyncio.to_thread(stream.write, chunk)
-        # Trailing drain — let the OS finish playing what's already
-        # in the buffer before we close the stream.
-        await asyncio.sleep(_AUDIO_DRAIN_TAIL_MS / 1000)
-        log.info(
-            "tts.speak.complete",
-            chunk_count=chunk_count,
-            byte_total=byte_total,
-        )
-    finally:
-        stream.stop_stream()
-        stream.close()
+# Story 5.5 removed ``_speak`` — the only callers were the three
+# deterministic-text surfaces (greeting/goodbye/clarification) which
+# now play from cached WAVs via ``audio.cached.play_cached``. Real
+# Talker replies stream per-sentence through ``_speak_sentence``
+# (defined inside ``_stream_and_speak`` above) — the streaming path
+# was always the production surface for conversational replies.
