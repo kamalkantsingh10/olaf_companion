@@ -240,11 +240,14 @@ speed = 1.0
 # Story 3.5: four-topic event publisher. `adapter = "ros2"` for
 # production; `adapter = "log"` for local dev without a ROS 2 stack
 # (LogEventPublisher records every publish in-memory). DDS domain id
-# must match the subscriber's domain. Topic names are operator-tunable
-# per the agnostic-publisher boundary.
+# must match the subscriber's domain — the publisher now passes this to
+# rclpy.init(domain_id=...) so it is authoritative (not the ambient
+# ROS_DOMAIN_ID env var). Set to 42 to match the OLAF expression_engine
+# body (its config/expression_engine.toml [dds].domain_id). Topic names
+# are operator-tunable per the agnostic-publisher boundary.
 [publisher]
 adapter = "ros2"
-dds_domain_id = 0
+dds_domain_id = 42
 [publisher.topics]
 mood = "/olaf/mood"
 activity = "/olaf/activity"

@@ -62,7 +62,7 @@ log = logging.getLogger(__name__)
 # the test fails loudly.
 
 
-def _build_qos_profiles() -> dict[str, "QoSProfile"]:
+def build_qos_profiles() -> dict[str, "QoSProfile"]:
     """Construct the four per-topic QoS profiles per the architecture spec.
 
     Wrapped in a function rather than a top-level constant because
@@ -150,10 +150,21 @@ class Ros2EventPublisher:
         )
 
     def _connect_sync(self) -> None:
-        """Sync init — runs inside ``asyncio.to_thread``."""
-        rclpy.init()
+        """Sync init — runs inside ``asyncio.to_thread``.
+
+        ``rclpy.init(domain_id=...)`` pins the DDS domain explicitly from
+        ``self._config.dds_domain_id`` rather than letting rclpy inherit
+        the ambient ``ROS_DOMAIN_ID`` environment variable. Producer and
+        subscriber MUST agree on the domain or DDS silently never matches
+        the endpoints — no error is raised, data just never flows — so the
+        domain is a first-class config knob, not an env-var accident.
+        Passing ``None`` (the field's effective absence) would restore the
+        env-inheriting behaviour; the config default of ``0`` makes the
+        out-of-the-box domain explicit.
+        """
+        rclpy.init(domain_id=self._config.dds_domain_id)
         self._node = Node("voice_agent_pipeline")
-        qos_profiles = _build_qos_profiles()
+        qos_profiles = build_qos_profiles()
         topics = self._config.topics
         # Map of topic-name → (config attribute, qos key).
         for topic_key, topic_path in (

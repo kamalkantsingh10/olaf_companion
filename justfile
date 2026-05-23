@@ -54,3 +54,28 @@ play-test-tone:
 # `just regenerate-audio --force`.
 regenerate-audio *FLAGS:
     uv run python -m voice_agent_pipeline.audio.regenerate {{FLAGS}}
+
+# Self-contained ROS 2 / DDS publish smoke test. Stands up the production
+# Ros2EventPublisher on the configured `[publisher].dds_domain_id` and an
+# in-process witness subscriber using the body's exact contract QoS, then
+# publishes one event per topic and confirms all four are received. Needs
+# a sourced ROS 2 env (rclpy) but NO `.env`/API keys and NO OLAF body —
+# it verifies our emission side conforms to `contract/INTERFACE.md`.
+# Exits non-zero if any topic is missed (domain mismatch, QoS drift, etc.).
+#
+# Flags pass through after `--`, e.g. `just smoke-publisher --domain 0`
+# or `just smoke-publisher --timeout 20`.
+smoke-publisher *FLAGS:
+    uv run python -m voice_agent_pipeline.publisher.smoke {{FLAGS}}
+
+# Stream a scripted sequence of MOCK voice-agent events to the four
+# `/olaf/*` topics, one per second, so a running body (the expression_engine
+# subscriber) can be watched reacting to each. Pure producer — no witness;
+# you monitor the receiver. Walks a full session (boot→sleep→wake→listen→
+# think→speak→delegate→goodbye→sleep) covering every activity state, mood,
+# emotion, and vocalization. Uses the configured `[publisher].dds_domain_id`.
+#
+# Flags pass through after `--`, e.g. `just simulate-agent --loop`,
+# `just simulate-agent --delay 2`, or `just simulate-agent --domain 0`.
+simulate-agent *FLAGS:
+    uv run python -m voice_agent_pipeline.publisher.simulate {{FLAGS}}

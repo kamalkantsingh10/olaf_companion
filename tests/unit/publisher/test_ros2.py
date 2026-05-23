@@ -81,6 +81,7 @@ def mock_rclpy(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
 def _make_config(
     *,
     adapter: str = "ros2",
+    dds_domain_id: int = 0,
     mood_topic: str = "/olaf/mood",
     activity_topic: str = "/olaf/activity",
     speech_emotion_topic: str = "/olaf/speech_emotion",
@@ -91,7 +92,7 @@ def _make_config(
 
     return PublisherConfig(
         adapter=adapter,  # type: ignore[arg-type]
-        dds_domain_id=0,
+        dds_domain_id=dds_domain_id,
         topics=TopicNames(
             mood=mood_topic,
             activity=activity_topic,
@@ -120,6 +121,27 @@ async def test_connect_initializes_rclpy_node_and_four_publishers(
     # Four publishers created.
     node_instance = node_class.return_value
     assert node_instance.create_publisher.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_configured_domain_id_to_rclpy_init(
+    mock_rclpy: dict[str, MagicMock],
+) -> None:
+    """``connect`` pins the DDS domain from config, not the env var.
+
+    Regression guard for the silent-no-match footgun: a producer that
+    inherits ``ROS_DOMAIN_ID`` instead of honouring its configured
+    ``dds_domain_id`` will quietly fail to connect to a subscriber on a
+    different domain. ``rclpy.init`` must receive the configured value.
+    """
+    from voice_agent_pipeline.publisher.ros2 import Ros2EventPublisher
+
+    pub = Ros2EventPublisher(_make_config(dds_domain_id=42))
+    await pub.connect()
+
+    init = mock_rclpy["rclpy"].init
+    assert init.call_count == 1
+    assert init.call_args.kwargs.get("domain_id") == 42
 
 
 @pytest.mark.asyncio
