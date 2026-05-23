@@ -43,6 +43,7 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID, uuid4
 
 import pvporcupine  # pyright: ignore[reportMissingTypeStubs]
 import pyaudio  # pyright: ignore[reportMissingTypeStubs]
@@ -56,10 +57,16 @@ from voice_agent_pipeline.audio._silence import suppress_native_stderr
 from voice_agent_pipeline.audio.cached import CachedAudioManifest, play_cached
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
 from voice_agent_pipeline.audio.filler import maybe_play_filler
+from voice_agent_pipeline.config.expression_map import load_from_path
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.mood.controller import MoodController
 from voice_agent_pipeline.mood.state import MoodState
 from voice_agent_pipeline.publisher import build_publisher
+from voice_agent_pipeline.publisher.interface import EventPublisher
+from voice_agent_pipeline.schemas.speech_emotion_event import SpeechEmotionEvent
+from voice_agent_pipeline.schemas.vocalization_event import VocalizationEvent
+from voice_agent_pipeline.splitter.mapping import LastPublishedCache
+from voice_agent_pipeline.splitter.segmenter import Segment, Segmenter
 from voice_agent_pipeline.stt import build_stt_backend
 from voice_agent_pipeline.tts.cartesia import CartesiaClient
 from voice_agent_pipeline.turn import build_talker, build_tool_registry
@@ -158,6 +165,22 @@ async def run_sequential_loop(
 
         # Cartesia TTS client. Streaming SSE happens per ``speak`` call.
         tts = CartesiaClient(config.tts, config.cartesia_api_key)
+
+        # Embodiment-event publishing on the half-duplex path. The
+        # pipecat assembly published speech_emotion + vocalization via
+        # CartesiaSynthesisProcessor + _PrePublishProcessor; the
+        # half-duplex migration carried over mood + activity (their
+        # sources are MoodController / ActivityFSM) but DROPPED these
+        # two, whose source was the splitter chain. We rebuild that
+        # chain here from the SAME components: the segmenter parses the
+        # Talker's ``<emotion .../>`` + ``[vocalization]`` tags out of
+        # the reply stream into Segments, and ``_stream_and_speak``
+        # publishes the per-segment events. ``load_from_path`` is
+        # fail-fast (ConfigError on a missing/invalid map) — matches the
+        # v1 no-silent-defaults posture (CLAUDE.md rule #4).
+        expression_map = load_from_path(Path("expression_map.yaml"))
+        segmenter = Segmenter(expression_map)
+        emotion_cache = LastPublishedCache()
 
         log.info("sequential_loop.ready")
 
@@ -327,6 +350,9 @@ async def run_sequential_loop(
                     fsm,
                     audio_started=audio_started,
                     filler_task=filler_task,
+                    publisher=event_publisher,
+                    segmenter=segmenter,
+                    emotion_cache=emotion_cache,
                     history=conversation_history,
                 )
 
@@ -547,32 +573,34 @@ async def _record_with_vad(
         stream.close()
 
 
-# Sentence-boundary detector. Greedy: returns the longest prefix of
-# ``buffer`` that ends in a sentence-final punctuation followed by a
-# space, plus the trailing space. Returns ``None`` if no complete
-# sentence yet (caller waits for more tokens).
-#
-# Decimal numbers ("3.14") and abbreviations ("U.S.") could in
-# principle be mis-split, but Talker replies in the v1 register are
-# short conversational sentences — the simple heuristic is good
-# enough. If we see real-world false splits, a smarter splitter
-# (e.g. spaCy's sentence segmenter) lands as a follow-up.
-_SENTENCE_END_CHARS = ".!?"
+async def _publish_segment_events(
+    publisher: EventPublisher,
+    cache: LastPublishedCache,
+    segment: Segment,
+    turn_id: UUID,
+) -> None:
+    """Publish a segment's embodiment events: speech_emotion + vocalizations.
 
+    Mirrors the pipecat ``CartesiaSynthesisProcessor`` event construction
+    (pipeline.py): emit the ``speech_emotion`` event FIRST (so the body
+    sets the pose before any punctual burst), gated by the
+    :class:`LastPublishedCache` dedup; then every ``vocalization`` in
+    order (FR24 — vocalizations are never deduped). All events from one
+    spoken turn share ``turn_id`` as their ``correlation_id``.
 
-def _extract_sentence(buffer: str) -> str | None:
-    """Return a complete sentence + trailing whitespace, or ``None``."""
-    # Walk backwards from the end, looking for a sentence-final
-    # punctuation that's followed by whitespace (or end-of-buffer
-    # AND the LLM finished — but we don't know that here, so trailing
-    # punct without space waits for more).
-    for i, ch in enumerate(buffer):
-        if ch in _SENTENCE_END_CHARS:
-            # Look ahead: is the NEXT char whitespace?
-            if i + 1 < len(buffer) and buffer[i + 1].isspace():
-                # Sentence ends at i; include the trailing space.
-                return buffer[: i + 2]
-    return None
+    Sentence segmentation already lives in the :class:`Segmenter`; this
+    helper is split out as the pure publish step so it is unit-testable
+    against the :class:`EventPublisher` Protocol without PyAudio / TTS.
+    """
+    payload = segment.speech_emotion_payload
+    if payload is not None and cache.should_publish(payload):
+        await publisher.publish_speech_emotion(
+            SpeechEmotionEvent(payload=payload, correlation_id=turn_id)
+        )
+    for vocalization in segment.vocalization_payloads:
+        await publisher.publish_vocalization(
+            VocalizationEvent(payload=vocalization, correlation_id=turn_id)
+        )
 
 
 async def _stream_and_speak(
@@ -585,58 +613,77 @@ async def _stream_and_speak(
     fsm: ActivityFSM,
     audio_started: asyncio.Event,
     filler_task: asyncio.Task[None],
+    publisher: EventPublisher,
+    segmenter: Segmenter,
+    emotion_cache: LastPublishedCache,
     history: list[dict[str, str]] | None = None,
 ) -> tuple[str, list[ToolCall]]:
-    """Stream Talker tokens; speak each sentence as it forms.
+    """Stream Talker tokens; publish embodiment events + speak each segment.
 
     Token-streaming for snappier perceived latency (the canonical
     voice-AI win): we don't wait for the full LLM response before
-    starting Cartesia. As tokens arrive, we accumulate; whenever a
-    complete sentence forms (text up to ``[.!?]`` + space), we send
-    that sentence to Cartesia and start playing while the LLM is
-    still emitting later sentences.
+    starting Cartesia. As tokens arrive, they feed the ``segmenter``,
+    which parses the ``<emotion .../>`` and ``[vocalization]`` tags and
+    yields :class:`Segment`s on sentence / emotion boundaries. For each
+    segment we publish its ``speech_emotion`` + ``vocalization`` events
+    and then synthesize its (tag-cleaned) text — so the body reacts in
+    lockstep with the spoken audio. (The pipecat assembly did this in
+    ``CartesiaSynthesisProcessor`` + ``_PrePublishProcessor``; the
+    half-duplex migration had dropped it.)
 
     The bot's ``working → speaking`` FSM transition fires just before
-    the FIRST sentence's audio starts — that's when the user starts
-    hearing anything. Subsequent sentences play continuously into
-    the same PyAudio output stream.
+    the FIRST segment's audio starts — that's when the user starts
+    hearing anything. Subsequent segments play continuously into the
+    same PyAudio output stream.
 
-    Returns the accumulated tool calls so the caller can dispatch
-    them post-speech (matches the half-duplex ordering — speech
-    completes, then tool side effects fire).
+    Returns the accumulated full text + tool calls so the caller can
+    update history and dispatch tools post-speech (half-duplex
+    ordering — speech completes, then tool side effects fire).
     """
+    # Fresh per-turn embodiment state: clear any buffered text / carried
+    # emotion from the prior turn, reset the dedup cache, and bind a new
+    # correlation id so THIS turn's speech_emotion + vocalization events
+    # group together (mirrors SegmenterProcessor's per-turn reset).
+    segmenter.reset()
+    emotion_cache.reset()
+    turn_id = uuid4()
+
     # Story 5.5: the output stream is opened LAZILY on the first
-    # sentence's first chunk. This serializes against any concurrent
+    # segment's first chunk. This serializes against any concurrent
     # filler audio: we signal `audio_started` + await `filler_task`
-    # right before opening, so the filler stream is closed before our
-    # stream opens. Pre-5.5 we opened the stream eagerly at function
-    # entry; that would race with the filler.
+    # right before opening, so the filler stream is closed before ours.
     out_stream: Any = None
 
-    text_buffer = ""
     full_text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     fsm_speaking_fired = False
 
-    async def _speak_sentence(sentence: str) -> None:
-        """Synthesize ONE sentence via Cartesia; write chunks to out_stream."""
+    async def _speak_segment(segment: Segment) -> None:
+        """Publish a segment's events, then synthesize its text via Cartesia."""
         nonlocal fsm_speaking_fired, out_stream
-        if not sentence.strip():
+        # Publish embodiment events FIRST — they lead the audio by the
+        # TTS synthesis latency (consumer side of NFR5). Fires even for
+        # a text-less, vocalization-only segment (e.g. a bare ``[nod]``)
+        # so a silent gesture still reaches the body.
+        await _publish_segment_events(publisher, emotion_cache, segment, turn_id)
+
+        text = segment.text
+        if not text.strip():
+            # No spoken audio for this segment (its events, if any, were
+            # published above). Don't open the stream or fire the
+            # speaking transition just for an eventless beat.
             return
-        # Fire the FSM transition right before the first sentence's
-        # first chunk lands — that's the "user hears the bot" moment.
+
+        # Fire the FSM transition right before the first segment's first
+        # chunk lands — the "user hears the bot" moment.
         if not fsm_speaking_fired:
-            # Story 5.5: signal the filler task that real audio is
-            # about to start. If the filler is still sleeping
-            # (threshold not yet expired), it returns immediately.
-            # If the filler is mid-playback, we wait for it to
-            # finish — guarantees its output stream is closed before
+            # Story 5.5: signal the filler task that real audio is about
+            # to start; await it so its output stream is closed before
             # we open ours.
             audio_started.set()
             await filler_task
             await fsm.on_first_audio_frame()
             fsm_speaking_fired = True
-            # Open the output stream now that the filler is done.
             with suppress_native_stderr():
                 out_stream = pa.open(
                     format=pyaudio.paInt16,
@@ -645,8 +692,8 @@ async def _stream_and_speak(
                     output=True,
                     output_device_index=indices.output_index,
                 )
-        log.info("tts.sentence_speak", text=sentence.strip())
-        async for chunk in tts.synthesize(sentence):
+        log.info("tts.sentence_speak", text=text.strip())
+        async for chunk in tts.synthesize(text):
             await asyncio.to_thread(out_stream.write, chunk)
 
     try:
@@ -656,34 +703,31 @@ async def _stream_and_speak(
             history=history,
         ):
             if isinstance(event, TalkerTextDelta):
-                text_buffer += event.text
+                # Accumulate the RAW reply (tags included) for history —
+                # the LLM sees its own tag format on subsequent turns.
                 full_text_parts.append(event.text)
-                # Drain complete sentences as they form. The while
-                # loop handles the case where one delta finishes
-                # multiple short sentences in one go.
-                while (sentence := _extract_sentence(text_buffer)) is not None:
-                    text_buffer = text_buffer[len(sentence) :]
-                    await _speak_sentence(sentence)
+                # Feed the delta through the segmenter; publish + speak
+                # each segment it yields.
+                for segment in segmenter.consume(event.text):
+                    await _speak_segment(segment)
             else:
                 # Discriminated union: only TalkerStreamEnd remains
                 # after the TalkerTextDelta branch above. Pyright
                 # narrows this without the explicit isinstance check.
                 tool_calls = list(event.tool_calls)
 
-        # Stream finished. Speak any leftover buffered text — the
-        # final sentence often lacks a trailing space (LLM's last
-        # token).
-        if text_buffer.strip():
-            await _speak_sentence(text_buffer)
+        # Stream finished. Drain the segmenter's final partial segment
+        # (the last sentence often lacks a trailing terminator/space).
+        for segment in segmenter.flush():
+            await _speak_segment(segment)
 
-        # If the LLM produced no text at all (tool-call-only reply),
-        # we never fired ``on_first_audio_frame`` and never opened the
-        # output stream. Fire the FSM transition + await the filler
-        # task (in case it's still running) so the caller's
-        # ``on_last_audio_frame`` lands cleanly. Story 5.5: the filler
-        # await is what handles the "Talker emitted only tools, but a
-        # filler is mid-playback" edge case — the filler still gets
-        # to finish its play before we yield control.
+        # If the LLM produced no spoken text (tool-call-only reply, or a
+        # reply that was all stripped tags), we never fired
+        # ``on_first_audio_frame`` and never opened the output stream.
+        # Fire the FSM transition + await the filler task (in case it's
+        # still running) so the caller's ``on_last_audio_frame`` lands
+        # cleanly. Story 5.5: the filler await handles the "Talker
+        # emitted only tools, but a filler is mid-playback" edge case.
         if not fsm_speaking_fired:
             audio_started.set()
             await filler_task
@@ -706,6 +750,6 @@ async def _stream_and_speak(
 # Story 5.5 removed ``_speak`` — the only callers were the three
 # deterministic-text surfaces (greeting/goodbye/clarification) which
 # now play from cached WAVs via ``audio.cached.play_cached``. Real
-# Talker replies stream per-sentence through ``_speak_sentence``
+# Talker replies stream per-segment through ``_speak_segment``
 # (defined inside ``_stream_and_speak`` above) — the streaming path
 # was always the production surface for conversational replies.
