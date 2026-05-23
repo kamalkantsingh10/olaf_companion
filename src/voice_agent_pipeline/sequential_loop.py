@@ -573,6 +573,20 @@ async def _record_with_vad(
         stream.close()
 
 
+def _is_speakable(text: str) -> bool:
+    """True iff ``text`` has content Cartesia will synthesize (≥1 alnum char).
+
+    Cartesia returns a 400 ("transcript is empty or contains only
+    punctuation") for empty / whitespace / punctuation-only text. The
+    :class:`Segmenter` splits on EVERY terminator, so streams like
+    ``"Wait..."`` or ``"Really?!"`` — or a stripped non-TTS vocalization
+    like ``"[nod]."`` — yield punctuation-only segments (``"."`` / ``"!"``)
+    that must be skipped for TTS. Their embodiment events (if any) still
+    publish; there is simply no audio to render for that beat.
+    """
+    return any(ch.isalnum() for ch in text)
+
+
 async def _publish_segment_events(
     publisher: EventPublisher,
     cache: LastPublishedCache,
@@ -668,10 +682,13 @@ async def _stream_and_speak(
         await _publish_segment_events(publisher, emotion_cache, segment, turn_id)
 
         text = segment.text
-        if not text.strip():
-            # No spoken audio for this segment (its events, if any, were
-            # published above). Don't open the stream or fire the
-            # speaking transition just for an eventless beat.
+        if not _is_speakable(text):
+            # No speakable audio — empty, whitespace, or punctuation-only
+            # (e.g. a stripped ``[nod]``, or a ``"."`` split out of
+            # ``"Wait..."``). Cartesia 400s on a punctuation-only
+            # transcript. The segment's events (if any) were published
+            # above; just don't open the stream or fire the speaking
+            # transition for an eventless/audio-less beat.
             return
 
         # Fire the FSM transition right before the first segment's first

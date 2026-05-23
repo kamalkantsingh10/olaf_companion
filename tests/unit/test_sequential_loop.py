@@ -22,7 +22,7 @@ from voice_agent_pipeline.config.expression_map import (
 from voice_agent_pipeline.publisher.log_adapter import LogEventPublisher
 from voice_agent_pipeline.schemas.speech_emotion_event import SpeechEmotionEvent
 from voice_agent_pipeline.schemas.vocalization_event import VocalizationEvent
-from voice_agent_pipeline.sequential_loop import _publish_segment_events
+from voice_agent_pipeline.sequential_loop import _is_speakable, _publish_segment_events
 from voice_agent_pipeline.splitter.mapping import (
     LastPublishedCache,
     SpeechEmotionPayload,
@@ -147,3 +147,22 @@ async def test_real_segmenter_stream_drives_emotion_and_vocalization_publishes()
     vocs = [e.payload.tag for _, e in pub.published if isinstance(e, VocalizationEvent)]
     assert emotions == ["excited"]
     assert vocs == ["sigh"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hello there.", True),
+        ("3.14 is pi", True),
+        ("café", True),  # non-ASCII letters count
+        ("", False),
+        ("   ", False),
+        (".", False),  # the "Wait..." split-out case that 400'd Cartesia
+        ("...", False),
+        ("?!", False),
+        (" . ", False),
+    ],
+)
+def test_is_speakable_skips_empty_and_punctuation_only(text: str, expected: bool) -> None:
+    """Guards the Cartesia "empty or punctuation-only transcript" 400."""
+    assert _is_speakable(text) is expected
