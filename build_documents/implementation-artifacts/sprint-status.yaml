@@ -137,15 +137,26 @@ development_status:
   # 5-5 was added 2026-05-12 (cached audio for deterministic phrases:
   # greetings, goodbyes, clarifications, thinking fillers). Must land
   # BEFORE 5-4 — the soak measures NFR1 latency + Cartesia cost baselines,
-  # which 5-5 changes substantially. Numerical ordering here is historical
-  # (5-1..5-4 originally, 5-5 inserted); execution order is
-  # 5-1 → 5-2 → 5-3 → 5-5 → 5-4.
+  # which 5-5 changes substantially.
   #
-  # 2026-05-28 note: 5-5 remains v1's shipping perceived-latency-masking
-  # surface. Epic 6 (post-v1) supersedes 5-5's *filler design* but reuses
-  # the cached-audio infrastructure it ships — see epics.md Story 5.5
-  # supersession note.
+  # 2026-05-28 RE-SEQUENCING (no label change): Epic 6 (v2 expression
+  # upgrades) also changes NFR1 / NFR4 / NFR5 substantially — DR-001
+  # projects ~3.0s → ~1.7-2.0s median end-of-speech → real-answer, plus
+  # introduces emphasis as the 7th vocalization tag. If Story 5-4's soak
+  # runs before Epic 6, it measures a baseline about to be replaced.
+  # By the same logic that put 5-5 before 5-4, Epic 6 also goes before 5-4.
+  # PRD / architecture / brief continue to label Epic 6 as "v2 work" — this
+  # is execution sequencing only, not a re-scope.
+  #
+  # EXECUTION ORDER (v1 finish line):
+  #   5-1 → 5-2 → 5-3 → 5-5 → Epic 6 (6.1 → 6.2 ∥ 6.3 → 6.4) → 5-4
+  #
+  # 5-5 is at 'review'; Epic 6 stories at 'backlog'. Epic 6 supersedes
+  # 5-5's *filler design* (cached-audio infrastructure is REUSED — see
+  # epics.md Story 5.5 supersession note + Epic 6 §Status). The combined
+  # post-Epic-6 system is what 5-4's 7-day soak validates.
   5-5-cached-audio-deterministic-phrases: review
+  # 5-4 runs LAST, after Epic 6 lands — see Epic 5 execution-order note above.
   5-4-soak-tuning-and-v1-signoff: backlog
   epic-5-retrospective: optional
 
