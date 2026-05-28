@@ -189,7 +189,7 @@ development_status:
   # See: decision-records.md §DR-001 + §DR-002 + §DR-004 + epics.md §Epic 6.
   epic-6: in-progress
   6-1-cartesia-websocket-and-ttfb-spike: ready-for-dev
-  6-2-cached-opener-system-and-cartesia-overlap: backlog
+  6-2-cached-opener-system-and-cartesia-overlap: ready-for-dev
   6-3-emphasis-vocalization-wiring: backlog
   6-4-instrumentation-soak-embodiment-brief: backlog
   epic-6-retrospective: optional
