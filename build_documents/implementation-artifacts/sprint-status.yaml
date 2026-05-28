@@ -191,7 +191,7 @@ development_status:
   6-1-cartesia-websocket-and-ttfb-spike: ready-for-dev
   6-2-cached-opener-system-and-cartesia-overlap: ready-for-dev
   6-3-emphasis-vocalization-wiring: ready-for-dev
-  6-4-instrumentation-soak-embodiment-brief: backlog
+  6-4-instrumentation-soak-embodiment-brief: ready-for-dev
   epic-6-retrospective: optional
 
   # ───────────────── v1.5 Backlog (Post-v1) ─────────────────
