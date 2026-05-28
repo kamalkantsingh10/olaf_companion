@@ -3,7 +3,7 @@
 **Parent project:** OLAF Companion (Personal Voice Agent)
 **Status:** Spec phase (no implementation yet)
 **Author:** Kamal
-**Last updated:** 2026-05-10
+**Last updated:** 2026-05-28
 **Audience:** LLM coding partner (Claude Code) implementing the embodiment service, plus humans who will fork or extend it
 **Pairs with:** [voice-agent-pipeline-brief.md](voice-agent-pipeline-brief.md) — the publisher side. This brief is written *to* the wire that brief defines.
 
@@ -47,7 +47,7 @@ The architectural decisions that an LLM implementing this component must not vio
 2. **Renderer mapping is data, in the embodiment repo, keyed on canonical names.** `embodiment_map.yaml` (schema name TBD by embodiment author) maps each first-class emotion / mood / activity / vocalization to whatever the body needs. Pre-schema-3 a chunk of this lived as `expression_data:` blocks inside the *pipeline's* `expression_map.yaml`, shipped on the wire — that was the boundary violation the schema-3 repair undid (see [sprint-change-proposal-2026-05-10.md](sprint-change-proposal-2026-05-10.md)). The mapping has come home.
 3. **Animation timing is owned consumer-side.** The pipeline anchors `speech_emotion` events to audio frames and ships them ~30–80ms ahead of the matching audio (NFR5). Embodiment treats those as *target states* to interpolate toward; ease curves, overshoot, settle-time tuning, and idle return are all consumer choices. The pipeline does not specify "how to nod"; embodiment does.
 4. **Disambiguate by topic, not by name, when names overlap.** `mood` and `speech_emotion` share three names by accident of vocabulary — `happy`, `curious`, `excited` appear in both. They mean different things at different timescales: mood is slow disposition (≤4 publishes/hour, NFR31); speech_emotion is per-segment, audio-anchored, high-cadence. The renderer mapping keys these separately (`mood.happy → ambient_warm_breathe`, `speech_emotion.happy → quick_smile_with_audio`).
-5. **Vocalizations split into audio-bursts vs gesture-cues.** `tts_supported: true` (audio bursts: `laughter`, `sigh`, `gasp`, `clears_throat`) means Cartesia rendered or attempted-to-render the audio; embodiment's job is the *visual* accompaniment (open mouth on laugh, shoulder drop on sigh) plus optional fallback audio when `tts_supported: false`. `tts_supported: false` for gesture cues (`nod`, `shake`) is unambiguous: never play audio for these — they are head movements, period. Adding audio to `[nod]` would be a defect.
+5. **Vocalizations split into audio-bursts vs gesture-cues.** `tts_supported: true` (audio bursts: `laughter`, `sigh`, `gasp`, `clears_throat`) means Cartesia rendered or attempted-to-render the audio; embodiment's job is the *visual* accompaniment (open mouth on laugh, shoulder drop on sigh) plus optional fallback audio when `tts_supported: false`. `tts_supported: false` for gesture cues (`nod`, `shake`, and **`emphasis`** added in v2 per DR-004) is unambiguous: never play audio for these — they are head movements, period. Adding audio to `[nod]` (or `[emphasis]`) would be a defect. **`emphasis` is the v2 punctuated head-cue** triggered by the Talker's emphasis marks (the prosodic stress lives in the carrier word's audio that Cartesia renders; the embodiment-side nod-like beat is added at the word's audio anchor — same wire shape as `nod`/`shake`, additive Literal extension, no `schema_version` bump).
 6. **Fail-fast on missing dependencies (v1).** No DDS connection? Crash. Missing `embodiment_map.yaml`? Crash. Servo bus offline? Crash. systemd restarts. Same posture as the pipeline (CLAUDE.md rule #4). v2 adds a graceful-degradation layer.
 
 ## Stakeholders & Consumers
@@ -91,6 +91,76 @@ A body feels *alive* when these hold:
 - Hailo-8L acceleration for any on-body inference (gaze tracking, face detection, expression classifier). Justified only if a measured workload needs it.
 - Resilience layer (reconnect-with-backoff on DDS drop, graceful degradation on hardware faults, mood persistence across restarts).
 - Multi-OLAF orchestration (two bodies sharing a personality).
+
+## v2 head-motion realizer (DR-002 frozen design — implementation pending pipeline Epic 7)
+
+When the pipeline ships Epic 7 (Cartesia WebSocket + LLM emphasis marks +
+`emphasis` as the 7th vocalization tag — DR-002 + DR-004), embodiment gains
+its head-motion contract. The frozen design is a **layered model**; the
+realizer is built consumer-side per the producer/consumer split (pipeline
+ships data, body owns animation).
+
+**Layered model (DR-002 §Decision frozen):**
+
+1. **Base orientation — pluggable input.** Scripted idle / look-around for
+   v2; **camera gaze-following is a parked extension** (the OAK-D is
+   mounted but the gaze-tracker is post-v2). The base-orientation source is
+   designed as a pluggable seam so reviving gaze later is a source swap,
+   not a rewrite. While scripted, the base provides a slow drift the
+   overlays modulate.
+2. **Rhythm — stochastic, body-side.** DR-004's resolution drops per-word
+   rhythm timing from the wire. The body's render loop produces sparse,
+   stochastic micro-movements consistent with the perceived speech rate
+   (driven by recent event cadence) and the current `mood` / `activity`
+   ambient. **Most words: nothing.** This is the research-supported way
+   to avoid the bobblehead failure mode.
+3. **Emphasis — punctuated head-beat.** Each
+   `vocalization(tag="emphasis", audio_frame_id=...)` event lands as a
+   crisp nod-like beat at the audio anchor, anticipatory by 30–80 ms
+   (NFR5). Amplitude scales by current `speech_emotion` (e.g. higher
+   amplitude on `excited` than on `sad`) and by `mood` (e.g. quieter on
+   `sleepy` than on `playful`). This is the body's join — the pipeline
+   ships only the timing + tag; the body chooses *how* to nod.
+4. **Style + amplitude — `speech_emotion` overlay.** The current
+   `speech_emotion` event modulates the global amplitude / posture
+   character (e.g. tilted head on `curious`, recoil on `scared`). Returns
+   to mood-base after >3 s of silence at `activity=listening`.
+5. **Explicit gestures — `[nod]` / `[shake]` events.** Punctuated big
+   nods / shakes on those vocalizations; separate from emphasis (bigger,
+   slower, longer hold).
+6. **Anticipation, stochasticity, multi-axis.**
+   - **Anticipatory.** All audio-anchored cues fire 30–80 ms before their
+     audio anchor (NFR5 window). Research suggests head motion that
+     *leads* the utterance reads as more natural.
+   - **Stochastic.** No metronome. Add small random jitter to anticipation
+     timing, amplitude, and the rhythm-substrate placement.
+   - **Multi-axis.** Don't pin all motion to a single nod axis. Layer
+     small tilts (phrase boundaries — derivable from segment cadence)
+     and turns (mood-shifts on the slow scale) on top of the primary
+     nod-axis emphasis cues.
+
+**Eyes — separate procedural channel.** Pupil movement, blink rate,
+look-away-while-`thinking`, glance-on-user-speech are driven body-side off
+`activity` + `speech_emotion` events. No camera input, no new pipeline
+data. Same producer/consumer split as the head channel.
+
+**What stays in scope for v2 (body):**
+- Servo / actuator drivers for nod + tilt + turn (multi-axis).
+- Eye-display drivers (pupil position + blink + base state).
+- Rhythm substrate generator (stochastic, mood-modulated).
+- Emphasis-beat realizer (nod-like, scaled by `speech_emotion` + `mood`).
+- Anticipation timing relative to `audio_frame_id`.
+- Idle ambient + return-to-neutral on `activity=listening` silence.
+
+**What's parked for later (DR-002 §"Parked extension"):**
+- Camera gaze-following via OAK-D — when revived, becomes the base-orientation
+  source. Reintroduces gaze↔speech servo arbitration, head-mounted camera
+  active-vision coupling, and gaze-aversion-while-thinking. OAK-D's on-device
+  VPU likely removes the need for the brief's proposed Hailo-8L for this
+  workload.
+- Mouth / jaw lip-sync via `phoneme_timestamps` — would warrant its own
+  decision record; likely its own dedicated topic given the high cadence and
+  distinct semantics.
 
 ## Deployment Platform
 
@@ -245,14 +315,14 @@ class VocalizationPayload(BaseModel):
 
 | Field | Type | Notes |
 |---|---|---|
-| `tag` | `str` | v1 set: `laughter`, `sigh`, `gasp`, `clears_throat` (audio bursts), `nod`, `shake` (gesture cues). |
+| `tag` | `str` | v1 set: `laughter`, `sigh`, `gasp`, `clears_throat` (audio bursts), `nod`, `shake` (gesture cues). **v2 (Epic 7 / DR-004) adds `emphasis`** as a 7th gesture-cue tag — the prosodic-stress head-cue, sourced from the Talker's emphasis marks × Cartesia word timestamps; `tts_supported: false` (the audio stress lives in the carrier word that Cartesia renders, not in a separate asset). Additive Literal extension; `schema_version` stays at 3. |
 | `audio_frame_id` | `str \| None` | Same NFR5 anchor as `speech_emotion`. |
 | `tts_supported` | `bool` | `true` → Cartesia rendered audio; embodiment adds a *visual* accompaniment (open mouth on laugh, shoulder drop on sigh). `false` → Cartesia did NOT render audio; embodiment is fully responsible — either play its own audio asset OR (for `nod`/`shake`) render a silent gesture only. |
 
 **The `tts_supported=false` policy split:**
 
 - For **audio bursts** (`sigh`, `gasp`, `clears_throat` in v1): embodiment MAY supply its own audio asset (a recorded sigh sample, etc.) on top of the visual cue. Optional.
-- For **gesture cues** (`nod`, `shake`): embodiment MUST NOT play audio. They are visual gestures; emitting a "yes" or "no" sound would conflict with the LLM's text — which already says yes / no in words on the same line.
+- For **gesture cues** (`nod`, `shake`, and **`emphasis`** in v2): embodiment MUST NOT play audio. They are visual gestures or head-beats; emitting a "yes" / "no" sound would conflict with the LLM's text, and emphasis is *already* acoustically rendered by Cartesia on the carrier word — adding an emphasis sound would double up.
 
 **Lifecycle for embodiment:**
 - Volatile, depth=8.
@@ -267,6 +337,28 @@ If the embodiment author has read pre-2026-05-10 versions of the pipeline docs a
 - **`expression_map.yaml`'s `emotions:` block is now a list of canonical names**, not a mapping-of-EmotionEntry. Embodiment doesn't need to read this file — it's a pipeline-internal vocabulary. Embodiment maintains its OWN `embodiment_map.yaml` (or whatever shape it chooses) keyed on the same canonical names.
 - **Two new vocalization tags** `nod` and `shake` (gesture cues, `tts_supported: false`). The pipeline's Talker prompt teaches the LLM to emit them on clear affirmatives / negatives.
 - **`schema_version` bumped 2 → 3.** Lockstep across `setup.toml`, `expression_map.yaml`, `EventEnvelope`. Embodiment must reject events at any other version.
+
+**v2 deltas (Epic 7 — additive, no `schema_version` bump per CLAUDE.md rule 6):**
+
+- **7th vocalization tag `emphasis`** added per DR-004. `tts_supported: false`.
+  Sourced from the Talker's emphasis marks × Cartesia word timestamps (the
+  pipeline performs the join; the body receives one audio-anchored event per
+  emphasis). Embodiment renders it as a punctuated head-beat — see §"v2
+  head-motion realizer" below.
+- **No new topics.** DR-002's earlier lean (per-segment timing payload, new
+  audio-anchored field/topic) is closed by DR-004 — emphasis collapses to the
+  existing `vocalization` topic. Per-word rhythm timing is NOT shipped on the
+  wire; the body owns rhythm-substrate stochastically.
+- **No `SpeechEmotionPayload` change.** Style / amplitude scaling for the
+  emphasis cue is a consumer-side join of `speech_emotion` (current style) +
+  `mood` (current base) at the body's render time.
+- **Schema stays at 3.** The `vocalization` tag set grows from 6 → 7
+  (additive Literal extension); subscribers updated to ignore unknown tags
+  forward-compat survive an even-larger set, but a v1 embodiment built
+  against the 6-tag set will silently miss `emphasis` events — the brief's
+  §"Renderer-mapping vocabulary lag" risk applies, mitigated by the
+  `embodiment.unmapped_vocalization` WARN log discipline and the
+  `default_vocalization` fallback pose recommended below.
 
 ---
 
@@ -350,8 +442,9 @@ activity:
   going_to_sleep:  { posture: head_dropping, eye_state: closing,       led: warm_fade_out }
 
 # Vocalization → punctual gesture / audio cue.
-# All 6 canonical vocalization tags MUST be covered (laughter, sigh, gasp,
-# clears_throat, nod, shake).
+# v1 set: 6 canonical tags (laughter, sigh, gasp, clears_throat, nod, shake).
+# v2 (Epic 7): + emphasis (gesture cue; head-beat scaled by speech_emotion + mood).
+# All present-version tags MUST be covered; startup loader rejects gaps.
 vocalization:
   laughter:        { gesture: shoulder_bob,    audio_asset: null,         visible_only: false }
   sigh:            { gesture: shoulder_drop,   audio_asset: "sigh.wav",   visible_only: false }
@@ -359,6 +452,11 @@ vocalization:
   clears_throat:   { gesture: head_tilt_brief, audio_asset: "ahem.wav",   visible_only: false }
   nod:             { gesture: head_nod,        audio_asset: null,         visible_only: true }
   shake:           { gesture: head_shake,      audio_asset: null,         visible_only: true }
+  # v2 — Epic 7 / DR-004:
+  emphasis:        { gesture: head_beat,       audio_asset: null,         visible_only: true,
+                     # Beat amplitude scales by current speech_emotion + mood;
+                     # consumer-side join — pipeline ships timing + tag only.
+                     amplitude_source: "speech_emotion+mood" }
 ```
 
 `visible_only: true` is the gesture-cue invariant — embodiment MUST NOT play audio for these tags even if `audio_asset` is later configured. Validation at load time.
@@ -373,8 +471,8 @@ The embodiment loader, on startup:
    - All 8 `Mood` values covered under `mood:`.
    - All 7 `ActivityState` values covered under `activity:` (with both `working_submode` values nested under `working:`).
    - All 12 first-class `speech_emotion` names covered under `speech_emotion:`.
-   - All 6 `vocalization` tags covered under `vocalization:`.
-4. **Asserts `visible_only: true` on `nod` and `shake`** — startup blocker if either is missing the flag.
+   - All canonical `vocalization` tags covered under `vocalization:` — **v1: 6 tags** (`laughter`, `sigh`, `gasp`, `clears_throat`, `nod`, `shake`); **v2: 7 tags** (add `emphasis` per DR-004). Once the pipeline-side wire change lands, gaps are startup-blockers; before then, an unmapped `emphasis` event surfaces as `embodiment.unmapped_vocalization` WARN with a `default_vocalization` fallback pose.
+4. **Asserts `visible_only: true` on `nod`, `shake`, and (v2) `emphasis`** — startup blocker if any of the gesture-cue tags is missing the flag.
 5. Connects DDS, subscribes to all four topics on the configured domain.
 6. Runs through the hardware adapters' `connect()` methods in sequence; any failure is fatal.
 7. On all green, transitions to `running` and starts the animation loop.

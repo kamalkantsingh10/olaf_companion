@@ -3,7 +3,7 @@
 **Parent project:** OLAF Companion (Personal Voice Agent)
 **Status:** Design phase
 **Author:** Kamal
-**Last updated:** 2026-05-06
+**Last updated:** 2026-05-28
 **Audience:** LLM coding partner (Claude Code) implementing the component
 
 ---
@@ -150,12 +150,16 @@ A conversation feels alive when these hold:
 Phase 3 is the v1 finish line. Beyond v1, the design intentionally leaves room for:
 
 - **v1.5:** Barge-in (deferred from v1), expanded `working` sub-modes (`searching`, `tooling`, `composing`), cross-restart mood persistence, configurable idle auto-sleep
+- **v2 expression cluster (DR-001/002/003/004, design-pass 2026-05-28; full PRD + epics promotion at `prd.md` §"Conversational Openers (v2)" / §"Speech Timing & Emphasis (v2)" + `epics.md` Epics 6 + 7):**
+  - **Conversational openers replace timer fillers** (DR-001 → Epic 6). Cached function-bucketed openers chosen by the Talker's first-token tag, overlapped with the real answer's Cartesia synthesis. Deletes the v1 serialization tax. Supersedes Story 5.5's filler design.
+  - **Speech-synchronized head motion** (DR-002 → Epic 7). Cartesia SSE→WebSocket migration with word `timestamps`; LLM emphasis marks; **emphasis joins as the 7th vocalization tag** per DR-004 (same audio-anchored, body-renders-it semantics as `[nod]`/`[shake]`, additive — `schema_version` stays at 3). Body-side head/eye realizer lives in `olaf-embodiment` per its brief.
+  - **Live interaction dashboard** (DR-003). Separate consumer project that tails the structured INFO log — zero pipeline change; a versioned `events.jsonl` sink is the promotion path if log-format coupling bites.
 - Tertiary emotion mappings for full Cartesia vocabulary (v2)
 - Intensity scaling once Cartesia exposes it
 - Telephony / SIP transport for remote conversations
 - On-device TTS when a model that meets the quality bar runs on Pi
 - Alternative channel adapters (Zenoh, NATS, WebSocket bridge) — Protocol-based publisher means consumers don't change
-- OAK-D camera input feeding user-expression signals back to the orchestrator (separate component, but the pipeline's narrow scope must survive the addition)
+- OAK-D camera input feeding user-expression signals back to the orchestrator (separate component, but the pipeline's narrow scope must survive the addition). DR-002 parks this as a *future base-orientation source* for the embodiment head realizer once the v2 layered model is in place.
 
 The component is meant to be **stable, narrow, and replaceable**. The contracts that must survive any future rewrite are:
 

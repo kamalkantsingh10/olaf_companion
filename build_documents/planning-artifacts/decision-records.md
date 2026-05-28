@@ -13,7 +13,175 @@ supersession in both).
 **Promotion path.** These records are *rationale*, not a plan. A frozen record
 feeds a deliberate **design pass → PRD update → epics/stories** — it is not turned
 into epics directly. DR-001/002/003 (the v2 expression work) are captured here and
-**scheduled for later**; none are in the current sprint.
+**scheduled for later**; none are in the current sprint. The 2026-05-28 design pass
+promoted them in-place to PRD §"Conversational Openers (v2)" + §"Speech Timing &
+Emphasis (v2)" and epics.md Epics 6 + 7; DR-004 (below) is the small follow-on record
+that closed DR-002's open wire-shape question during that pass.
+
+---
+
+## DR-004 — Emphasis renders as a 7th vocalization tag (closes DR-002 wire shape)
+
+- **Date:** 2026-05-28
+- **Status:** Frozen 2026-05-28
+- **Author:** Kamal (with Claude as design-pass partner)
+- **Closes:** DR-002 §"Options & tradeoffs Fork 3" + §"Open questions" — the wire
+  shape for the per-segment timing + emphasis payload. DR-002's *layered head-motion
+  model* and *prosody-rhythm-from-Cartesia-timestamps + LLM-marked emphasis*
+  decisions stand; only the *wire shape that delivers emphasis to the body* is what
+  this record settles.
+- **Touches:** `expression_map.yaml` (`vocalizations:` list grows 6 → 7),
+  `schemas/vocalization_event.py` (Literal extension), `splitter/segmenter.py`
+  (emit `vocalization(tag="emphasis")` at the matched word's audio anchor),
+  `tts/cartesia.py` (WebSocket `timestamps` capture, still required), Talker
+  system prompt (emphasis-mark syntax), `olaf-embodiment-brief.md` Appendix A.7
+  (vocabulary completeness).
+
+### Summary
+
+DR-002 left the wire shape as an open question with three candidate forms (per-word
+TimingPayload on a new topic / extension of `vocalization` / extension of
+`speech_emotion`). The 2026-05-28 design pass collapsed them by recognising that
+emphasis is structurally identical to `[nod]`/`[shake]`/`[laugh]` — a punctuated,
+audio-anchored, body-renders-it cue. So **emphasis becomes the 7th vocalization
+tag** (`tts_supported: false`), the per-segment timing payload disappears from
+the wire, and the schema stays at version 3 (additive vocabulary, no bump per
+CLAUDE.md rule 6).
+
+### Context — what DR-002 left open
+
+DR-002 froze the **layered head-motion model** (base → rhythm → emphasis → style
+→ explicit gestures → anticipation → stochasticity) and the **Cartesia
+WebSocket** migration that delivers word `timestamps`. It also leaned toward a
+**per-segment timing + emphasis payload** that the body would consume to schedule
+beats locally (Fork 3). The exact wire shape was flagged in *Open questions* and
+*Consequences* — "likely a new audio-anchored field/topic; check CLAUDE.md rule 6
+(optional fields are forward-compat; a new topic is not a `schema_version` bump
+by itself)."
+
+### What the design pass surfaced
+
+Two collapses on inspection:
+
+1. **The body must not move on every word — that's the bobblehead failure mode
+   DR-002 explicitly rejects.** Rhythm-from-word-timestamps was framed as a
+   "beat skeleton," but the body's policy is *most words: nothing*. The
+   word-timing substrate is therefore decorative; the body can substitute its
+   own stochastic micro-timing and reach the same naturalness (research-supported
+   — naturalness comes from stochasticity, not literal word alignment).
+2. **Emphasis is structurally identical to existing vocalization cues.** Once
+   you drop the rhythm-substrate framing, what crosses the wire for head motion
+   is one signal per emphasis mark: "do a punctuated cue here, audio-anchored,
+   render at consumer discretion." That is exactly what `vocalization` already
+   carries for `[nod]`, `[shake]`, `[laugh]`, `[sigh]`, `[gasp]`,
+   `[clears_throat]`.
+
+| Property | Existing `vocalization` | Proposed `emphasis` cue |
+|---|---|---|
+| Cadence | per occurrence | per occurrence |
+| Audio-anchored (NFR5) | yes (`audio_frame_id`) | yes |
+| Producer renders text→audio? | yes when `tts_supported`; else no | no (`tts_supported: false`) |
+| Body decides motion shape | yes | yes |
+| Punctual / crisp | yes | yes |
+
+### Decision (frozen)
+
+Emphasis is a 7th vocalization tag.
+
+```python
+VocalizationTag = Literal[
+    "laughter", "sigh", "gasp", "clears_throat",   # audio bursts (pre-existing)
+    "nod", "shake",                                  # gesture cues (pre-existing, schema-3 boundary repair)
+    "emphasis",                                      # NEW — prosodic accent cue
+]
+```
+
+- `tts_supported: false` — the emphasis lives in the prosody of the carrier word
+  rendered by Cartesia (via the LLM's emphasis mark in the text stream), so no
+  separate audio asset. This mirrors `nod`/`shake` exactly.
+- The pipeline emits one `vocalization(tag="emphasis", audio_frame_id=...)`
+  event per emphasis mark, anchored to the word's Cartesia timestamp.
+- `expression_map.yaml`'s `vocalizations:` block grows 6 → 7.
+- `embodiment_map.yaml` (consumer-side) must cover `emphasis`; same
+  startup-blocker discipline as the other six tags.
+- **`schema_version` stays at 3** — additive Literal extension is forward-compat
+  per CLAUDE.md rule 6.
+
+### Rationale
+
+- **Smallest viable surface.** No new topic, no new payload field, no schema
+  bump, no per-word wire cadence. The 5th-topic / per-segment-TimingPayload
+  options that Fork 3 leaned toward (and the alternative additive-field options)
+  all proposed more wire than the body actually consumes.
+- **Semantic fit.** The vocalization topic's job description is "punctuated,
+  audio-anchored, body renders." Emphasis fits without smudging the boundary
+  (unlike adding timing arrays to `speech_emotion`, which already cadences
+  per-segment for *style* not *beat*).
+- **Sparse-but-alive motion density matches research.** With rhythm-as-data
+  dropped, per-sentence body motion is ~1–3 `speech_emotion` style updates +
+  1–2 emphasis nods + occasional `[nod]`/`[shake]` + mood-base ambient. That
+  matches co-speech-gesture research (~1 beat gesture per 1–2 prosodic phrases).
+  If soak proves too sparse, the lever is "prompt the LLM to mark more
+  liberally," not "ship more wire."
+- **Producer/consumer split preserved.** The pipeline ships *data it alone has*
+  (the join of LLM emphasis marks × Cartesia timestamps, resolved to one event
+  per emphasis at the word's audio anchor); the body owns *how to move*
+  (nod-shape, amplitude scaling by `speech_emotion` + `mood`, anticipation,
+  stochasticity, multi-axis).
+- **Cartesia WebSocket migration still pays off.** The SSE→WS swap is still
+  required — for the *internal* join (the pipeline needs `timestamps` to anchor
+  the emphasis event to the matched word), for DR-001's TTFB investigation, and
+  for any future use of `phoneme_timestamps` (mouth/jaw sync, v2+).
+
+### Tradeoffs accepted
+
+| Lost (vs Fork 3's per-segment payload) | Why acceptable |
+|---|---|
+| Body cannot use per-word rhythm timing data to phase its own micro-motion | The body's policy is "most words: nothing"; stochastic substitution gives equivalent naturalness (research-supported). |
+| If future work wants very-subtle per-word jitter modulated by word density (e.g., faster-speech → more eye micro-saccades), the data isn't on the wire | Can be re-added later additively (extra optional `word_count: int` on the vocalization, etc.) without a schema bump. Cross that bridge if soak reveals the need. |
+| Pipeline can't ship Cartesia `phoneme_timestamps` for v2 lip-sync via this channel | A future lip-sync project would warrant its own decision record and likely its own topic (high-cadence, distinct semantics). Out of scope here. |
+
+### Consequences / implementation notes
+
+- **Talker prompt** (`prompts/talker_system.md`): teach a single emphasis-mark
+  syntax (e.g., `*word*` or `<em>word</em>` — final syntax decided in the
+  Epic 7 story that wires the prompt). Constrain density toward "1–2 per
+  sentence; only words a thoughtful speaker would acoustically stress."
+- **Cartesia handling.** If Cartesia honors emphasis tags in its text input
+  (verify in the Epic 7 WS spike), pass the marked form through so the audio
+  *also* gets prosodic stress. If Cartesia ignores them, strip marks before
+  send — the body still nods correctly off the timestamp-joined event; only the
+  audio prosody is lost. Either outcome is functional.
+- **Splitter** (`splitter/segmenter.py`): the LLM's emphasis-marked text is
+  parsed pre-TTS (same path as existing vocalization tags); marked-word indices
+  are remembered and joined against Cartesia's `timestamps` from the WS stream;
+  the join produces one `vocalization(tag="emphasis", audio_frame_id=...)` per
+  emphasis at the word's anchor.
+- **Embodiment side** (`embodiment_map.yaml`): bind `emphasis` to a nod-like
+  beat; amplitude/style scale by current `speech_emotion` and `mood`. Startup
+  loader rejects an `embodiment_map.yaml` that doesn't cover `emphasis` once
+  schema rolls out — same discipline as the other six tags.
+- **Schema_version stays at 3.** Bump history continues: `1 → 2` (Story 3.4
+  topology change), `2 → 3` (sprint-change-proposal-2026-05-10 boundary repair).
+  This DR is additive (forward-compat per CLAUDE.md rule 6), no `3 → 4`.
+
+### Open questions
+
+- **Emphasis-mark syntax** (final form — `*word*` vs `<em>word</em>` vs custom).
+  Resolved by the Epic 7 prompt story; trivially reversible.
+- **Cartesia emphasis-input support.** The Epic 7 WS spike (which is also
+  DR-001's TTFB spike) confirms whether the marks survive to audio. Affects only
+  the *audio half* of the design; the body half works regardless.
+- **Emphasis density per turn.** Linguistic prior ≈ 1–2 per sentence with a
+  conservative prompt. Tune empirically during the Epic 7 soak; lever is the
+  prompt, not the wire.
+
+### Supersession
+
+This record **closes** DR-002's wire-shape open question. DR-002 itself is not
+superseded — its layered head-motion model, WS-migration decision, and
+single-host topology lean all remain frozen. Future records that change the
+emphasis wire shape would supersede DR-004; this record does not preclude that.
 
 ---
 

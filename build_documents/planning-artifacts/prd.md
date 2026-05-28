@@ -41,7 +41,7 @@ classification:
   complexity: medium
   projectContext: greenfield
   notes: Single-user personal voice agent on Raspberry Pi with Hailo-8L. Real-time audio + ROS 2 + LLM orchestration. No regulatory burden.
-lastEdited: '2026-05-06'
+lastEdited: '2026-05-28'
 editHistory:
   - date: '2026-05-06'
     summary: |
@@ -54,6 +54,26 @@ editHistory:
       (FR5, FR29, FR30, Journey 3) to v1.5. Stale "Anthropic" references replaced
       with "active Talker provider" per Story 2.2 provider-agnostic factory.
       Event schema_version bumped to 2 (breaking change to publish topology).
+  - date: '2026-05-28'
+    summary: |
+      v2 expression promotion (design pass for DR-001/002/003/004). Two new FR
+      clusters added: §"Conversational Openers (v2)" (FR54–FR58 — cached
+      function-bucketed openers replacing the v1 timer filler, LLM-tag selection,
+      Cartesia overlap deleting the serialization wait), and §"Speech Timing &
+      Emphasis (v2)" (FR59–FR62 — Cartesia SSE→WebSocket migration with word
+      `timestamps` capture, LLM emphasis marks, and emphasis-as-7th-vocalization-tag
+      per DR-004, plus single-host topology constraint). Three new NFRs: NFR33
+      (opener onset floor), NFR34 (dead-air-after-opener), NFR35 (latency
+      instrumentation backfill — fixes the `end_to_transcript_ms=0` placeholder).
+      FR15 gains a v2 WebSocket footnote; FR25 / vocalization tag set extends
+      from 6 → 7 (`emphasis`); §Observability gains a paragraph on the
+      external log-tail telemetry consumer (DR-003 boundary). §Vision (v2+)
+      enumerates the v2 expression items with DR back-references. v1 shipping
+      behavior is unchanged; Story 5.5 is marked superseded by Epic 6 post-v1
+      and remains the shipping path until then. `schema_version=3` is preserved
+      (additive vocabulary, no bump per CLAUDE.md rule 6). The currently-shipping
+      Story 5.5 filler remains v1's perceived-latency-masking surface; v2's
+      cached openers + overlap (Epic 6) replace it post-v1.
 ---
 
 # Product Requirements Document — voice-agent-pipeline
@@ -191,11 +211,35 @@ The component is "useful" when it can serve a multi-turn live conversation with 
 
 ### Vision (v2+)
 
+**v2 expression cluster** (frozen design records → in-PRD FR clusters above →
+Epics 6 + 7 in epics.md; scheduled post-v1 launch):
+
+- **Conversational openers replace timer fillers (DR-001 → Epic 6, FR54–FR58, NFR33–NFR35).**
+  Cached, function-bucketed openers selected by the Talker's first-token tag,
+  overlapped with the real answer's Cartesia synthesis. Supersedes the v1
+  Story 5.5 filler. Targets DR-001's empirically-decomposed v1 gap
+  (~3.0 s median end-of-speech → real answer) by deleting the
+  filler-serialization tax (~1 s free win) and closing the ~1.5 s dead-air
+  trailing the v1 filler.
+- **Speech-synchronized head motion via emphasis (DR-002 → Epic 7, FR59–FR62, DR-004).**
+  Cartesia SSE → WebSocket migration with word `timestamps` capture; LLM
+  emphasis marks in the text stream; emphasis joins as the 7th
+  `vocalization` tag (DR-004 — same audio-anchored, body-renders-it semantics
+  as `[nod]`/`[shake]`, additive, no `schema_version` bump). Embodiment-side
+  head/eye realizer lives in the `olaf-embodiment` sibling project.
+- **Live interaction dashboard (DR-003 → out of pipeline, separate consumer).**
+  A separate consumer project tails the structured INFO log to render
+  turn-by-turn transcript / response / expression / latency. Zero pipeline
+  change in v2; an `events.jsonl` structlog sink is the promotion path if
+  log-format coupling bites.
+
+**Other vision items (not part of the v2 expression cluster):**
+
 - Telephony / SIP transport for remote conversations (currently local-only)
 - On-device TTS once a model meeting the quality bar runs on Pi (removes Cartesia cloud dependency)
 - WebRTC transport for browser-based interaction
 - Emotion intensity scaling once Cartesia exposes it for sustained emotions
-- Integration point for OAK-D camera-driven user-expression signals (separate component, but the pipeline's narrow scope must accommodate)
+- Integration point for OAK-D camera-driven user-expression signals (separate component, but the pipeline's narrow scope must accommodate). DR-002 parks this as a *future base-orientation source* for the head realizer once the v2 layered model is in place.
 
 ## Project Scoping & Phased Development
 
@@ -601,7 +645,7 @@ Personal-project scale, not a fleet:
 
 ### Voice Synthesis
 
-- **FR15**: The pipeline can stream Cartesia-tagged text to Cartesia Sonic-3 and receive audio frames in response.
+- **FR15**: The pipeline can stream Cartesia-tagged text to Cartesia Sonic-3 and receive audio frames in response. *(v2 — Epic 7: transport migrates from SSE to **WebSocket** to capture `timestamps` events; see FR59. v1 ships on SSE.)*
 - **FR16**: The pipeline can degrade gracefully when Cartesia is unreachable, entering a text-only mode signaled by a sad-emotion OLAF expression and a logged error.
 - **FR17**: The pipeline can use a configurable Cartesia voice ID and default emotion.
 
@@ -614,7 +658,7 @@ Personal-project scale, not a fleet:
 - **FR22**: The pipeline can attach `speech_emotion` and `vocalization` event metadata to the matching Cartesia audio frame, ensuring audio-anchored events publish in lockstep with audio.
 - **FR23**: The pipeline can publish `speech_emotion` events to ROS 2 on `/olaf/speech_emotion`, anchored to audio frame send time, achieving 30–80ms anticipatory alignment with voice (NFR5).
 - **FR24**: The pipeline can suppress republishing of unchanged `speech_emotion` values via a "last published" cache (turn-scoped, reset at `activity → listening`), while always publishing `vocalization` events.
-- **FR25**: The pipeline can publish `vocalization` events (e.g. `[laugh]`, `[sigh]`) to ROS 2 on `/olaf/vocalization`, deciding per-tag whether to also pass the tag to Cartesia (when Cartesia supports it) or strip it from the TTS text. Vocalization source: LLM-emitted inline tags parsed pre-TTS (Cartesia-emitted bursts are not v1).
+- **FR25**: The pipeline can publish `vocalization` events (e.g. `[laugh]`, `[sigh]`, `[nod]`, `[shake]`) to ROS 2 on `/olaf/vocalization`, deciding per-tag whether to also pass the tag to Cartesia (when Cartesia supports it) or strip it from the TTS text. Vocalization source: LLM-emitted inline tags parsed pre-TTS (Cartesia-emitted bursts are not v1). *(v2 — Epic 7: a 7th tag `emphasis` joins the set per DR-004 — same audio-anchored, body-renders-it semantics as `nod`/`shake`; sourced from the LLM's emphasis marks × Cartesia word timestamps. Additive Literal extension; `schema_version` stays at 3 per CLAUDE.md rule 6.)*
 
 ### Lifecycle State Management
 
@@ -641,7 +685,85 @@ Personal-project scale, not a fleet:
 
 - **FR51**: The pipeline publishes events on four topics — `mood`, `activity`, `speech_emotion`, `vocalization` — via an `EventPublisher` Protocol. The v1 implementation publishes to ROS 2 (DDS) on `/olaf/{topic}`; a fake/log adapter exists for tests. Adding alternative channel adapters (Zenoh, NATS, WebSocket) requires no consumer-side changes.
 - **FR52**: Every event on every topic carries a common envelope: `timestamp` (UTC ISO8601), `schema_version` (integer; bumped only on breaking changes per CLAUDE.md rule 6), `source` (component name string), `correlation_id` (UUID — turn-scoped for audio-anchored events, session-scoped for `mood`/`activity`), and `payload` (topic-specific Pydantic model).
-- **FR53**: The event envelope's `schema_version` for this PRD direction is **3**. Bump history: `1 → 2` (Story 3.4 — single `/olaf/expression` channel replaced by four-topic publish); `2 → 3` (sprint-change-proposal-2026-05-10 — `SpeechEmotionPayload.expression_data` removed to repair the consumer-agnostic publisher boundary; embodiment vocabulary is now consumer-side, keyed on the canonical emotion name). Consumers of any prior `schema_version` must be migrated; the pipeline will not run in dual-emit mode.
+- **FR53**: The event envelope's `schema_version` for this PRD direction is **3**. Bump history: `1 → 2` (Story 3.4 — single `/olaf/expression` channel replaced by four-topic publish); `2 → 3` (sprint-change-proposal-2026-05-10 — `SpeechEmotionPayload.expression_data` removed to repair the consumer-agnostic publisher boundary; embodiment vocabulary is now consumer-side, keyed on the canonical emotion name). Consumers of any prior `schema_version` must be migrated; the pipeline will not run in dual-emit mode. *(v2 — DR-004: adding the 7th `vocalization.emphasis` tag is forward-compat and does **not** bump `schema_version` per CLAUDE.md rule 6.)*
+
+### Conversational Openers (v2 — Epic 6, promotes DR-001)
+
+> **Scheduling:** v2 work; not in the current sprint. v1 ships with Story 5.5's
+> timer-fired random mood-keyed filler (`audio/filler.py`) as the shipping
+> perceived-latency-masking surface. The cluster below replaces that design for
+> v2 per DR-001's "supersedes" annotation. Numbers cited (~0.6 s onset, ~3.0 s
+> total median gap, 75% serialization-tax incidence) come from DR-001's
+> production-log latency decomposition (n=308 clean answer-turns).
+
+- **FR54**: The pipeline can load a curated opener library at startup, organized
+  as **function buckets** (v1 set: `thinking`, `acknowledge`, `look_up`,
+  `delegate`, `react`) with **≥2 recorded takes per phrase** in each bucket, from
+  a versioned manifest (e.g. `assets/audio/openers/manifest.json`). The manifest
+  records `phrase_hash`, `path`, `bucket`, and `duration_ms` per take. Schema
+  validated at startup; missing files or buckets refuse startup with a clear
+  operator action (`run \`just regenerate-audio\``).
+- **FR55**: The Talker can emit an **opener-function tag** at or near its first
+  token (syntax decided in Story 6.2; e.g. `<opener bucket="thinking"/>`). The
+  pipeline parses the tag, selects a take from the matching bucket (random
+  within bucket, last-N ring buffer to avoid back-to-back repetition), and
+  plays it instantly via the cached-audio path — no Cartesia call for the
+  opener itself.
+- **FR56**: The pipeline can fall back to a **timer-fired generic opener** if no
+  opener-function tag has arrived from the Talker within
+  `[openers] timer_fallback_ms` (default **700 ms**) of end-of-speech, preserving
+  v1's hard onset floor against slow STT/TTFT or a no-tag-but-slow path. The
+  fallback bucket is configurable; the default is `acknowledge` (the safest
+  generic).
+- **FR57**: The Talker can **self-gate** the opener for short/quick answers —
+  emit no opener tag at all, in which case the pipeline plays no opener and
+  the real answer fires on its own. The fallback timer at FR56 still applies if
+  the real audio is slower than `timer_fallback_ms`.
+- **FR58**: The pipeline **overlaps** Cartesia synthesis of the real answer's
+  first segment with opener playback. Synthesis fires when the Talker produces
+  the first non-tag text (~0.7 s typical, per DR-001's empirical decomposition);
+  the splitter buffers Cartesia audio frames while the opener plays; the audio
+  device gates **playback**, not the network. This removes the `await
+  filler_task`-before-`tts.synthesize()` ordering at
+  `sequential_loop.py:696-714` — the v1 serialization that *added* latency on
+  ~75% of turns per DR-001. Target: dead-air-after-opener ≤ 250 ms p95 (NFR34).
+
+### Speech Timing & Emphasis (v2 — Epic 7, promotes DR-002 + DR-004)
+
+> **Scheduling:** v2 work; not in the current sprint. The cluster below
+> implements the head-motion design DR-002 froze, with the wire shape closed
+> by DR-004 (emphasis = 7th vocalization tag, not a per-segment timing
+> payload). Embodiment-side animation (the head/eye realizer) lives in the
+> olaf-embodiment sibling project — see `olaf-embodiment-brief.md` §"v2
+> head-motion realizer".
+
+- **FR59**: The pipeline can stream text to Cartesia Sonic-3 over **WebSocket**
+  transport (replacing v1's SSE) and capture `timestamps` messages — word-level
+  `(word, start_ms, end_ms)` records — for each generated segment.
+  `phoneme_timestamps` capture is optional (kept for future lip-sync work; not
+  consumed in v2 head motion). Migration removes the SSE `timestamps`-drop at
+  `tts/cartesia.py:129`.
+- **FR60**: The Talker can emit **emphasis marks** in its text stream on word(s)
+  it intends to stress (final mark syntax decided in Story 7.2). The splitter
+  parses marks pre-TTS, remembers the marked-word indices, and strips the marks
+  before passing text to Cartesia (or passes Cartesia's emphasis-input form if
+  the WS spike confirms it survives — see Story 7.1). Density target: 1–2 per
+  conversational sentence, enforced via prompt design and validated in soak
+  (Story 7.4).
+- **FR61**: For each marked word, the pipeline can publish a
+  `vocalization(tag="emphasis", audio_frame_id=...)` event, anchored to the
+  Cartesia word timestamp for that word (DR-004's join product — the LLM's
+  marked-word indices intersected with Cartesia's `timestamps` produces one
+  audio-anchored event per emphasis). `tts_supported: false` — the prosodic
+  stress lives in the carrier word's audio (rendered by Cartesia if it honors
+  the mark), not in a separate audio asset. Same audio-anchor / consumer-renders
+  semantics as the existing `[nod]` / `[shake]` cues.
+- **FR62**: For v2 head motion, the pipeline and the body run on a
+  **single co-located host** sharing the same DDS domain. Cross-host clock
+  skew (Wi-Fi, ~±100 ms) would shred the anticipatory ~30–80 ms window NFR5
+  requires for audio-anchored events; multi-host head-motion deployment is
+  deferred until clock sync work lands. (NFR5 itself is unchanged; FR62 is a
+  deployment constraint that keeps NFR5 achievable for the v2 timing path.)
 
 ### Configuration & Operations
 
@@ -661,6 +783,17 @@ Personal-project scale, not a fleet:
 - **FR41**: The pipeline can verify Hailo-8L driver presence at startup and log a clear error before falling back to CPU inference.
 - **FR42**: The pipeline does not persist user audio or transcripts to disk in the default operational path.
 - **FR43**: The pipeline does not initiate any outbound network connection beyond the configured Cartesia API, the active Talker provider's API (one of OpenAI / Groq / Gemini per `[talker] provider` in setup.toml), and orchestrator daemon endpoints (no telemetry, no analytics).
+
+> **External telemetry consumers (DR-003 boundary).** The structured INFO log
+> (`./logs/voice-agent.log`) is the **public telemetry surface** for external
+> consumers — including a future live-interaction dashboard that tails it (per
+> DR-003). The pipeline emits nothing new on the wire to serve them; the
+> agnostic-publisher boundary is preserved. Raw transcripts on the wire remain
+> rejected (FR39, NFR25 — INFO redacts them; DEBUG-gated). A versioned
+> `events.jsonl` structlog sink is documented as the **v2 promotion path** in
+> DR-003 §Consequences; it's only adopted if log-format coupling between the
+> pipeline and an external consumer starts to bite. v1 ships zero pipeline
+> change for this — the dashboard is a separate consumer project.
 
 ## Non-Functional Requirements
 
@@ -722,3 +855,28 @@ These are the latency budgets from the Success Criteria, restated as testable NF
 - **NFR30**: Wake-greeting end-to-end latency (wake-word fired → first greeting audio frame from Cartesia) must be ≤ 1500ms at p95. The greeting Talker call, Cartesia TTS first-frame, and audio playback path together budget to NFR1 + NFR4 with no extra slack.
 - **NFR31**: `mood` topic publish cadence must not exceed 4 publishes per hour sustained, enforced at the `EventPublisher` boundary (FR49). Tool-calls that would exceed the rate are dropped, not queued.
 - **NFR32**: Talker tool-call decision overhead must add ≤ 100ms to the simple-turn budget at p95. Total simple-turn latency (NFR1, ≤ 1500ms) must not be exceeded as a result of tool-aware Talker invocation.
+
+### Conversational Openers & Timing Instrumentation (v2 — promotes DR-001)
+
+> **Scheduling:** v2 — not in the current sprint. NFRs below are the post-v2
+> commitments the Epic 6 acceptance criteria validate. v1's NFRs are unaffected.
+
+- **NFR33**: **Opener onset latency** — when an opener fires (LLM-tag or timer
+  fallback), first opener audio frame must occur within **≤ 700 ms p95** of
+  end-of-speech, matching the v1 timer floor. Self-gated turns (no opener)
+  are exempt; their onset is bounded by NFR1 / NFR4 as normal.
+- **NFR34**: **Dead-air-after-opener** — when an opener plays, the gap between
+  the opener's last audio frame and the real answer's first audio frame must be
+  **≤ 250 ms p95**. The v2 overlap design (FR58) targets ~0 ms; 250 ms is the
+  failure boundary above which the handoff stops feeling seamless. (v1 baseline
+  per DR-001: ~1.5 s median dead-air-after-filler — this is the gap v2 closes.)
+- **NFR35**: **Latency instrumentation** — the pipeline must emit per-turn
+  structured logs carrying `stt_ms` (vad_end → transcript), `ttft_ms`
+  (transcript → talker first token, best-effort — Groq / OpenAI / Gemini differ
+  in surfacing this; log `null` when the provider doesn't expose it),
+  `ttfb_ms` (already emitted at `tts/cartesia.py:145`), and
+  `end_to_first_real_audio_ms` (vad_end → real-answer first frame). This
+  replaces the hardcoded `end_to_transcript_ms=0` placeholder at
+  `sequential_loop.py:287`. NFR33 / NFR34 measurement and post-implementation
+  validation of DR-001's projected timeline (~3.0 s → ~1.7-2.0 s total) depend
+  on this instrumentation.
