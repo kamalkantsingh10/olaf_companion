@@ -68,7 +68,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-28  # v2 expression promotion — Epic 6 (4 stories) + Story v2-1 added, then Epic 6+7 consolidated to single Epic 6 (commit ccfc0a0 + consolidation)
+last_updated: 2026-05-28  # Story 6-1 promoted to ready-for-dev (bmad-create-story); epic-6 → in-progress
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -187,8 +187,8 @@ development_status:
   # infrastructure reused).
   #
   # See: decision-records.md §DR-001 + §DR-002 + §DR-004 + epics.md §Epic 6.
-  epic-6: backlog
-  6-1-cartesia-websocket-and-ttfb-spike: backlog
+  epic-6: in-progress
+  6-1-cartesia-websocket-and-ttfb-spike: ready-for-dev
   6-2-cached-opener-system-and-cartesia-overlap: backlog
   6-3-emphasis-vocalization-wiring: backlog
   6-4-instrumentation-soak-embodiment-brief: backlog
