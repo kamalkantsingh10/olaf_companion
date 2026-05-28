@@ -148,13 +148,22 @@ development_status:
   # PRD / architecture / brief continue to label Epic 6 as "v2 work" — this
   # is execution sequencing only, not a re-scope.
   #
-  # EXECUTION ORDER (v1 finish line):
-  #   5-1 → 5-2 → 5-3 → 5-5 → Epic 6 (6.1 → 6.2 ∥ 6.3 → 6.4) → 5-4
+  # 2026-05-28 FURTHER RE-SEQUENCING: Epic 6 also goes BEFORE Epic 5's
+  # remaining hardening (5-1, 5-2, 5-3). Rationale: Epic 6 is the
+  # substantive feature build (the perceived UX delta); 5-1/2/3 are
+  # production-hardening that wraps the final feature set. None of
+  # 5-1/2/3 block Epic 6 dev work. Mild tradeoff: without 5-1's SIGHUP
+  # swap, Epic 6 prompt iterations require manual pipeline restart.
+  # Without 5-3's systemd, unattended Epic 6 soaks need manual restart
+  # on crash. Both acceptable for dev-window iteration.
   #
-  # 5-5 is at 'review'; Epic 6 stories at 'backlog'. Epic 6 supersedes
-  # 5-5's *filler design* (cached-audio infrastructure is REUSED — see
-  # epics.md Story 5.5 supersession note + Epic 6 §Status). The combined
-  # post-Epic-6 system is what 5-4's 7-day soak validates.
+  # EXECUTION ORDER (v1 finish line):
+  #   Epic 6 (6.1 → 6.2 ∥ 6.3 → 6.4) → 5-1 → 5-2 → 5-3 → 5-4
+  #
+  # 5-5 is at 'review' (already implemented); it stays where it is —
+  # Story 6.2 supersedes 5-5's filler DESIGN but REUSES its
+  # cached-audio infrastructure. 5-4's 7-day soak runs last and
+  # validates the combined post-Epic-6 + post-hardening system.
   5-5-cached-audio-deterministic-phrases: review
   # 5-4 runs LAST, after Epic 6 lands — see Epic 5 execution-order note above.
   5-4-soak-tuning-and-v1-signoff: backlog

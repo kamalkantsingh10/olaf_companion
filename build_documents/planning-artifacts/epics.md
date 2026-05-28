@@ -506,19 +506,29 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 **NFRs primarily proven:** NFR7 (SIGHUP <1s), NFR8 (7-day soak), NFR10 (malformed config rollback), NFR11 (USB hot-plug survival), NFR12 (final FP threshold), NFR13 (final FN threshold), NFR27 (schema versioning enforcement, all four event types), NFR30 (wake-greeting timing soak validation), NFR31 (mood cadence soak validation)
 **Deferred to v1.5:** FR5, FR29, FR30 (barge-in cluster) — see `## v1.5 Backlog (Post-v1)`.
 
-> **Execution-order note (added 2026-05-28).** Epic 6 ("v2 expression
-> upgrades", below) lands **between Story 5.3 and Story 5.4**, not after
-> Epic 5 in full. Story 5.4 is the v1 sign-off soak — its measurements
-> validate NFR1 / NFR4 / NFR5 / NFR30 / NFR31 against the *shipping*
-> system. Epic 6 changes those numbers substantively (DR-001 projects
-> a ~1 s drop in NFR1 median), so the soak must run **after** Epic 6 to
-> measure the real shipping state. This mirrors the Story 5.5 vs 5.4
-> ordering already in place. The **labels** stay: PRD / architecture /
-> brief still call Epic 6 "v2 work" — this is execution sequencing
-> only, not a re-scope of v1's surface.
+> **Execution-order note (added 2026-05-28, revised 2026-05-28).**
+> Epic 6 ("v2 expression upgrades", below) lands **before Epic 5's
+> remaining hardening (5-1, 5-2, 5-3) and the v1 sign-off soak (5-4)**.
+> Rationale: Epic 6 is the substantive feature build (the perceived UX
+> delta — DR-001 ~1 s NFR1 drop, DR-002 head-motion realizer, DR-004
+> 7th vocalization tag); Stories 5-1/5-2/5-3 are production-hardening
+> that wraps the final feature set; Story 5-4 is the soak that must
+> validate the shipping system. None of 5-1/2/3 block Epic 6 dev work.
+> Story 5-5 (cached audio + thinking fillers) is already at `review`
+> and stays where it is — Story 6.2 supersedes its filler *design*
+> but REUSES its cached-audio infrastructure.
+>
+> The **labels** stay: PRD / architecture / brief still call Epic 6
+> "v2 work" — this is execution sequencing only, not a re-scope of v1's
+> surface.
 >
 > **v1 finish-line execution order:**
-> `5-1 → 5-2 → 5-3 → 5-5 → Epic 6 (6.1 → 6.2 ∥ 6.3 → 6.4) → 5-4`
+> `Epic 6 (6.1 → 6.2 ∥ 6.3 → 6.4) → 5-1 → 5-2 → 5-3 → 5-4`
+>
+> **Tradeoffs accepted:** without 5-1's SIGHUP atomic swap, Epic 6's
+> prompt-iteration loop requires a full pipeline restart per prompt
+> tweak; without 5-3's systemd unit, unattended Epic 6 soaks need
+> manual restart on crash. Both acceptable for the dev window.
 
 ---
 
