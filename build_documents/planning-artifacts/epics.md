@@ -67,23 +67,26 @@ editHistory:
   - date: '2026-05-28'
     summary: |
       v2 expression promotion (design pass for DR-001/002/003/004).
-      Two new full epics added after Epic 5 with story breakdowns:
-      **Epic 6 — Conversational Openers** (5 stories 6.1–6.5;
-      function-bucketed cached opener library, LLM-tag selection,
-      Cartesia overlap that deletes the v1 serialization tax, timer
-      fallback + self-gating, latency instrumentation backfill —
-      supersedes Story 5.5's filler design); **Epic 7 — Speech Timing
-      & Head Motion** (4 stories 7.1–7.4; Cartesia SSE→WebSocket
-      migration with TTFB spike, Talker emphasis-mark prompt, emphasis
-      wired as the 7th vocalization tag per DR-004, embodiment-brief
-      amendment + soak). FR Coverage Map gains FR54–FR62 entries.
-      Story 5.5 marked superseded-post-v1 (kept in place for audit).
-      New **v2 Backlog** section after v1.5 Backlog holds Story v2-1
-      (events.jsonl sink) as DR-003's promotion path. v1 scope
-      unchanged — 5 epics / 31 v1 stories untouched; the v2 epics
-      add 9 additional stories scheduled post-v1 launch.
-      `schema_version=3` preserved (additive vocalization tag,
-      forward-compat per CLAUDE.md rule 6).
+      Initial draft proposed two new epics (Epic 6 — Conversational
+      Openers, 5 stories; Epic 7 — Speech Timing & Head Motion, 4
+      stories) but consolidated 2026-05-28 on user pushback against
+      over-decomposition — landed as a single **Epic 6 — v2 Expression
+      Upgrades** with 4 stories that bundle the work cohesively:
+      6.1 (Cartesia SSE→WebSocket + word `timestamps` capture + TTFB
+      spike — shared enabler, resolves DR-001 keystone); 6.2 (cached
+      function-bucketed openers + LLM tag emission + timer fallback
+      + Cartesia overlap deleting the v1 serialization tax —
+      supersedes Story 5.5's filler design); 6.3 (emphasis as the
+      7th `vocalization` tag per DR-004 — Talker marks + splitter
+      join × Cartesia timestamps + publish); 6.4 (instrumentation
+      backfill + v2 soak + `olaf-embodiment-brief.md` amendment
+      review). FR Coverage Map gains FR54–FR62. Story 5.5 marked
+      superseded-post-v1 (kept in place for audit). New **v2 Backlog**
+      section after v1.5 Backlog holds Story v2-1 (`events.jsonl`
+      sink) as DR-003's promotion path. v1 scope unchanged — 5 epics /
+      31 v1 stories untouched; Epic 6 adds 4 stories scheduled
+      post-v1 launch. `schema_version=3` preserved (additive
+      vocalization tag, forward-compat per CLAUDE.md rule 6 + DR-004).
 ---
 
 # olaf_companion — voice-agent-pipeline — Epic Breakdown
@@ -94,7 +97,7 @@ This document provides the complete epic and story breakdown for the **voice-age
 
 **Scope:** 5 epics, 31 v1 stories. Epic 1 + 2 (12 stories) are complete; Epic 3 + 4 + 5 (19 stories) remain — Epic 5 gained Story 5.5 on 2026-05-12 (cached audio for deterministic phrases). v1.5-deferred items (barge-in, cross-restart mood persistence, expanded `working` sub-modes, idle auto-sleep fallback) are captured in `## v1.5 Backlog (Post-v1)` for traceability but do not produce v1 stories. v2-deferred FRs/NFRs (resilience layer, Pi/Hailo port) are tracked in frontmatter.
 
-**v2 expression scope (added 2026-05-28, promotes DR-001/002/004; scheduled post-v1 launch).** Two additional epics — **Epic 6 — Conversational Openers** (5 stories) and **Epic 7 — Speech Timing & Head Motion** (4 stories) — live in this file after Epic 5, ahead of the v1.5 / v2 backlogs. They do **not** alter v1 scope; Story 5.5's filler remains v1's shipping perceived-latency-masking surface until Epic 6 lands. DR-003's live-interaction dashboard is intentionally a separate consumer project; the pipeline-side promotion path (`events.jsonl` sink) is parked in `## v2 Backlog (Beyond v1.5)` as Story v2-1.
+**v2 expression scope (added 2026-05-28, promotes DR-001/002/004; scheduled post-v1 launch).** One additional epic — **Epic 6 — v2 Expression Upgrades** (4 stories: 6.1 Cartesia WS + timestamps + TTFB spike; 6.2 cached opener system + Cartesia overlap; 6.3 emphasis as 7th vocalization tag; 6.4 instrumentation + soak + embodiment-brief amendment) — lives in this file after Epic 5, ahead of the v1.5 / v2 backlogs. It does **not** alter v1 scope; Story 5.5's filler remains v1's shipping perceived-latency-masking surface until Epic 6 lands. DR-003's live-interaction dashboard is intentionally a separate consumer project; the pipeline-side promotion path (`events.jsonl` sink) is parked in `## v2 Backlog (Beyond v1.5)` as Story v2-1.
 
 **Approach:** lean-first, then progressive complexity. Each sprint adds one new capability layer on top of a runnable artifact from the prior sprint.
 
@@ -374,17 +377,17 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 | FR51 (four typed ROS 2 topics with per-topic QoS) | Epic 3 | `Ros2EventPublisher` four publishers + per-topic QoS (Story 3.5) |
 | FR52 (common `EventEnvelope` across topics) | Epic 3 | `schemas/envelope.py` + four event types (Story 3.4) |
 | FR53 (`schema_version=3` bump) | Epic 3 + sprint-change-2026-05-10 | 1→2 in event schema rebuild (Story 3.4); 2→3 in boundary repair (sprint-change-proposal-2026-05-10) |
-| FR54 (curated opener library + manifest) | **Epic 6 (v2)** | Function-bucketed cached opener WAVs; manifest schema mirror of Story 5.5's `manifest.json` pattern (Story 6.1) |
-| FR55 (Talker emits opener-function tag) | **Epic 6 (v2)** | First-token tag; pipeline maps to bucket + take; last-N ring buffer (Story 6.2) |
-| FR56 (timer fallback at `[openers] timer_fallback_ms`) | **Epic 6 (v2)** | Preserves v1's hard 700 ms onset floor (Story 6.4) |
-| FR57 (Talker self-gates opener for short turns) | **Epic 6 (v2)** | No tag emitted → no opener plays; timer fallback still applies (Story 6.4) |
-| FR58 (Cartesia overlap — synth fires when ready, audio gates playback) | **Epic 6 (v2)** | Deletes the `await filler_task` serialization at `sequential_loop.py:696-714` (Story 6.3) |
-| FR59 (Cartesia WebSocket + word `timestamps` capture) | **Epic 7 (v2)** | SSE→WS migration; removes the `timestamps`-drop at `tts/cartesia.py:129` (Story 7.1) |
-| FR60 (LLM emphasis marks in text stream) | **Epic 7 (v2)** | Talker prompt + splitter parse + mark-strip pre-TTS; density target 1–2/sentence (Story 7.2) |
-| FR61 (publish `vocalization(tag="emphasis", audio_frame_id=...)`) | **Epic 7 (v2)** | DR-004 join product: marked-word indices × Cartesia timestamps → one event per emphasis (Story 7.3) |
-| FR62 (single-host topology for v2 head motion) | **Epic 7 (v2)** | Deployment constraint to keep NFR5's anticipatory window achievable (Story 7.4 soak) |
+| FR54 (curated opener library + manifest) | **Epic 6 (v2) / Story 6.2** | Function-bucketed cached opener WAVs; manifest schema mirror of Story 5.5's `manifest.json` pattern |
+| FR55 (Talker emits opener-function tag) | **Epic 6 (v2) / Story 6.2** | First-token tag; pipeline maps to bucket + take; last-N ring buffer |
+| FR56 (timer fallback at `[openers] timer_fallback_ms`) | **Epic 6 (v2) / Story 6.2** | Preserves v1's hard 700 ms onset floor |
+| FR57 (Talker self-gates opener for short turns) | **Epic 6 (v2) / Story 6.2** | No tag emitted → no opener plays; timer fallback still applies |
+| FR58 (Cartesia overlap — synth fires when ready, audio gates playback) | **Epic 6 (v2) / Story 6.2** | Deletes the `await filler_task` serialization at `sequential_loop.py:696-714` |
+| FR59 (Cartesia WebSocket + word `timestamps` capture) | **Epic 6 (v2) / Story 6.1** | SSE→WS migration; removes the `timestamps`-drop at `tts/cartesia.py:129`; Story 6.1 also runs the TTFB spike resolving DR-001's keystone |
+| FR60 (LLM emphasis marks in text stream) | **Epic 6 (v2) / Story 6.3** | Talker prompt + splitter parse + mark-strip pre-TTS; density target 1–2/sentence |
+| FR61 (publish `vocalization(tag="emphasis", audio_frame_id=...)`) | **Epic 6 (v2) / Story 6.3** | DR-004 join product: marked-word indices × Cartesia timestamps → one event per emphasis |
+| FR62 (single-host topology for v2 head motion) | **Epic 6 (v2) / Story 6.4** | Deployment constraint to keep NFR5's anticipatory window achievable (validated in soak) |
 
-**Coverage check:** all 49 v1-active FRs mapped. FR5 + FR29 + FR30 deferred to v1.5 (tracked in `## v1.5 Backlog (Post-v1)`). FR28 removed. FR7, FR13, FR16, FR41 intentionally absent (v2 deferred). **FR54–FR62 are v2 expression promotion** (Epics 6 + 7, design records DR-001/002/004), not v1-active — they raise the v2 FR-active count to 58 once Epics 6 + 7 land. NFR33–NFR35 (also v2) live under PRD §"Conversational Openers & Timing Instrumentation (v2)".
+**Coverage check:** all 49 v1-active FRs mapped. FR5 + FR29 + FR30 deferred to v1.5 (tracked in `## v1.5 Backlog (Post-v1)`). FR28 removed. FR7, FR13, FR16, FR41 intentionally absent (v2 deferred). **FR54–FR62 are v2 expression promotion** (Epic 6, design records DR-001/002/004), not v1-active — they raise the v2 FR-active count to 58 once Epic 6 lands. NFR33–NFR35 (also v2) live under PRD §"Conversational Openers & Timing Instrumentation (v2)".
 
 ## Epic List
 
@@ -505,159 +508,55 @@ _None — no UX Design document exists for this component. The voice-agent-pipel
 
 ---
 
-### Epic 6: Conversational Openers (v2 — promotes DR-001)
+### Epic 6: v2 Expression Upgrades (promotes DR-001 + DR-002 + DR-004)
 
-**Goal:** Replace v1's timer-fired random mood-keyed filler (Story 5.5) with a
-**context-selected, function-bucketed cached opener** chosen by the Talker LLM
-itself, overlapped with the real answer's Cartesia synthesis. Deletes the
-serialization tax DR-001's log analysis surfaced (~1 s free win on ~75% of
-turns) and closes the ~1.5 s dead-air-after-filler that v1 leaves on the median
-turn.
+**Goal:** Land the v2 perceived-latency + speech-synchronized head-motion
+cluster in one cohesive epic. Cartesia SSE→WebSocket migration is the shared
+enabling work (DR-001's TTFB keystone + DR-002's word `timestamps`); cached
+function-bucketed openers replace the v1 timer filler with Cartesia overlap
+deleting the serialization tax; emphasis renders as the 7th `vocalization` tag
+per DR-004; Story 6.4 wraps with instrumentation, soak, and the
+embodiment-brief amendment.
 
-**User outcome:** Within ~0.6 s of finishing speaking, Kamal hears an opener
-that **fits the question** (e.g. "let me check on that…" before a calendar
-delegate-turn, "hmm…" before a thinking turn, nothing for a quick yes/no). The
-real answer takes over **seamlessly** with no perceptible dead air. Median
-end-of-speech → real-answer time drops from ~3.0 s (v1) to ~1.7–2.0 s
-(projected per DR-001). The whole experience feels less like a robot
-performing the filler→answer sequence and more like a human thinking out loud.
+**User outcome:** Within ~0.6 s of end-of-speech, Kamal hears a context-fitting
+opener (cached, function-bucketed). The real answer takes over seamlessly with
+no perceptible dead air — median end-of-speech → real-answer drops from ~3.0 s
+(v1) to ~1.7–2.0 s (projected per DR-001). During the answer, OLAF's head
+moves in a way that **reads as natural rather than metronomic** — most words
+nothing, emphasized words a clear nod, body owning the realizer (DR-002's
+layered model).
 
-**Status:** v2 work. **Not in the current sprint.** v1 continues to ship
-Story 5.5's filler unchanged until Epic 6 lands; on landing, Story 5.5 is
-marked superseded (kept in epics.md for audit history) and `audio/filler.py`
-is rewritten or replaced.
+**Status:** v2 work. **Not in the current sprint.** Frozen design records:
+DR-001 (openers), DR-002 (layered head-motion model), DR-004
+(emphasis-as-vocalization wire shape). v1 ships Story 5.5's filler unchanged
+until Epic 6 lands; on landing, Story 5.5's *filler design* is superseded —
+the cached-audio infrastructure (`audio/cached.py`, `assets/audio/` layout,
+manifest discipline, Stage 3 probe, `just regenerate-audio`) is **reused**,
+not replaced.
 
-**What's built:**
+**Story order is strict.** 6.1 (WS migration + timestamps + TTFB measurement)
+is the dependency: 6.2 needs the overlap-friendly Cartesia client + TTFB
+measurement informing the final opener shape, and 6.3 needs `timestamps` for
+the emphasis join. 6.2 and 6.3 can run in parallel after 6.1. 6.4 is the
+wrap.
 
-- **Opener manifest + cached WAV library** — function buckets (`thinking`,
-  `acknowledge`, `look_up`, `delegate`, `react`), ≥2 takes per phrase, ~30
-  phrases total. Lives under `assets/audio/openers/<bucket>/NN.wav` with
-  `assets/audio/openers/manifest.json` recording `phrase_hash`, `path`,
-  `bucket`, `duration_ms`. Mirrors Story 5.5's manifest pattern; the
-  `just regenerate-audio` recipe extends to render the opener phrases. Stage 3
-  startup probe validates manifest completeness.
-- **Talker opener-tag emission** — system prompt teaches a single tag syntax
-  (e.g. `<opener bucket="thinking"/>`) at or near the first token; bucket
-  selection rules described in the prompt (delegate-turns → `delegate` or
-  `look_up`; short/quick turns → no tag; everything else → `thinking` or
-  `acknowledge`).
-- **Opener selector** — `audio/openers.py` parses the tag, picks a take from
-  the matching bucket (random within bucket, last-N ring buffer to suppress
-  back-to-back repeats), plays via the cached-audio path (`audio/cached.py`).
-- **Cartesia overlap** — `sequential_loop` is refactored to fire
-  `tts.synthesize()` for the real answer's first segment as soon as it's
-  ready, buffering audio frames while the opener plays; the audio device
-  gates *playback*, not the network. The `await filler_task` ordering at
-  `sequential_loop.py:696-714` is removed.
-- **Timer fallback** — if no opener tag arrives within
-  `[openers] timer_fallback_ms` (default 700 ms) of end-of-speech, a generic
-  cached opener fires from the `acknowledge` bucket (configurable). Preserves
-  v1's hard onset floor.
-- **Self-gating** — if Talker emits no opener tag and the real audio fires
-  before the fallback timer, no opener plays at all (short/quick turns —
-  e.g. one-word confirmations).
-- **Latency instrumentation backfill** — `stt_ms`, `ttft_ms` (best-effort),
-  `ttfb_ms` (already emitted), `end_to_first_real_audio_ms` per turn,
-  replacing the hardcoded `end_to_transcript_ms=0` placeholder at
-  `sequential_loop.py:287`. Validates NFR33 / NFR34 / DR-001's projected
-  timeline post-implementation.
-
-**FRs:** FR54, FR55, FR56, FR57, FR58 (all new); FR15 (extended — Cartesia
-client gains overlap-friendly buffering, but the WebSocket transport itself
-is Epic 7's responsibility — Epic 6 ships on whatever transport is current at
-its landing time).
-**NFRs primarily proven:** NFR33 (opener onset ≤ 700 ms p95), NFR34
-(dead-air-after-opener ≤ 250 ms p95), NFR35 (latency instrumentation).
-**Supersedes:** Story 5.5's filler design (`audio/filler.py`, `min_pause_ms`
-timer + random mood-keyed bucket). v1 continues to ship Story 5.5 until
-Epic 6 lands.
-**Keystone dependency:** Cartesia TTFB. DR-001's open question — whether
-pure-live (Option D, deletes the cache entirely) becomes viable — is parked
-on Cartesia TTFB measurement; Epic 7's WS spike (Story 7.1) provides that
-measurement. If TTFB drops to ~0.3 s, Epic 6 may be re-scoped to a thinner
-shape post-landing.
-
----
-
-### Epic 7: Speech Timing & Head Motion (v2 — promotes DR-002 + DR-004)
-
-**Goal:** Implement the v2 head-motion design DR-002 froze, with the wire
-shape closed by DR-004. Migrate Cartesia to **WebSocket**, capture word
-`timestamps`, teach the Talker to emit **emphasis marks** in its text stream,
-and publish one **`vocalization(tag="emphasis", audio_frame_id=...)`** event
-per marked word, anchored to the Cartesia timestamp for that word. The body's
-layered head/eye realizer lives in the `olaf-embodiment` sibling project; this
-epic ships the pipeline side of the contract.
-
-**User outcome:** OLAF's head moves in a way that **reads as natural rather
-than metronomic**. Most words: nothing. Emphasized words: a clear nod. Phrase
-boundaries: a small tilt (consumer-side, off the existing segment cadence).
-Mood and `speech_emotion` shape the amplitude. Anticipation lead, multi-axis
-variation, and stochastic jitter all live consumer-side. The pipeline ships
-*timing data it alone has*; the body ships *how to move*.
-
-**Status:** v2 work. **Not in the current sprint.** Depends on Cartesia
-WebSocket support being current and on the embodiment project being ready to
-consume the 7th vocalization tag. Single-host deployment is the v2
-constraint (FR62 — cross-host clock skew exceeds NFR5's ~30–80 ms
-anticipatory window over Wi-Fi).
-
-**What's built:**
-
-- **Cartesia SSE → WebSocket migration** — `tts/cartesia.py` swaps the
-  `generate_sse` call for the WebSocket equivalent; captures `chunk`,
-  `timestamps`, `done` (plus `phoneme_timestamps` if cheap — kept for future
-  lip-sync). The current `timestamps`-drop at `cartesia.py:129` is replaced
-  with a structured capture into per-segment record (`[{word, start_ms,
-  end_ms}, ...]`). **TTFB is measured during this spike**; the number resolves
-  DR-001's keystone open question and informs whether Epic 6 should reshape
-  toward pure-live.
-- **Talker emphasis-mark prompt** — system prompt teaches a single emphasis
-  syntax on stressed word(s). Final syntax decided in Story 7.2 (lean
-  `*word*`); LLM is constrained to ~1–2 per sentence with a "mark only words a
-  thoughtful speaker would acoustically stress" instruction. If Cartesia's WS
-  API honors emphasis tags in text input (the spike confirms), the marked form
-  is passed through unchanged so the audio *also* gets prosodic stress; if
-  not, marks are stripped before send and the audio is unchanged (body still
-  nods correctly off the timestamp-joined event).
-- **Emphasis vocalization wiring** — `expression_map.yaml`'s `vocalizations:`
-  list grows 6 → 7 (`emphasis: { tts_supported: false }`).
-  `schemas/vocalization_event.py` extends the tag Literal additively
-  (forward-compat — `schema_version` stays at 3 per CLAUDE.md rule 6).
-  Splitter parses LLM emphasis marks pre-TTS, remembers marked-word indices,
-  and joins them against Cartesia's `timestamps` from the WS stream to emit
-  one `vocalization(tag="emphasis", audio_frame_id=<word anchor>)` per
-  emphasis. The audio-anchor is the Cartesia frame coincident with the marked
-  word's `start_ms`.
-- **Embodiment-brief amendment** — `olaf-embodiment-brief.md` Appendix A.7
-  gains `emphasis`; B.2's `embodiment_map.yaml` recommendation grows a 7th
-  vocalization entry; a new "v2 head-motion realizer" section sketches the
-  consumer-side layered model (DR-002's frozen design — rhythm-substrate is
-  stochastic-body-side, not wire-side; emphasis is a punctuated cue;
-  amplitude/style scale by `speech_emotion` + `mood`; anticipation lead;
-  multi-axis variation; pluggable base orientation for future camera gaze).
-  Update lands in the same commit as the pipeline-side wire change (NFR26 —
-  spec-as-contract).
-- **Soak + density tuning** — sample 20+ real Talker replies with the
-  emphasis prompt; measure emphasis density per sentence; tune the prompt
-  toward 1–2 per sentence if drift is detected; verify NFR5 anticipatory
-  window holds for the new `emphasis` events; verify embodiment renders
-  `emphasis` correctly (cross-project soak with the body).
-
-**FRs:** FR15 (extended — WebSocket transport), FR25 (extended —
-`vocalization` tag set 6 → 7), FR59, FR60, FR61, FR62 (all new).
+**FRs:** FR54–FR62 (all new); FR15 (extended — WebSocket transport);
+FR25 (extended — `vocalization` tag set 6 → 7).
 **NFRs primarily proven:** NFR5 (anticipatory window holds for `emphasis`),
-NFR21 (per-topic QoS unchanged — `vocalization` topic absorbs the new tag).
+NFR33 (opener onset ≤ 700 ms p95), NFR34 (dead-air-after-opener ≤ 250 ms
+p95), NFR35 (latency instrumentation).
+**Supersedes:** Story 5.5's filler design (cached-audio infrastructure reused).
 **Coordination point:** `olaf-embodiment` sibling project must add the 7th
 vocabulary entry to its `embodiment_map.yaml` and ship a renderer for
-`emphasis` before the pipeline-side change is enabled in production. The
-agnostic-publisher boundary means the pipeline can ship its half first; the
-body silently no-ops on unmapped vocalizations during the gap (logs WARN per
-the brief's discipline). Same `schema_version=3` either way.
-**Out of scope:** camera gaze-following (DR-002 §"Parked extension" — base
-orientation seam is designed in but the OAK-D source is parked); mouth/jaw
+`emphasis` before the pipeline-side wire change is enabled in production. The
+agnostic-publisher boundary means the pipeline can ship first; the body's
+`embodiment.unmapped_vocalization` WARN + `default_vocalization` fallback
+covers the gap.
+**Schema version:** stays at **3** — additive vocalization tag is forward-compat
+per CLAUDE.md rule 6 and DR-004.
+**Out of scope:** camera gaze-following (DR-002 §"Parked extension"); mouth/jaw
 lip-sync (would consume `phoneme_timestamps`, separate project); cross-host
-head motion (FR62 — defers until clock sync work).
+head motion (FR62 — defers until clock-sync work lands).
 
 ---
 
@@ -2023,300 +1922,65 @@ so that (a) Cartesia spend drops to near-zero for these four surfaces — they'r
 
 ---
 
-## Epic 6: Conversational Openers (v2 — promotes DR-001)
+## Epic 6: v2 Expression Upgrades (promotes DR-001 + DR-002 + DR-004)
 
 > **Status:** v2 work, scheduled post-v1 launch. **Not in the current sprint.**
-> Frozen design record is `decision-records.md` §DR-001. v1 ships Story 5.5
-> unchanged until this epic lands. Story 5.5's cached-audio infrastructure is
-> reused; only the *filler selection + cadence design* is replaced.
+> Frozen design records: `decision-records.md` §DR-001 (openers), §DR-002
+> (layered head-motion + Cartesia WS + LLM emphasis marks), §DR-004
+> (emphasis-as-vocalization wire-shape resolution). Coordinates with the
+> `olaf-embodiment` sibling project (consumer-side head/eye realizer).
 
-**Goal:** Replace v1's timer-fired random mood-keyed filler with a
-**context-selected, function-bucketed cached opener** chosen by the Talker LLM,
-overlapped with the real answer's Cartesia synthesis. Deletes DR-001's
-serialization tax (~1 s wasted on ~75% of turns) and closes the ~1.5 s
-dead-air-after-filler that v1 leaves on the median turn.
+**Goal:** Land the v2 perceived-latency + speech-synchronized head-motion
+cluster in one cohesive epic. Cartesia SSE→WebSocket migration is the shared
+enabler (DR-001 TTFB keystone + DR-002 word timestamps); cached function-
+bucketed openers replace the v1 timer filler with Cartesia overlap; emphasis
+renders as the 7th `vocalization` tag (DR-004). Story 6.4 wraps with
+instrumentation, soak, and the embodiment-brief amendment.
 
-**User outcome:** Within ~0.6 s of end-of-speech, Kamal hears an opener that
-fits the question (e.g. "let me look that up for you" before a calendar
-delegate-turn, "hmm…" before a thinking turn, nothing for a quick yes/no).
-The real answer takes over seamlessly. Median end-of-speech → real-answer drops
-from ~3.0 s to ~1.7–2.0 s (projected per DR-001's log analysis).
+**User outcome:** Within ~0.6 s of end-of-speech, Kamal hears a context-fitting
+opener (cached, function-bucketed). The real answer takes over seamlessly with
+no perceptible dead air. During the answer, OLAF's head moves naturally rather
+than metronomically — most words nothing, emphasized words a clear nod.
+Median end-of-speech → real-answer drops from ~3.0 s (v1) to ~1.7–2.0 s
+(projected per DR-001).
 
----
-
-### Story 6.1: Opener manifest + cached library + `just regenerate-audio` extension
-
-As Kamal,
-I want a curated library of cached opener audio assets organized by
-conversational function, loaded at startup and validated against a manifest,
-so that the Epic 6 pipeline can play instant openers without a runtime
-Cartesia round-trip and without a code change to add new phrases.
-
-**Acceptance Criteria:**
-
-**Given** `setup.toml`'s `[openers]` block listing phrases per bucket
-(`thinking`, `acknowledge`, `look_up`, `delegate`, `react`) with ≥2 takes per
-phrase,
-**When** `just regenerate-audio` runs (existing recipe extended),
-**Then** WAVs are rendered under `assets/audio/openers/<bucket>/NN.wav` at
-16 kHz mono S16LE (pipeline format), and `assets/audio/openers/manifest.json`
-records each entry's `phrase_hash = sha256(phrase + voice_id + tts_model)`,
-`path`, `bucket`, and `duration_ms`. The recipe reuses
-`CartesiaClient.generate` (same SDK call as Story 5.5).
-
-**Given** the pipeline starts up,
-**When** the Stage 3 `audio_assets` probe runs (extends Story 5.5's probe),
-**Then** the openers manifest is validated alongside the existing surfaces:
-(a) every phrase in `[openers]` has a matching `phrase_hash` in the manifest;
-(b) every manifest entry's file exists on disk; (c) every bucket has ≥1 take
-after dedup. Any failure raises `StartupValidationError(stage="audio_assets")`
-with operator action `"run \`just regenerate-audio\`"`.
-
-**Given** the new `OpenersConfig` pydantic model in `config/setup.py`,
-**When** a bucket is missing from `[openers]` or has zero phrases,
-**Then** `model_validator(mode="after")` raises with a clear message naming
-the empty bucket — mirrors `FillerConfig` / `GreetingConfig` discipline from
-Story 5.5.
-
-**Given** unit tests in `tests/unit/audio/test_openers_manifest.py`,
-**When** the manifest loader runs against a fixture manifest,
-**Then** missing files, hash mismatches, and bucket gaps each raise the
-expected error class with bucket / phrase information surfaced.
+**Story order is strict.** 6.1 must land before 6.2 and 6.3. 6.2 and 6.3 can
+run in parallel after 6.1. 6.4 wraps.
 
 ---
 
-### Story 6.2: Talker opener-tag prompt + parser + bucket selector
-
-As Kamal,
-I want the Talker LLM to emit an opener-function tag at or near its first
-token, and the pipeline to parse the tag and pick a take from the matching
-cached bucket,
-so that the opener is **context-selected** by the model that knows the
-question and its own answer — including whether it's about to delegate.
-
-**Acceptance Criteria:**
-
-**Given** the Talker system prompt at `prompts/talker_system.md`,
-**When** Story 6.2 lands,
-**Then** the prompt teaches the opener-function tag syntax (decided in this
-story; default `<opener bucket="..."/>` mirroring the existing `<emotion .../>`
-tag form), the five v1 bucket names, the "emit no tag for short / quick
-answers" self-gating rule (FR57), and the "delegate-turns → `delegate` or
-`look_up`" length-matching guidance (DR-001 §5).
-
-**Given** `audio/openers.py:OpenerSelector.pick(bucket)`,
-**When** called with a valid bucket name,
-**Then** it returns one take's path from that bucket, excluding the last N
-takes recorded in a turn-scoped ring buffer (default
-`max_consecutive_repeat = 0` → exclude the immediately-previous take). Mood
-fallback is NOT used here (mood-tinting was a v1 filler design; openers are
-*function-bucketed*, not mood-bucketed).
-
-**Given** `splitter/state_machine.py` extended to recognize the opener tag,
-**When** a Talker response begins with `<opener bucket="thinking"/>` (or any
-configured form),
-**Then** the splitter strips the tag from the text passed to Cartesia and
-emits a side-channel `OpenerSelectedFrame(bucket="thinking")` into the
-pipeline; downstream `audio/openers.py` plays the matching cached take
-**immediately** via `audio/cached.py:play_cached(...)` — no Cartesia call.
-
-**Given** a unit test sweep over 20 fixture Talker responses (covering each
-bucket plus self-gated short turns),
-**When** the splitter + selector run end-to-end with `play_cached` mocked,
-**Then** the correct bucket is selected for each fixture, the ring buffer
-suppresses immediate repeats within a turn, and self-gated turns emit no
-`OpenerSelectedFrame`.
-
-**Given** an integration test `tests/integration/test_opener_path.py`,
-**When** a full turn runs with the Talker mock emitting
-`<opener bucket="delegate"/> let me look that up...`,
-**Then** the cached delegate take is played, the real Talker text continues
-without the opener tag, and `CartesiaClient.generate` is **NEVER called for
-the opener** (the assertion that proves the cached path is reached).
-
----
-
-### Story 6.3: Cartesia overlap — decouple filler / opener from real-answer synth
-
-As Kamal,
-I want Cartesia synthesis for the real answer's first segment to fire as
-soon as the Talker produces non-tag text, regardless of whether the opener is
-still playing,
-so that the network round-trip overlaps the cached opener and the seamless
-~0 ms handoff DR-001 designs becomes possible.
-
-**Acceptance Criteria:**
-
-**Given** `sequential_loop.py` (or the post-Epic 6 successor),
-**When** Story 6.3 lands,
-**Then** the `await filler_task` ordering at the current
-`sequential_loop.py:696-714` is removed — synthesis kicks off the moment the
-splitter has the first non-tag text segment buffered, regardless of opener /
-filler playback state. The audio device's natural PyAudio queue serializes
-*playback*; the network call is unblocked.
-
-**Given** the Cartesia client (still SSE in this epic, unless Epic 7 has
-already landed),
-**When** the real answer's first segment is ready and an opener is currently
-playing on the speaker,
-**Then** the Cartesia request fires immediately and its audio frames are
-buffered into the PyAudio output queue; when the opener's last frame plays,
-the speaker continues seamlessly into the real-answer frames.
-
-**Given** an integration test `tests/integration/test_overlap_timing.py`,
-**When** Talker emits `<opener bucket="thinking"/>` + a long real reply,
-with `CartesiaClient.generate` mocked to fire after a controlled 100 ms
-delay,
-**Then** the mock's call timestamp is **≤ 100 ms after** the Talker's first
-non-tag text is buffered, demonstrably *not* waiting for opener playback to
-finish. Pre-Story-6.3 baseline assertion records what the v1 timing looked
-like (~opener_duration ms wait) for regression detection.
-
-**Given** the integration test sweep across (short / medium / long) opener
-durations × (fast / slow) Cartesia TTFB,
-**When** measured end-to-end,
-**Then** the **dead-air-after-opener** gap between opener last-frame and
-real-answer first-frame is ≤ 250 ms p95 (NFR34). Failures above this
-threshold surface the bottleneck (network vs splitter vs device).
-
----
-
-### Story 6.4: Timer fallback + self-gating
-
-As Kamal,
-I want the pipeline to play a generic cached opener if no opener-function
-tag arrives in time (preserving v1's hard onset floor), and to gracefully
-skip the opener when the Talker self-gates (short / quick answers),
-so that **opener-fires-when-needed** is honored across all turn shapes.
-
-**Acceptance Criteria:**
-
-**Given** `[openers] timer_fallback_ms = 700` and
-`[openers] timer_fallback_bucket = "acknowledge"` (defaults) in `setup.toml`,
-**When** end-of-speech fires and no `OpenerSelectedFrame` has arrived within
-the configured window,
-**Then** the pipeline fires `OpenerSelector.pick("acknowledge")` and plays the
-result. NFR33 (opener onset ≤ 700 ms p95) is the success metric.
-
-**Given** the same configuration,
-**When** the Talker emits an `<opener .../>` tag *before* the fallback timer
-expires,
-**Then** the fallback is cancelled (no duplicate opener plays). The selected
-opener is the Talker's choice, not the fallback bucket.
-
-**Given** the Talker emits **no opener tag at all** and the real-answer
-Cartesia first frame arrives before `timer_fallback_ms`,
-**When** the splitter signals the real-answer audio is ready,
-**Then** no opener fires; the real audio plays directly. Self-gating
-preserved (FR57).
-
-**Given** the Talker emits **no opener tag** and the real-answer audio is
-slower than `timer_fallback_ms`,
-**When** the fallback timer expires,
-**Then** the timer fallback fires — there is no path where the user hears
-silence longer than the configured floor.
-
-**Given** unit + integration tests covering the three timer-fallback
-outcomes (cancelled by tag, fired on timeout, suppressed by fast real
-audio),
-**When** the suite runs,
-**Then** each path is exercised with controlled mock timing and the expected
-audio playback events are observed.
-
----
-
-### Story 6.5: Latency instrumentation backfill (NFR35 — fixes the `end_to_transcript_ms=0` placeholder)
-
-As Kamal,
-I want every turn's structured log to carry real `stt_ms`, `ttft_ms`
-(best-effort), `ttfb_ms`, and `end_to_first_real_audio_ms` measurements,
-so that NFR33 / NFR34 can be measured, DR-001's projected timeline can be
-validated post-implementation, and any future latency regression has a clean
-signal to detect against.
-
-**Acceptance Criteria:**
-
-**Given** `sequential_loop.py:287` (or the post-Epic 6 successor) currently
-emits `end_to_transcript_ms=0` as a hardcoded placeholder,
-**When** Story 6.5 lands,
-**Then** the placeholder is replaced with the real measurement: time delta
-between VAD `utterance_captured` event and STT `transcript` event. The field
-is named `stt_ms` for clarity.
-
-**Given** the structured `turn.complete` log event,
-**When** Story 6.5 lands,
-**Then** the event carries: `stt_ms`, `ttft_ms` (Talker time-to-first-token —
-best-effort; log `null` for providers / paths that don't expose it),
-`ttfb_ms` (already emitted at `tts/cartesia.py:145`),
-`end_to_first_real_audio_ms` (vad_end → real-answer first frame),
-`opener_duration_ms` (when an opener fired; `null` for self-gated turns),
-`dead_air_after_opener_ms` (when an opener fired; `null` otherwise),
-`opener_source` (`"llm_tag"` / `"timer_fallback"` / `null`).
-
-**Given** the Phase 3 soak script (from Story 5.4),
-**When** the soak parses the new `turn.complete` log events,
-**Then** it computes p25 / p50 / p75 / p90 for each field and reports against
-NFR33 / NFR34 targets. The soak report includes a regression check against
-DR-001's projected timeline (~1.7–2.0 s median end-to-end after v2 lands).
-
-**Given** a contract test in `tests/contract/test_turn_complete_log_schema.py`,
-**When** the `turn.complete` event is parsed,
-**Then** the field set matches the documented schema; missing required fields
-fail loudly. Schema documented in `architecture.md` §Logging Conventions.
-
----
-
-## Epic 7: Speech Timing & Head Motion (v2 — promotes DR-002 + DR-004)
-
-> **Status:** v2 work, scheduled post-v1 launch. **Not in the current sprint.**
-> Frozen design records are `decision-records.md` §DR-002 (layered head-motion
-> model + Cartesia WS + LLM emphasis marks) and §DR-004 (wire shape resolution:
-> emphasis = 7th vocalization tag). Coordinates with the `olaf-embodiment`
-> sibling project (consumer-side renderer).
-
-**Goal:** Migrate Cartesia to WebSocket, capture word `timestamps`, teach the
-Talker to emit emphasis marks in its text stream, and publish one
-`vocalization(tag="emphasis", audio_frame_id=...)` per marked word, anchored
-to the Cartesia timestamp for that word. The body owns the head/eye realizer;
-this epic ships the pipeline side of the wire contract.
-
-**User outcome:** OLAF's head moves in a way that reads as **natural rather
-than metronomic**. Most words: nothing. Emphasized words: a clear nod.
-Pipeline ships *timing data it alone has*; body ships *how to move*.
-
----
-
-### Story 7.1: Cartesia SSE → WebSocket migration + `timestamps` capture + TTFB spike
+### Story 6.1: Cartesia SSE→WebSocket migration + word `timestamps` capture + TTFB spike
 
 As Kamal,
 I want `tts/cartesia.py` to stream over WebSocket and capture word
-`timestamps` events (currently dropped on SSE at `cartesia.py:129`), and as a
+`timestamps` events (currently dropped at `cartesia.py:129`), and as a
 shipping side-effect measure Cartesia TTFB on the WS transport,
-so that (a) Epic 7's emphasis join has the timing data it needs; (b) DR-001's
-keystone open question (whether pure-live deletes the cached opener
-subsystem) is resolved on real measurement.
+so that (a) Story 6.3's emphasis join has the timing data it needs; (b) Story
+6.2's opener subsystem is shaped against the real TTFB number — resolving
+DR-001's keystone open question (whether pure-live deletes the cached opener
+subsystem entirely).
 
 **Acceptance Criteria:**
 
 **Given** `tts/cartesia.py` currently uses `generate_sse` and discards
 `timestamps` events at `:129`,
-**When** Story 7.1 lands,
+**When** Story 6.1 lands,
 **Then** the implementation swaps to the Cartesia WebSocket API (per Cartesia
 docs current at landing time); per-segment `timestamps` are captured into a
 `SegmentTiming(words: list[Word])` structure (with `word`, `start_ms`,
 `end_ms` per word). `phoneme_timestamps` are captured **only if zero
 additional cost** (future-proofing for lip-sync); otherwise not. The same
-`CartesiaError` exception hierarchy raises on protocol errors (no new error
-type needed).
+`CartesiaError` exception hierarchy raises on protocol errors.
 
 **Given** the WebSocket transport,
 **When** the spike runs against the dev host with 100+ sample requests,
 **Then** TTFB (text submitted → first audio frame received) is measured at
-p25 / p50 / p75 / p90 and written to a Story 7.1 report file. The
-measurement methodology matches DR-001 §"Empirical evidence" (single clock,
-intra-request deltas). The report's median TTFB resolves DR-001's keystone
-question — if median TTFB ≤ 0.4 s, the report calls out that Epic 6's
-cached opener subsystem may be reshapable toward pure-live (Option D).
+p25 / p50 / p75 / p90 and written to a Story 6.1 report file. Methodology
+matches DR-001 §"Empirical evidence" (single clock, intra-request deltas).
+The report's median TTFB **resolves DR-001's keystone question**: if median
+TTFB ≤ 0.4 s, the report calls out that Story 6.2's opener subsystem may be
+reshapable toward pure-live (DR-001 Option D) — Story 6.2 explicitly checks
+this report when shaping its design.
 
 **Given** the existing audio path's tests (`tests/unit/tts/test_cartesia.py`,
 `tests/integration/test_simple_turn.py`),
@@ -2326,162 +1990,279 @@ cached opener subsystem may be reshapable toward pure-live (Option D).
 the WS message into the `SegmentTiming` structure correctly.
 
 **Given** `setup.toml`'s `[tts]` block,
-**When** Story 7.1 lands,
+**When** Story 6.1 lands,
 **Then** an optional `transport = "websocket" | "sse"` knob is added
 (default `"websocket"`). SSE remains available as a fallback for the
 implementation period; operators can flip back if WS proves flaky in soak.
-Removed in a later epic / story once WS is settled.
+Removed in a later story once WS is settled.
 
 ---
 
-### Story 7.2: Talker emphasis-mark prompt + splitter parsing
+### Story 6.2: Cached opener system + Cartesia overlap (supersedes Story 5.5 filler design)
 
 As Kamal,
-I want the Talker LLM to mark word(s) it intends to acoustically stress, and
-the pipeline to parse those marks pre-TTS,
-so that the emphasis events Epic 7 publishes align with what the LLM
-*actually meant* rather than what an acoustic analyzer would guess.
+I want context-fitting cached openers — function-bucketed, LLM-tag-selected,
+with a timer fallback for safety — and the real answer's Cartesia synthesis
+overlapped with opener playback,
+so that (a) the opener fits the question (not the v1 random mood-keyed bucket);
+(b) the ~1 s serialization tax DR-001 surfaced on ~75% of turns is deleted;
+(c) the dead-air-after-opener gap closes from ~1.5 s (v1) toward ~0 ms.
 
 **Acceptance Criteria:**
+
+**Opener manifest + cached library:**
+
+**Given** `setup.toml`'s `[openers]` block listing phrases per function bucket
+(`thinking`, `acknowledge`, `look_up`, `delegate`, `react`) with ≥2 takes per
+phrase,
+**When** `just regenerate-audio` runs (existing recipe extended),
+**Then** WAVs render under `assets/audio/openers/<bucket>/NN.wav`, and
+`assets/audio/openers/manifest.json` records each take's `phrase_hash`,
+`path`, `bucket`, `duration_ms`. Reuses Story 5.5's `CartesiaClient.generate`
+and manifest pattern.
+
+**Given** the Stage 3 `audio_assets` startup probe (from Story 5.5),
+**When** Story 6.2 lands,
+**Then** the probe is extended to validate the openers manifest:
+phrase-by-phrase hash match, file existence, ≥1 take per bucket after dedup.
+Any failure raises `StartupValidationError(stage="audio_assets")` with the
+operator action `"run \`just regenerate-audio\`"`.
+
+**Talker opener-tag prompt + selector + self-gating + timer fallback:**
 
 **Given** the Talker system prompt at `prompts/talker_system.md`,
-**When** Story 7.2 lands,
-**Then** the prompt teaches a single emphasis-mark syntax (decided in this
-story; lean `*word*` for minimal token cost) and constrains the LLM to
-~1–2 marks per typical conversational sentence with a "mark only words a
-thoughtful speaker would acoustically stress" instruction. Examples in the
-prompt show one-clause sentences with 0–1 marks, two-clause sentences with
-1–2 marks.
+**When** Story 6.2 lands,
+**Then** the prompt teaches the opener-function tag syntax (lean
+`<opener bucket="..."/>` mirroring the existing `<emotion .../>` form), the
+five v1 bucket names, the "emit no tag for short / quick answers"
+self-gating rule, and the "delegate-turns → `delegate` or `look_up`"
+length-matching guidance (DR-001 §5).
 
-**Given** `splitter/state_machine.py`,
-**When** Story 7.2 lands,
-**Then** the parser recognizes the mark syntax token-by-token, remembers
-marked-word indices within the current segment, strips the marks from the
-text passed to Cartesia (or passes Cartesia's emphasis-input form if Story
-7.1's WS spike confirmed Cartesia honors marks — discovered there, wired
-here), and forwards the marked-index list to the segmenter for the join in
-Story 7.3.
+**Given** `audio/openers.py:OpenerSelector.pick(bucket)`,
+**When** called with a valid bucket name,
+**Then** it returns one take's path, excluding the last N takes recorded in
+a turn-scoped ring buffer (default `max_consecutive_repeat = 0`). Mood
+fallback is NOT used — openers are *function-bucketed*, not mood-bucketed.
 
-**Given** a unit test sweep over 30 fixture Talker outputs (a mix of
-hand-crafted + 20 real Groq replies sampled with the new prompt),
-**When** the splitter runs,
-**Then** marked words are extracted correctly across all forms (mark at
-start / middle / end of sentence, mark across token boundaries, mark inside
-already-tagged text like `<emotion value="X"/> *really* important`), and
-mark density per sentence is logged for the prompt-tuning Story 7.4 to
-analyze.
+**Given** the splitter recognizes the opener tag,
+**When** a Talker response begins with `<opener bucket="thinking"/>`,
+**Then** the splitter strips the tag from the text passed to Cartesia and
+emits a side-channel `OpenerSelectedFrame(bucket="thinking")` that triggers
+immediate cached playback via `audio/cached.py:play_cached(...)` — no
+Cartesia call for the opener.
 
-**Given** integration test `tests/integration/test_emphasis_strip.py`,
-**When** Talker emits `That's *really* important` and the pipeline runs end-
-to-end with a Cartesia mock,
-**Then** the mock receives `That's really important` (marks stripped),
-*not* `That's *really* important` (unless Cartesia is confirmed in Story 7.1
-to honor marks, in which case the marked form passes through and the test
-asserts the configured form).
+**Given** `[openers] timer_fallback_ms = 700` and
+`[openers] timer_fallback_bucket = "acknowledge"` (defaults) in `setup.toml`,
+**When** end-of-speech fires and no `OpenerSelectedFrame` has arrived within
+the configured window,
+**Then** the pipeline fires `OpenerSelector.pick(timer_fallback_bucket)` and
+plays the result. If a Talker opener tag arrives first, the timer fallback
+is cancelled (no duplicate). If Talker emits no tag and real audio arrives
+within `timer_fallback_ms`, no opener plays (self-gating preserved).
+
+**Cartesia overlap (the serialization-tax deletion):**
+
+**Given** `sequential_loop.py` (or the post-Epic-6 successor),
+**When** Story 6.2 lands,
+**Then** the `await filler_task` ordering at `sequential_loop.py:696-714` is
+removed — `tts.synthesize()` for the real answer's first segment fires the
+moment the splitter has the first non-tag text buffered, regardless of
+opener playback state. The audio device's PyAudio queue serializes
+*playback*; the network call is unblocked.
+
+**Given** an integration test `tests/integration/test_overlap_timing.py`,
+**When** Talker emits `<opener bucket="thinking"/>` + a long real reply,
+with `CartesiaClient.generate` mocked to fire after a controlled 100 ms
+delay,
+**Then** the mock's call timestamp is **≤ 100 ms after** the Talker's first
+non-tag text is buffered, demonstrably *not* waiting for opener playback to
+finish. A baseline assertion records what the v1 timing looked like
+(~opener_duration ms wait) for regression detection.
+
+**Given** the integration test sweep across (short / medium / long) opener
+durations × (fast / slow) Cartesia TTFB,
+**When** measured end-to-end,
+**Then** dead-air-after-opener (opener last-frame → real-answer first-frame)
+is ≤ 250 ms p95 (NFR34). Opener onset stays ≤ 700 ms p95 (NFR33).
+
+**Shape check against Story 6.1's TTFB report:**
+
+**Given** Story 6.1's TTFB measurement report,
+**When** Story 6.2's design is finalised,
+**Then** if median TTFB ≤ 0.4 s the story re-evaluates whether the cached
+opener subsystem is still justified vs. pure-live (DR-001 Option D); the
+decision and reasoning are recorded in the story's implementation notes. If
+TTFB > 0.4 s the cached design as specified above stands.
 
 ---
 
-### Story 7.3: Emphasis vocalization wiring — 7th tag + timestamp join + publish
+### Story 6.3: Emphasis as the 7th vocalization tag (Talker marks + splitter join + wire)
 
 As Kamal,
-I want the pipeline to publish one `vocalization(tag="emphasis",
-audio_frame_id=...)` per LLM-marked word, anchored to that word's Cartesia
-timestamp,
-so that the body has the audio-anchored emphasis cue DR-004 defines and
-nothing more on the wire.
+I want the Talker LLM to mark word(s) it intends to acoustically stress, the
+splitter to join those marks against Cartesia word timestamps, and the
+pipeline to publish one `vocalization(tag="emphasis", audio_frame_id=...)`
+per emphasis,
+so that the body has the audio-anchored emphasis cue DR-002 needs and
+DR-004 defines — and **nothing more on the wire** (no per-segment timing
+payload, no new topic).
 
 **Acceptance Criteria:**
 
+**Talker emphasis-mark prompt:**
+
+**Given** the Talker system prompt,
+**When** Story 6.3 lands,
+**Then** the prompt teaches a single emphasis-mark syntax (lean `*word*` for
+minimal token cost) and constrains the LLM to ~1–2 marks per typical
+conversational sentence with a "mark only words a thoughtful speaker would
+acoustically stress" instruction. Examples cover one-clause (0–1 marks) and
+two-clause (1–2 marks) sentences.
+
+**Splitter parse + mark-strip / mark-pass-through:**
+
+**Given** `splitter/state_machine.py`,
+**When** Story 6.3 lands,
+**Then** the parser recognizes the mark syntax token-by-token (handling marks
+that span token boundaries and marks inside existing `<emotion .../>` tagged
+text), remembers marked-word indices within the current segment, and either
+(a) strips marks before sending text to Cartesia, or (b) passes the marked
+form through if Story 6.1's TTFB-spike report confirmed Cartesia's WS API
+honors emphasis tags in text input. The Cartesia-input direction is the
+**runtime config decision recorded in Story 6.1's report**, not re-debated
+here.
+
+**Given** a unit test sweep over 30 fixtures (hand-crafted + 20 real Groq
+replies sampled with the new prompt),
+**When** the splitter runs,
+**Then** marked words are extracted correctly across all forms; mark density
+per sentence is logged for Story 6.4's soak to analyze.
+
+**Vocabulary expansion (the 7th tag):**
+
 **Given** `expression_map.yaml`,
-**When** Story 7.3 lands,
+**When** Story 6.3 lands,
 **Then** the `vocalizations:` block grows 6 → 7 with
-`emphasis: { tts_supported: false }`. The loader (`config/expression_map.py`)
-accepts the new entry; the existing completeness check passes against the
-canonical 7-tag set.
+`emphasis: { tts_supported: false }`. The loader
+(`config/expression_map.py`) accepts the new entry; the completeness check
+passes against the canonical 7-tag set.
 
 **Given** `schemas/vocalization_event.py`,
-**When** Story 7.3 lands,
+**When** Story 6.3 lands,
 **Then** the `VocalizationTag` Literal extends additively to include
-`"emphasis"` (and any other v2 tags added in the same wave). Contract test
-`tests/contract/test_vocalization_event_schema.py` verifies the schema
-accepts `tag="emphasis"` and rejects `tag="<unknown>"`. `schema_version` is
-**unchanged at 3** (additive Literal extension is forward-compat per
-CLAUDE.md rule 6).
+`"emphasis"`. Contract test `tests/contract/test_vocalization_event_schema.py`
+verifies `tag="emphasis"` accepted and `tag="<unknown>"` rejected.
+**`schema_version` stays at 3** (additive Literal extension is forward-compat
+per CLAUDE.md rule 6 and DR-004).
+
+**Timestamp join + publish:**
 
 **Given** `splitter/segmenter.py`,
-**When** a Talker response includes emphasis marks (per Story 7.2) and
-Cartesia returns word `timestamps` (per Story 7.1),
-**Then** the segmenter performs the join — for each marked-word index in
-the segment, look up the matching `start_ms` from the Cartesia `timestamps`,
-identify the audio frame whose presentation time coincides with that offset
-(within the audio-anchor tolerance NFR5 allows), and call
-`EventPublisher.publish_vocalization(VocalizationPayload(tag="emphasis",
-audio_frame_id=<that frame's id>, tts_supported=False))`. One event per
-marked word.
+**When** a Talker response includes emphasis marks (per the prompt above)
+and Cartesia returns word `timestamps` (per Story 6.1's `SegmentTiming`),
+**Then** the segmenter performs the join — for each marked-word index, look
+up the matching `start_ms` from `SegmentTiming.words`, identify the audio
+frame whose presentation time coincides with that offset (within NFR5's
+anticipatory tolerance), and call
+`EventPublisher.publish_vocalization(VocalizationPayload(
+tag="emphasis", audio_frame_id=<that frame's id>, tts_supported=False))`.
+One event per marked word.
 
 **Given** an integration test `tests/integration/test_emphasis_event.py`,
 **When** Talker emits `I'm *really* glad to *see* you` and Cartesia returns
 synthetic `timestamps` for those four words,
 **Then** the test observes two published `vocalization` events with
-`tag="emphasis"`, both with `audio_frame_id` pointing to the audio frame at
-the matched word's `start_ms`, and **NO** per-word events for non-marked
-words. The audio-anchor delta is within ±30 ms of the marked words'
-`start_ms` (NFR5 anticipatory window).
+`tag="emphasis"`, audio-anchored within ±30 ms of the marked words'
+`start_ms` (NFR5 anticipatory window), and **NO** per-word events for
+non-marked words.
 
 **Given** the `LogEventPublisher` (test/dev adapter),
-**When** Story 7.3 lands,
+**When** Story 6.3 lands,
 **Then** it records `emphasis` events alongside the other six vocalization
 tags with no special-case code (the Protocol shape doesn't change).
 
 ---
 
-### Story 7.4: Embodiment-brief amendment + Epic 7 soak / emphasis-density tuning
+### Story 6.4: Instrumentation + soak + embodiment-brief amendment
 
 As Kamal,
-I want `olaf-embodiment-brief.md` updated in the same commit as the
-pipeline-side wire change, and the soak to validate emphasis density +
-anticipatory timing across real Talker output and a working embodiment
-renderer,
-so that NFR26 (spec-as-contract) is honored, the body has the contract it
-needs to consume `emphasis`, and any prompt-tuning iteration lands before
-Epic 7 is declared done.
+I want per-turn latency instrumentation (replacing the
+`end_to_transcript_ms=0` placeholder), a v2 soak measuring the new
+perceived-latency and emphasis-density targets, and the `olaf-embodiment-brief.md`
+amendment verified in lockstep,
+so that NFR33 / NFR34 / NFR35 are measurable, DR-001's projected timeline
+is validated, the body has a correct contract for `emphasis`, and any
+prompt-tuning iteration lands before Epic 6 is declared done.
 
 **Acceptance Criteria:**
 
-**Given** `olaf-embodiment-brief.md`,
-**When** Story 7.4 lands (in the same commit as Story 7.3's pipeline wiring),
-**Then** Appendix A.7's `tag` set lists `emphasis` (vocabulary expansion from
-6 → 7); Appendix B.2's `embodiment_map.yaml` example block adds an
-`emphasis:` entry; a new section "v2 head-motion realizer" (or similar)
-sketches DR-002's frozen layered model — base → rhythm-stochastic-body-side →
-emphasis-punctuated → speech_emotion-style → explicit-gestures → anticipation →
-multi-axis — with a paragraph on why per-word wire rhythm isn't shipped
-(DR-004). The startup-validation rules in B.3 are updated to add `emphasis`
-to the vocalization completeness check.
+**Latency instrumentation (NFR35):**
 
-**Given** the Phase 3-equivalent v2 soak script,
-**When** the operator runs the soak with the new Talker prompt and live
-`olaf-embodiment` consuming `emphasis`,
-**Then** the soak captures: emphasis density per sentence (p25 / p50 / p75 /
-p90), NFR5 anticipatory window for `emphasis` events specifically, and
-operator-rated naturalness of the resulting head motion. Density outside the
-1–2/sentence target triggers a prompt-tuning iteration in this story before
-sign-off.
+**Given** `sequential_loop.py:287` (or the post-Epic-6 successor) currently
+emits a hardcoded `end_to_transcript_ms=0` placeholder,
+**When** Story 6.4 lands,
+**Then** the placeholder is replaced with a real `stt_ms` measurement
+(vad_end → transcript), and the `turn.complete` log event additionally
+carries: `ttft_ms` (Talker time-to-first-token — best-effort; `null` for
+providers that don't expose it), `ttfb_ms` (already emitted at
+`tts/cartesia.py:145`), `end_to_first_real_audio_ms`,
+`opener_source` (`"llm_tag"` / `"timer_fallback"` / `null`),
+`opener_duration_ms`, `dead_air_after_opener_ms`,
+`emphasis_count_per_turn`. Schema documented in `architecture.md`
+§Logging Conventions; contract test in
+`tests/contract/test_turn_complete_log_schema.py`.
 
-**Given** a cross-project integration test (or manual smoke recipe) once the
-embodiment side is ready,
-**When** the pipeline emits 10+ `emphasis` events during a soak conversation,
-**Then** the embodiment renderer produces the corresponding head-nod motions
-within NFR5's window, and no `embodiment.unmapped_vocalization` WARN logs are
-emitted (the body has the renderer entry per Story 7.4's brief update).
+**Embodiment-brief amendment (NFR26 spec-as-contract):**
 
-**Given** any prompt or wire-shape iteration discovered during soak,
-**When** the iteration completes,
-**Then** `prompts/talker_system.md` (if prompt-only), `expression_map.yaml`
-(if vocabulary-only), and the embodiment brief (if vocabulary-only) are
-updated in the **same commit**; if a wire-shape change is needed, it
-requires a new decision record per the file's doctrine (DR-004 set the
-precedent — additive only, no `schema_version` bump).
+**Given** `olaf-embodiment-brief.md`'s 2026-05-28 amendments (already
+written in the design pass — Appendix A.7 `emphasis` row, B.2 example
+block, B.3 startup validation, the "v2 head-motion realizer" section),
+**When** Story 6.4 lands,
+**Then** the amendments are reviewed and any drift since the design pass
+is corrected; if the wire shape has changed during Stories 6.1–6.3, the
+amendment is updated to match in the **same commit** as the corrective
+pipeline change. Cross-project — the embodiment author must confirm the
+brief still reads correctly against their renderer implementation.
+
+**Soak + density tuning:**
+
+**Given** a v2-equivalent soak script (extends Story 5.4's pattern; runs
+on the post-Epic-6 pipeline with live `olaf-embodiment` consuming
+`emphasis`),
+**When** the operator runs the soak,
+**Then** it captures: `opener_onset_ms` p25 / 50 / 75 / 90 (target ≤ 700 ms
+p95 per NFR33); `dead_air_after_opener_ms` p25 / 50 / 75 / 90 (target ≤ 250
+ms p95 per NFR34); `end_to_first_real_audio_ms` p25 / 50 / 75 / 90 (target
+~1.7–2.0 s median per DR-001's projection); `emphasis_count_per_sentence`
+p25 / 50 / 75 / 90 (target 1–2 per typical sentence); NFR5 anticipatory
+window holding for `emphasis` events; operator-rated naturalness of the
+resulting head motion.
+
+**Given** the soak measurement,
+**When** any target band is missed,
+**Then** the iteration lever is the lightest-touch one — typically a Talker
+prompt edit (opener bucket-selection rules, emphasis density instruction).
+Wire-shape changes require a new decision record per the file's doctrine
+(DR-004 set the additive-only precedent — no `schema_version` bump).
+
+**FR62 deployment constraint check:**
+
+**Given** the v2 deployment is required to be single-host per FR62,
+**When** Story 6.4's soak runs,
+**Then** pipeline and body co-locate on the same DDS host; cross-host
+multi-machine deployment is explicitly out of v2 scope and the soak
+documents this. If a future multi-host case arises, it warrants its own
+decision record covering clock-sync (deferred).
+
+**Cross-project sign-off:**
+
+**Given** Story 6.4 marks the v2 expression cluster as done,
+**When** sign-off occurs,
+**Then** both projects (`voice-agent-pipeline` and `olaf-embodiment`) tag
+a release noting the lockstep landing; embodiment confirms the 7-tag
+vocabulary including `emphasis` is rendered correctly; pipeline confirms
+the WS transport + emphasis publish + instrumentation are stable across
+the soak window.
 
 ---
 
@@ -2520,7 +2301,7 @@ Optional fallback if Talker fails to detect goodbye. `setup.toml` `[activity] id
 ## v2 Backlog (Beyond v1.5)
 
 Items below are v2 work that doesn't warrant a full epic. The substantial v2
-expression work is captured in **Epics 6 + 7** above (DR-001/002/004); the
+expression work is captured in **Epic 6** above (DR-001/002/004); the
 backlog here covers the smaller residual items.
 
 ### Story v2-1: `events.jsonl` versioned structlog sink (DR-003 promotion path)

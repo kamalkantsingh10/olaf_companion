@@ -212,7 +212,7 @@ The component is "useful" when it can serve a multi-turn live conversation with 
 ### Vision (v2+)
 
 **v2 expression cluster** (frozen design records → in-PRD FR clusters above →
-Epics 6 + 7 in epics.md; scheduled post-v1 launch):
+Epic 6 in epics.md — single cohesive epic, 4 stories; scheduled post-v1 launch):
 
 - **Conversational openers replace timer fillers (DR-001 → Epic 6, FR54–FR58, NFR33–NFR35).**
   Cached, function-bucketed openers selected by the Talker's first-token tag,
@@ -221,7 +221,7 @@ Epics 6 + 7 in epics.md; scheduled post-v1 launch):
   (~3.0 s median end-of-speech → real answer) by deleting the
   filler-serialization tax (~1 s free win) and closing the ~1.5 s dead-air
   trailing the v1 filler.
-- **Speech-synchronized head motion via emphasis (DR-002 → Epic 7, FR59–FR62, DR-004).**
+- **Speech-synchronized head motion via emphasis (DR-002 → Epic 6 / Stories 6.1 + 6.3, FR59–FR62, DR-004).**
   Cartesia SSE → WebSocket migration with word `timestamps` capture; LLM
   emphasis marks in the text stream; emphasis joins as the 7th
   `vocalization` tag (DR-004 — same audio-anchored, body-renders-it semantics
@@ -645,7 +645,7 @@ Personal-project scale, not a fleet:
 
 ### Voice Synthesis
 
-- **FR15**: The pipeline can stream Cartesia-tagged text to Cartesia Sonic-3 and receive audio frames in response. *(v2 — Epic 7: transport migrates from SSE to **WebSocket** to capture `timestamps` events; see FR59. v1 ships on SSE.)*
+- **FR15**: The pipeline can stream Cartesia-tagged text to Cartesia Sonic-3 and receive audio frames in response. *(v2 — Epic 6 / Story 6.1: transport migrates from SSE to **WebSocket** to capture `timestamps` events; see FR59. v1 ships on SSE.)*
 - **FR16**: The pipeline can degrade gracefully when Cartesia is unreachable, entering a text-only mode signaled by a sad-emotion OLAF expression and a logged error.
 - **FR17**: The pipeline can use a configurable Cartesia voice ID and default emotion.
 
@@ -658,7 +658,7 @@ Personal-project scale, not a fleet:
 - **FR22**: The pipeline can attach `speech_emotion` and `vocalization` event metadata to the matching Cartesia audio frame, ensuring audio-anchored events publish in lockstep with audio.
 - **FR23**: The pipeline can publish `speech_emotion` events to ROS 2 on `/olaf/speech_emotion`, anchored to audio frame send time, achieving 30–80ms anticipatory alignment with voice (NFR5).
 - **FR24**: The pipeline can suppress republishing of unchanged `speech_emotion` values via a "last published" cache (turn-scoped, reset at `activity → listening`), while always publishing `vocalization` events.
-- **FR25**: The pipeline can publish `vocalization` events (e.g. `[laugh]`, `[sigh]`, `[nod]`, `[shake]`) to ROS 2 on `/olaf/vocalization`, deciding per-tag whether to also pass the tag to Cartesia (when Cartesia supports it) or strip it from the TTS text. Vocalization source: LLM-emitted inline tags parsed pre-TTS (Cartesia-emitted bursts are not v1). *(v2 — Epic 7: a 7th tag `emphasis` joins the set per DR-004 — same audio-anchored, body-renders-it semantics as `nod`/`shake`; sourced from the LLM's emphasis marks × Cartesia word timestamps. Additive Literal extension; `schema_version` stays at 3 per CLAUDE.md rule 6.)*
+- **FR25**: The pipeline can publish `vocalization` events (e.g. `[laugh]`, `[sigh]`, `[nod]`, `[shake]`) to ROS 2 on `/olaf/vocalization`, deciding per-tag whether to also pass the tag to Cartesia (when Cartesia supports it) or strip it from the TTS text. Vocalization source: LLM-emitted inline tags parsed pre-TTS (Cartesia-emitted bursts are not v1). *(v2 — Epic 6 / Story 6.3: a 7th tag `emphasis` joins the set per DR-004 — same audio-anchored, body-renders-it semantics as `nod`/`shake`; sourced from the LLM's emphasis marks × Cartesia word timestamps. Additive Literal extension; `schema_version` stays at 3 per CLAUDE.md rule 6.)*
 
 ### Lifecycle State Management
 
@@ -728,7 +728,7 @@ Personal-project scale, not a fleet:
   `sequential_loop.py:696-714` — the v1 serialization that *added* latency on
   ~75% of turns per DR-001. Target: dead-air-after-opener ≤ 250 ms p95 (NFR34).
 
-### Speech Timing & Emphasis (v2 — Epic 7, promotes DR-002 + DR-004)
+### Speech Timing & Emphasis (v2 — Epic 6 / Stories 6.1 + 6.3, promotes DR-002 + DR-004)
 
 > **Scheduling:** v2 work; not in the current sprint. The cluster below
 > implements the head-motion design DR-002 froze, with the wire shape closed
@@ -744,12 +744,12 @@ Personal-project scale, not a fleet:
   consumed in v2 head motion). Migration removes the SSE `timestamps`-drop at
   `tts/cartesia.py:129`.
 - **FR60**: The Talker can emit **emphasis marks** in its text stream on word(s)
-  it intends to stress (final mark syntax decided in Story 7.2). The splitter
+  it intends to stress (final mark syntax decided in Story 6.3). The splitter
   parses marks pre-TTS, remembers the marked-word indices, and strips the marks
   before passing text to Cartesia (or passes Cartesia's emphasis-input form if
-  the WS spike confirms it survives — see Story 7.1). Density target: 1–2 per
+  Story 6.1's WS spike confirms it survives). Density target: 1–2 per
   conversational sentence, enforced via prompt design and validated in soak
-  (Story 7.4).
+  (Story 6.4).
 - **FR61**: For each marked word, the pipeline can publish a
   `vocalization(tag="emphasis", audio_frame_id=...)` event, anchored to the
   Cartesia word timestamp for that word (DR-004's join product — the LLM's

@@ -60,7 +60,7 @@ editHistory:
       `decision-records.md`). Architectural deltas are limited:
       (1) **Cartesia transport** — the Batch 2 decision row for
       `tts/cartesia.py` gains a v2 footnote that the SSE→WebSocket
-      migration (Epic 7 / Story 7.1) captures word `timestamps`
+      migration (Epic 6 / Story 6.1) captures word `timestamps`
       currently dropped at `cartesia.py:129`; v1 SSE shape stands
       until then. (2) **Vocalization tag set** — `emphasis` joins as
       the 7th tag in v2 per DR-004; additive Literal extension on
@@ -71,8 +71,9 @@ editHistory:
       consumer (separate project, zero pipeline change in v1); the
       versioned `events.jsonl` structlog sink is parked as the v2
       promotion path. (4) **Implementation sequence** — the v2
-      expression epics (6 + 7) are appended to the "items 9–19"
-      sequence as items 20–28, scheduled post-v1 launch. No changes
+      expression promotion is appended to the "items 9–19" sequence
+      as items 20–23 (single Epic 6, four stories), scheduled
+      post-v1 launch. No changes
       to the module-by-domain layout, Type System Conventions, async
       patterns, fail-fast posture, or the four-topic publisher
       surface. `schema_version` stays at 3.
@@ -175,15 +176,14 @@ If any check fails, the pipeline refuses to start with a clear error.
 | Hailo-8L acceleration | FR7, FR41 | Use Hailo-8L when present for Whisper inference; CPU fallback path with logged warning if missing |
 | Pi-specific resource thresholds | NFR14, NFR15, NFR16, NFR17, NFR18 | Calibrate to Pi 5 envelope; thermal headroom; active cooling |
 
-**Deferred to v2 — Expression promotion (DR-001/002/003/004; Epics 6 + 7):**
+**Deferred to v2 — Expression promotion (DR-001/002/003/004; single Epic 6, four stories):**
 
 | Concern | Deferred FRs/NFRs | v2 behavior |
 |---|---|---|
-| Conversational openers replace timer filler | FR54–FR58, NFR33, NFR34 | Function-bucketed cached openers selected by Talker first-token tag; Cartesia overlap deletes the v1 serialization tax. Epic 6 supersedes Story 5.5's filler design (cached-audio infrastructure reused). |
-| Cartesia transport + word timestamps | FR15 (extended), FR59 | SSE → WebSocket migration; per-segment `SegmentTiming` captured (currently dropped at `tts/cartesia.py:129`). Also resolves DR-001's TTFB keystone open question. |
-| LLM emphasis marks + emphasis as 7th vocalization tag | FR60, FR61, FR25 (extended) | Talker prompt emits `*word*`-style marks (~1–2 per sentence); splitter joins marked indices × Cartesia timestamps → one `vocalization(tag="emphasis", audio_frame_id=...)` per emphasis. DR-004's wire-shape resolution; additive Literal, no `schema_version` bump. |
-| Single-host topology for v2 head motion | FR62 | Pipeline and body co-locate on the same DDS host; cross-host clock skew (~±100 ms over Wi-Fi) would exceed NFR5's anticipatory window. Deferred until clock-sync work lands. |
-| Latency instrumentation backfill | NFR35 | Per-turn `stt_ms` / `ttft_ms` / `ttfb_ms` / `end_to_first_real_audio_ms`; fixes the `end_to_transcript_ms=0` hardcoded placeholder at `sequential_loop.py:287`. |
+| Cartesia transport + word timestamps + TTFB spike | FR15 (extended), FR59 | Story 6.1 — SSE → WebSocket migration; per-segment `SegmentTiming` captured (currently dropped at `tts/cartesia.py:129`). Also resolves DR-001's TTFB keystone open question; result shapes Story 6.2. |
+| Conversational openers replace timer filler | FR54–FR58, NFR33, NFR34 | Story 6.2 — function-bucketed cached openers selected by Talker first-token tag; Cartesia overlap deletes the v1 serialization tax. Supersedes Story 5.5's filler design (cached-audio infrastructure reused). |
+| LLM emphasis marks + emphasis as 7th vocalization tag | FR60, FR61, FR25 (extended) | Story 6.3 — Talker prompt emits `*word*`-style marks (~1–2 per sentence); splitter joins marked indices × Story-6.1 timestamps → one `vocalization(tag="emphasis", audio_frame_id=...)` per emphasis. DR-004's wire-shape resolution; additive Literal, no `schema_version` bump. |
+| Latency instrumentation + soak + embodiment-brief amendment + single-host topology constraint | NFR35, FR62, NFR26 | Story 6.4 — per-turn `stt_ms` / `ttft_ms` / `ttfb_ms` / `end_to_first_real_audio_ms` replaces the `end_to_transcript_ms=0` placeholder at `sequential_loop.py:287`. v2 soak validates NFR33/34/5; FR62 deployment constraint (single-host) verified; `olaf-embodiment-brief.md` amendments reviewed for drift since the 2026-05-28 design pass. |
 | Telemetry dashboard boundary | (no new FRs/NFRs) | DR-003 — external log-tail consumer reads structured INFO log; pipeline change is zero. Versioned `events.jsonl` sink (Story v2-1) is the promotion path if log-format coupling bites. |
 
 **v1 design constraint:** components touching external deps sit behind thin adapters so v2 can drop in resilience policy without restructuring. STT inference is encapsulated so the v2 port can swap CPU Whisper for a Hailo-accelerated path without rippling. Activity FSM transitions for barge-in are designed-in (the `speaking → listening` arrow exists in the FSM) but not wired in v1; the v1.5 barge-in story flips a feature flag, it doesn't restructure the FSM.
@@ -527,7 +527,7 @@ downstream embodiment project consumes the wire as-is or not at all.
 4. **STT inference interface + Whisper/Groq backends** — async `transcribe`, `asyncio.to_thread` wrapping faster-whisper or the openai-compatible Groq client. ✅ landed (Story 1.7, Whisper); Groq backend + default flip landed 2026-05-12 (see `sprint-change-proposal-2026-05-12.md`).
 5. **Wake-word + VAD + audio I/O** — Pipecat LocalAudioTransport, `pvporcupine` integration, audio device pinning. ✅ landed (Stories 1.6, 2.1); mic-mode flip wiring pending Epic 3.
 6. **Talker (provider-agnostic factory) + TurnRouter + TurnDispatch** — single-channel, no tools, low-confidence clarification, simple-turn loop. ✅ landed (Stories 2.2 + 2.4 + 2.5)
-7. **Cartesia TTS streaming client** — `tts.generate_sse`, raw S16LE PCM. ✅ landed (Story 2.3). *(v2 — Epic 7 / Story 7.1: migrate to WebSocket transport, capture word `timestamps` currently dropped at `cartesia.py:129`; serves DR-001's TTFB keystone measurement and DR-002 + DR-004's emphasis-vocalization join. SSE remains available as a config-knob fallback during the v2 implementation window.)*
+7. **Cartesia TTS streaming client** — `tts.generate_sse`, raw S16LE PCM. ✅ landed (Story 2.3). *(v2 — Epic 6 / Story 6.1: migrate to WebSocket transport, capture word `timestamps` currently dropped at `cartesia.py:129`; serves DR-001's TTFB keystone measurement and DR-002 + DR-004's emphasis-vocalization join. SSE remains available as a config-knob fallback during the v2 implementation window.)*
 8. **Pipeline assembly** — Pipecat assembly + simple-turn integration test. ✅ landed (Story 2.5)
 9. **Event schemas (rebuild)** — `EventEnvelope` mixin + `MoodEvent`, `ActivityEvent`, `SpeechEmotionEvent`, `VocalizationEvent` pydantic models. **Replaces** the placeholder `schemas/expression_event.py` + `schemas/lifecycle_event.py`.
 10. **`EventPublisher` Protocol + `LogEventPublisher` adapter** — Protocol with four publish methods + `connect/disconnect/is_healthy`; in-memory log adapter for tests and pre-Epic-3 dev.
@@ -541,26 +541,20 @@ downstream embodiment project consumes the wire as-is or not at all.
 18. **Orchestrator slow-path clients** — `OrchestratorClient` (httpx + SSE), `BeliefStateClient` (httpx GET).
 19. **Soak + calibration (Phase 3)** — 7-day ambient soak, sleep-intent FP/FN tuning, mood cadence verification, 30-min session pass criteria.
 
-**v2 expression promotion (items 20–28; scheduled post-v1 launch; design records DR-001/002/003/004; epics 6 + 7 in `epics.md`):**
+**v2 expression promotion (items 20–23; scheduled post-v1 launch; design records DR-001/002/003/004; single Epic 6 in `epics.md`):**
 
-20. **Opener manifest + cached library** (Epic 6 / Story 6.1) — function buckets (`thinking`, `acknowledge`, `look_up`, `delegate`, `react`), ≥2 takes per phrase, `assets/audio/openers/<bucket>/NN.wav`, manifest at `assets/audio/openers/manifest.json` (mirrors Story 5.5's pattern); Stage 3 startup probe extended.
-21. **Talker opener-tag prompt + selector** (Story 6.2) — `prompts/talker_system.md` teaches opener-function tag emission; `audio/openers.py:OpenerSelector` picks a take per bucket with a turn-scoped last-N ring buffer; splitter recognizes the tag and emits `OpenerSelectedFrame` to play via `audio/cached.py`.
-22. **Cartesia overlap refactor** (Story 6.3) — delete the `await filler_task`-before-synth ordering at `sequential_loop.py:696-714`; audio device gates *playback*, network gates *synthesis*. Eliminates DR-001's serialization tax (~1 s, ~75% of turns).
-23. **Timer fallback + self-gating** (Story 6.4) — `[openers] timer_fallback_ms` (default 700 ms), `timer_fallback_bucket` (default `acknowledge`); no-tag-from-Talker + fast-real-audio path leaves the user with no opener at all.
-24. **Latency instrumentation backfill** (Story 6.5) — `stt_ms`, `ttft_ms` (best-effort), `ttfb_ms`, `end_to_first_real_audio_ms`, `opener_*` fields on `turn.complete`; replaces the hardcoded `end_to_transcript_ms=0` at `sequential_loop.py:287`. NFR33 / NFR34 / NFR35.
-25. **Cartesia SSE→WS migration + timestamps capture + TTFB spike** (Epic 7 / Story 7.1) — `tts/cartesia.py` swaps to WebSocket; `SegmentTiming(words: list[Word])` captured per segment; TTFB measured against the dev host (resolves DR-001's keystone).
-26. **Talker emphasis-mark prompt + splitter parsing** (Story 7.2) — system prompt teaches a single emphasis-mark syntax constrained to ~1–2 marks per sentence; splitter parses pre-TTS, remembers marked indices, strips marks before send (or passes through if Story 7.1 confirms Cartesia honors them).
-27. **Emphasis vocalization wiring** (Story 7.3) — `expression_map.yaml` `vocalizations:` grows 6 → 7 (`emphasis: { tts_supported: false }`); `VocalizationTag` Literal additively extends to include `"emphasis"`; splitter joins marked-word indices × Cartesia timestamps to emit one `vocalization(tag="emphasis", audio_frame_id=...)` per emphasis. `schema_version=3` unchanged (additive — CLAUDE.md rule 6).
-28. **Embodiment-brief amendment + Epic 7 soak / emphasis-density tuning** (Story 7.4) — `olaf-embodiment-brief.md` Appendix A.7 / B.2 gain `emphasis`; new "v2 head-motion realizer" section sketches DR-002's layered model; cross-project soak validates NFR5 holds and density target (1–2/sentence) lands.
+20. **Cartesia SSE → WebSocket migration + `timestamps` capture + TTFB spike** (Epic 6 / Story 6.1) — `tts/cartesia.py` swaps to WebSocket; `SegmentTiming(words: list[Word])` captured per segment (currently dropped at `cartesia.py:129`); TTFB measured against the dev host. **Shared enabler** — Story 6.2 needs the TTFB number to finalise its design; Story 6.3 needs `timestamps` for the emphasis join. Resolves DR-001's keystone open question.
+21. **Cached opener system + Cartesia overlap** (Story 6.2; supersedes Story 5.5's filler design) — function buckets (`thinking`, `acknowledge`, `look_up`, `delegate`, `react`), ≥2 takes per phrase, `assets/audio/openers/<bucket>/NN.wav`, manifest mirroring Story 5.5; `prompts/talker_system.md` teaches opener-function tag emission; `audio/openers.py:OpenerSelector` picks a take with a turn-scoped last-N ring buffer; splitter recognises the tag → `OpenerSelectedFrame` → `audio/cached.py:play_cached(...)`; `[openers] timer_fallback_ms` (default 700 ms) preserves the v1 onset floor; self-gating when Talker emits no tag. **Cartesia overlap**: delete the `await filler_task`-before-synth ordering at `sequential_loop.py:696-714`; audio device gates *playback*, network gates *synthesis*. Eliminates DR-001's serialization tax (~1 s, ~75% of turns). NFR33 / NFR34.
+22. **Emphasis as 7th vocalization tag** (Story 6.3) — `prompts/talker_system.md` teaches a single emphasis-mark syntax constrained to ~1–2 per sentence; splitter parses pre-TTS, remembers marked indices, strips marks before send (or passes through if Story 6.1's report confirms Cartesia honors them); `expression_map.yaml` `vocalizations:` grows 6 → 7 (`emphasis: { tts_supported: false }`); `VocalizationTag` Literal additively extends to include `"emphasis"`; splitter joins marked-word indices × Story-6.1 timestamps to emit one `vocalization(tag="emphasis", audio_frame_id=...)` per emphasis. `schema_version=3` unchanged (additive — CLAUDE.md rule 6 + DR-004).
+23. **Instrumentation + soak + embodiment-brief amendment** (Story 6.4 — the wrap) — per-turn `stt_ms`, `ttft_ms` (best-effort), `ttfb_ms`, `end_to_first_real_audio_ms`, `opener_*` fields on `turn.complete` (replaces the hardcoded `end_to_transcript_ms=0` at `sequential_loop.py:287`); v2 soak measures NFR33 / NFR34 / NFR5 anticipatory window for `emphasis` events / emphasis density per sentence (target 1–2); FR62 single-host constraint verified; `olaf-embodiment-brief.md` 2026-05-28 amendments reviewed for drift and corrected in lockstep (NFR26 spec-as-contract). Cross-project sign-off with `olaf-embodiment`.
 
 **v2 cross-component dependencies:**
 
-- Story 6.3 (overlap) depends on Story 6.1 (opener manifest exists) + Story 6.2 (tag emission produces an `OpenerSelectedFrame` to play).
-- Story 7.1 (WS migration) is the keystone for both Story 6.5 (instrumentation can be done on either transport, but TTFB measurement under WS shapes Epic 6's final-form decisions) and Story 7.3 (the timestamps join needs the WS-captured `SegmentTiming`).
-- Story 7.3 (vocalization wiring) depends on Story 7.2 (marked-word indices) + Story 7.1 (Cartesia timestamps).
-- Story 7.4 (embodiment-brief amendment) must land in the same commit as Story 7.3's wire change (NFR26 spec-as-contract).
+- Story 6.1 (WS migration) is the **keystone**: 6.2 needs the TTFB measurement to finalise opener-subsystem shape (if median TTFB ≤ 0.4 s, 6.2 re-evaluates against DR-001 Option D); 6.3 needs Story 6.1's `SegmentTiming` for the timestamp join.
+- Stories 6.2 and 6.3 can run in parallel after 6.1.
+- Story 6.4 must land last and bundles the embodiment-brief amendment in the same commit as any corrective pipeline change (NFR26 spec-as-contract).
 
-**Story 5.5 supersession:** Epic 6 stories collectively supersede Story 5.5's *filler design* (`audio/filler.py` — timer + random mood-keyed selection + filler-before-synth ordering). The *cached-audio infrastructure* Story 5.5 ships (`audio/cached.py`, `assets/audio/` layout, `manifest.json` discipline, `just regenerate-audio`, Stage 3 probe) is **reused, not replaced**. v1 ships Story 5.5 unchanged; on Epic 6 landing, Story 5.5 is marked superseded in epics.md but kept for audit.
+**Story 5.5 supersession:** Story 6.2 supersedes Story 5.5's *filler design* (`audio/filler.py` — timer + random mood-keyed selection + filler-before-synth ordering). The *cached-audio infrastructure* Story 5.5 ships (`audio/cached.py`, `assets/audio/` layout, `manifest.json` discipline, `just regenerate-audio`, Stage 3 probe) is **reused, not replaced**. v1 ships Story 5.5 unchanged; on Epic 6 landing, Story 5.5 is marked superseded in epics.md but kept for audit.
 
 #### DR-003 — telemetry boundary (no pipeline change in v1)
 

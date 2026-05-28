@@ -15,8 +15,10 @@ feeds a deliberate **design pass → PRD update → epics/stories** — it is no
 into epics directly. DR-001/002/003 (the v2 expression work) are captured here and
 **scheduled for later**; none are in the current sprint. The 2026-05-28 design pass
 promoted them in-place to PRD §"Conversational Openers (v2)" + §"Speech Timing &
-Emphasis (v2)" and epics.md Epics 6 + 7; DR-004 (below) is the small follow-on record
-that closed DR-002's open wire-shape question during that pass.
+Emphasis (v2)" and epics.md Epic 6 (a single cohesive 4-story epic — initial draft
+proposed Epic 6 + Epic 7 but consolidated 2026-05-28 on user pushback against
+over-decomposition); DR-004 (below) is the small follow-on record that closed
+DR-002's open wire-shape question during that pass.
 
 ---
 
@@ -145,10 +147,10 @@ VocalizationTag = Literal[
 
 - **Talker prompt** (`prompts/talker_system.md`): teach a single emphasis-mark
   syntax (e.g., `*word*` or `<em>word</em>` — final syntax decided in the
-  Epic 7 story that wires the prompt). Constrain density toward "1–2 per
+  Epic 6 / Story 6.3 that wires the prompt). Constrain density toward "1–2 per
   sentence; only words a thoughtful speaker would acoustically stress."
 - **Cartesia handling.** If Cartesia honors emphasis tags in its text input
-  (verify in the Epic 7 WS spike), pass the marked form through so the audio
+  (verify in Epic 6 / Story 6.1's WS spike), pass the marked form through so the audio
   *also* gets prosodic stress. If Cartesia ignores them, strip marks before
   send — the body still nods correctly off the timestamp-joined event; only the
   audio prosody is lost. Either outcome is functional.
@@ -168,12 +170,12 @@ VocalizationTag = Literal[
 ### Open questions
 
 - **Emphasis-mark syntax** (final form — `*word*` vs `<em>word</em>` vs custom).
-  Resolved by the Epic 7 prompt story; trivially reversible.
-- **Cartesia emphasis-input support.** The Epic 7 WS spike (which is also
+  Resolved by Epic 6 / Story 6.3 (the prompt story); trivially reversible.
+- **Cartesia emphasis-input support.** Epic 6 / Story 6.1's WS spike (which is also
   DR-001's TTFB spike) confirms whether the marks survive to audio. Affects only
   the *audio half* of the design; the body half works regardless.
 - **Emphasis density per turn.** Linguistic prior ≈ 1–2 per sentence with a
-  conservative prompt. Tune empirically during the Epic 7 soak; lever is the
+  conservative prompt. Tune empirically during Epic 6 / Story 6.4's soak; lever is the
   prompt, not the wire.
 
 ### Supersession

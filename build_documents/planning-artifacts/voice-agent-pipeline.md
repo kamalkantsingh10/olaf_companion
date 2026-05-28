@@ -239,7 +239,7 @@ Vocalization tags are **LLM-emitted inline**, parsed pre-TTS by the splitter, an
 | `[clears_throat]` | ❌ not yet | Slight head tilt + pause | 600ms |
 | `[nod]` | n/a — gesture cue | Head nod (consumer-side render) | ~200–400ms |
 | `[shake]` | n/a — gesture cue | Head shake (consumer-side render) | ~300–500ms |
-| `[emphasis]` *(v2 — Epic 7 / DR-004)* | n/a — gesture cue | Head-beat at audio anchor; amplitude scales by current `speech_emotion` + `mood` (consumer-side join). Source: Talker emphasis marks × Cartesia word timestamps. | ~80–200ms |
+| `[emphasis]` *(v2 — Epic 6 / Story 6.3 / DR-004)* | n/a — gesture cue | Head-beat at audio anchor; amplitude scales by current `speech_emotion` + `mood` (consumer-side join). Source: Talker emphasis marks × Cartesia word timestamps. | ~80–200ms |
 
 The `cartesia_supported` (a.k.a. `tts_supported`) field in `expression_map.yaml` controls whether the splitter passes the tag to Cartesia (true) or strips it (false). Either way, the `vocalization` event is published. Gesture cues (`[nod]`, `[shake]`, and v2's `[emphasis]`) are `tts_supported: false` by definition — they are visual / motion cues, never audio assets.
 
@@ -395,7 +395,7 @@ vocalizations:
   clears_throat: { tts_supported: false }
   nod:      { tts_supported: false }   # gesture cue (head-nod), never audio
   shake:    { tts_supported: false }   # gesture cue (head-shake), never audio
-  # v2 — Epic 7 / DR-004 (additive Literal extension; schema_version stays at 3):
+  # v2 — Epic 6 / Story 6.3 / DR-004 (additive Literal extension; schema_version stays at 3):
   emphasis: { tts_supported: false }   # prosodic-stress head-beat at audio anchor; sourced from LLM emphasis marks × Cartesia word timestamps. Consumer renders.
 
 fallback_families:
@@ -580,9 +580,9 @@ A conversation feels alive when these hold. Numbers below are the v1 commitments
 Phase 3 is the v1 finish line. The component is meant to be **stable, narrow, and replaceable** — voice surface only, no reasoning. Beyond v1, the design intentionally leaves room for:
 
 - **v1.5:** Barge-in (deferred from v1), expanded `working` sub-modes, cross-restart mood persistence, configurable idle auto-sleep
-- **v2 expression promotion (DR-001/002/003/004 — design-pass 2026-05-28; full promotion in `prd.md` and `epics.md` Epics 6 + 7):**
-  - **Conversational openers replace timer fillers** (DR-001, Epic 6). Cached function-bucketed openers, LLM-tag-selected, overlapped with Cartesia synthesis. Supersedes Story 5.5's filler design.
-  - **Speech-synchronized head motion** (DR-002 + DR-004, Epic 7). Cartesia SSE→WebSocket with word `timestamps`; LLM emphasis marks; `emphasis` as the 7th `vocalization` tag (additive, no `schema_version` bump). Body-side realizer in `olaf-embodiment`.
+- **v2 expression promotion (DR-001/002/003/004 — design-pass 2026-05-28; full promotion in `prd.md` and `epics.md` Epic 6):**
+  - **Conversational openers replace timer fillers** (DR-001, Epic 6 / Story 6.2). Cached function-bucketed openers, LLM-tag-selected, overlapped with Cartesia synthesis. Supersedes Story 5.5's filler design.
+  - **Speech-synchronized head motion** (DR-002 + DR-004, Epic 6 / Stories 6.1 + 6.3). Cartesia SSE→WebSocket with word `timestamps`; LLM emphasis marks; `emphasis` as the 7th `vocalization` tag (additive, no `schema_version` bump). Body-side realizer in `olaf-embodiment`.
   - **Live interaction dashboard** (DR-003). Separate consumer project tails the structured INFO log; zero pipeline change. `events.jsonl` sink is the v2 promotion path if log-format coupling bites.
 - Tertiary emotion mappings for full Cartesia vocabulary (v2)
 - Intensity scaling once Cartesia exposes it
@@ -712,7 +712,7 @@ class VocalizationPayload(BaseModel):
     tag: Literal[
         "laugh", "sigh", "gasp", "clears_throat",   # audio bursts (v1)
         "nod", "shake",                              # gesture cues (v1 — schema-3 boundary repair)
-        "emphasis",                                  # gesture cue (v2 — Epic 7 / DR-004; additive, no schema_version bump)
+        "emphasis",                                  # gesture cue (v2 — Epic 6 / Story 6.3 / DR-004; additive, no schema_version bump)
     ]
     duration_ms: int                       # from expression_map.yaml
     cartesia_supported: bool               # whether Cartesia received this in the TTS stream
@@ -815,11 +815,11 @@ class SetMoodResult(BaseModel):
 **Future additive changes** (e.g. new `working` sub-modes in v1.5, new mood enum entries, new vocalization tags) extend payloads additively and do **not** bump `schema_version` per CLAUDE.md rule 6 — only breaking changes (field removal, type change, topic restructuring) require a bump.
 
 **v2 expression promotion (2026-05-28 design pass).** The v2 vocalization tag
-`emphasis` (per DR-004, Epic 7) is an additive Literal extension on
+`emphasis` (per DR-004, Epic 6 / Story 6.3) is an additive Literal extension on
 `VocalizationPayload.tag` — forward-compat under rule 6, **`schema_version`
 stays at 3**. Consumers built against the schema-3 6-tag set will silently
 miss `emphasis` events; the embodiment brief's `embodiment.unmapped_vocalization`
 WARN discipline and `default_vocalization` fallback pose mitigate the vocabulary
 lag. See `decision-records.md` §DR-001/002/003/004, `prd.md` §"Conversational
-Openers (v2)" + §"Speech Timing & Emphasis (v2)", and `epics.md` Epics 6 + 7
+Openers (v2)" + §"Speech Timing & Emphasis (v2)", and `epics.md` Epic 6
 for the full promotion.

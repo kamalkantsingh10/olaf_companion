@@ -92,11 +92,13 @@ A body feels *alive* when these hold:
 - Resilience layer (reconnect-with-backoff on DDS drop, graceful degradation on hardware faults, mood persistence across restarts).
 - Multi-OLAF orchestration (two bodies sharing a personality).
 
-## v2 head-motion realizer (DR-002 frozen design — implementation pending pipeline Epic 7)
+## v2 head-motion realizer (DR-002 frozen design — implementation pending pipeline Epic 6)
 
-When the pipeline ships Epic 7 (Cartesia WebSocket + LLM emphasis marks +
-`emphasis` as the 7th vocalization tag — DR-002 + DR-004), embodiment gains
-its head-motion contract. The frozen design is a **layered model**; the
+When the pipeline ships Epic 6 (Cartesia WebSocket + LLM emphasis marks +
+`emphasis` as the 7th vocalization tag — DR-002 + DR-004 — landed as a single
+cohesive epic with four stories: 6.1 WS migration, 6.2 cached openers, 6.3
+emphasis vocalization wiring, 6.4 wrap), embodiment gains its head-motion
+contract. The frozen design is a **layered model**; the
 realizer is built consumer-side per the producer/consumer split (pipeline
 ships data, body owns animation).
 
@@ -315,7 +317,7 @@ class VocalizationPayload(BaseModel):
 
 | Field | Type | Notes |
 |---|---|---|
-| `tag` | `str` | v1 set: `laughter`, `sigh`, `gasp`, `clears_throat` (audio bursts), `nod`, `shake` (gesture cues). **v2 (Epic 7 / DR-004) adds `emphasis`** as a 7th gesture-cue tag — the prosodic-stress head-cue, sourced from the Talker's emphasis marks × Cartesia word timestamps; `tts_supported: false` (the audio stress lives in the carrier word that Cartesia renders, not in a separate asset). Additive Literal extension; `schema_version` stays at 3. |
+| `tag` | `str` | v1 set: `laughter`, `sigh`, `gasp`, `clears_throat` (audio bursts), `nod`, `shake` (gesture cues). **v2 (Epic 6 / Story 6.3 / DR-004) adds `emphasis`** as a 7th gesture-cue tag — the prosodic-stress head-cue, sourced from the Talker's emphasis marks × Cartesia word timestamps; `tts_supported: false` (the audio stress lives in the carrier word that Cartesia renders, not in a separate asset). Additive Literal extension; `schema_version` stays at 3. |
 | `audio_frame_id` | `str \| None` | Same NFR5 anchor as `speech_emotion`. |
 | `tts_supported` | `bool` | `true` → Cartesia rendered audio; embodiment adds a *visual* accompaniment (open mouth on laugh, shoulder drop on sigh). `false` → Cartesia did NOT render audio; embodiment is fully responsible — either play its own audio asset OR (for `nod`/`shake`) render a silent gesture only. |
 
@@ -338,7 +340,7 @@ If the embodiment author has read pre-2026-05-10 versions of the pipeline docs a
 - **Two new vocalization tags** `nod` and `shake` (gesture cues, `tts_supported: false`). The pipeline's Talker prompt teaches the LLM to emit them on clear affirmatives / negatives.
 - **`schema_version` bumped 2 → 3.** Lockstep across `setup.toml`, `expression_map.yaml`, `EventEnvelope`. Embodiment must reject events at any other version.
 
-**v2 deltas (Epic 7 — additive, no `schema_version` bump per CLAUDE.md rule 6):**
+**v2 deltas (Epic 6 — additive, no `schema_version` bump per CLAUDE.md rule 6):**
 
 - **7th vocalization tag `emphasis`** added per DR-004. `tts_supported: false`.
   Sourced from the Talker's emphasis marks × Cartesia word timestamps (the
@@ -443,7 +445,7 @@ activity:
 
 # Vocalization → punctual gesture / audio cue.
 # v1 set: 6 canonical tags (laughter, sigh, gasp, clears_throat, nod, shake).
-# v2 (Epic 7): + emphasis (gesture cue; head-beat scaled by speech_emotion + mood).
+# v2 (Epic 6 / Story 6.3): + emphasis (gesture cue; head-beat scaled by speech_emotion + mood).
 # All present-version tags MUST be covered; startup loader rejects gaps.
 vocalization:
   laughter:        { gesture: shoulder_bob,    audio_asset: null,         visible_only: false }
@@ -452,7 +454,7 @@ vocalization:
   clears_throat:   { gesture: head_tilt_brief, audio_asset: "ahem.wav",   visible_only: false }
   nod:             { gesture: head_nod,        audio_asset: null,         visible_only: true }
   shake:           { gesture: head_shake,      audio_asset: null,         visible_only: true }
-  # v2 — Epic 7 / DR-004:
+  # v2 — Epic 6 / Story 6.3 / DR-004:
   emphasis:        { gesture: head_beat,       audio_asset: null,         visible_only: true,
                      # Beat amplitude scales by current speech_emotion + mood;
                      # consumer-side join — pipeline ships timing + tag only.

@@ -13,15 +13,21 @@
 #             greetings, goodbyes, clarifications, thinking fillers).
 #             v1 story count: 30 -> 31. Status -> ready-for-dev.
 # 2026-05-28: v2 expression promotion (DR-001/002/003/004 design pass, commit ccfc0a0).
-#             Added Epic 6 (Conversational Openers, 5 stories) and Epic 7
-#             (Speech Timing & Head Motion, 4 stories) -> backlog. Added
-#             Story v2-1 (events.jsonl sink, DR-003 promotion path) under
-#             new v2-backlog status. v1 scope unchanged; v2 epics scheduled
-#             post-v1 launch. Story 5-5 stays at 'review' (it remains v1's
-#             shipping perceived-latency surface until Epic 6 lands and
-#             supersedes its filler design — see epics.md). v1 story count
-#             unchanged at 31; v2 story count added: 9 (epic 6: 5, epic 7:
-#             4) + 1 v2 backlog (v2-1).
+#             Initial draft added Epic 6 (Conversational Openers, 5 stories)
+#             + Epic 7 (Speech Timing & Head Motion, 4 stories) -> backlog;
+#             consolidated 2026-05-28 on user pushback into a single cohesive
+#             Epic 6 "v2 Expression Upgrades" with 4 stories:
+#               6.1 Cartesia WS + timestamps + TTFB spike (shared enabler)
+#               6.2 cached opener system + Cartesia overlap (supersedes 5-5)
+#               6.3 emphasis as the 7th vocalization tag (per DR-004)
+#               6.4 instrumentation + soak + olaf-embodiment-brief amendment
+#             Added Story v2-1 (events.jsonl sink, DR-003 promotion path)
+#             under new v2-backlog status. v1 scope unchanged. Story 5-5
+#             stays at 'review' — remains v1's shipping perceived-latency
+#             surface until Epic 6 lands and 6.2 supersedes its filler
+#             design (cached-audio infrastructure is REUSED). v1 story
+#             count unchanged at 31; v2 adds 4 stories (Epic 6) + 1 v2
+#             backlog (v2-1).
 # project: olaf_companion
 # project_key: NOKEY
 # tracking_system: file-system
@@ -62,7 +68,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-28  # v2 expression promotion — Epic 6 + Epic 7 + Story v2-1 added (commit ccfc0a0)
+last_updated: 2026-05-28  # v2 expression promotion — Epic 6 (4 stories) + Story v2-1 added, then Epic 6+7 consolidated to single Epic 6 (commit ccfc0a0 + consolidation)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -144,34 +150,29 @@ development_status:
   epic-5-retrospective: optional
 
   # ───────────────── Epic 6: Conversational Openers (v2 — promotes DR-001) ─────────────────
-  # Added 2026-05-28 (commit ccfc0a0 — design pass for DR-001/002/003/004).
-  # v2 work. NOT in current sprint. Supersedes Story 5.5's filler design
-  # post-v1; cached-audio infrastructure from 5.5 is reused. v1 ships 5.5
-  # unchanged until this epic lands.
-  # Keystone dependency: Cartesia TTFB measurement (Story 7.1 spike).
-  # See: decision-records.md §DR-001 + epics.md §Epic 6.
+  # 2026-05-28 design pass (commit ccfc0a0). Initial draft proposed Epic 6
+  # (Conversational Openers, 5 stories) + Epic 7 (Speech Timing & Head Motion,
+  # 4 stories); consolidated 2026-05-28 on user pushback against
+  # over-decomposition into a single cohesive Epic 6 with 4 stories.
+  # v2 work. NOT in current sprint.
+  #
+  # Story order is strict: 6.1 (Cartesia WS migration) is the shared enabler.
+  # Story 6.1's TTFB measurement also resolves DR-001's keystone open question.
+  # 6.2 and 6.3 can run in parallel after 6.1. 6.4 wraps with instrumentation
+  # + soak + olaf-embodiment-brief amendment review (NFR26 spec-as-contract).
+  #
+  # Coordinates with olaf-embodiment sibling project (consumer-side head/eye
+  # realizer must cover the 7th vocalization tag `emphasis` per DR-004).
+  # Story 6.2 supersedes Story 5.5's filler design (cached-audio
+  # infrastructure reused).
+  #
+  # See: decision-records.md §DR-001 + §DR-002 + §DR-004 + epics.md §Epic 6.
   epic-6: backlog
-  6-1-opener-manifest-cached-library: backlog
-  6-2-talker-opener-tag-prompt-and-selector: backlog
-  6-3-cartesia-overlap-decouple-synth: backlog
-  6-4-timer-fallback-and-self-gating: backlog
-  6-5-latency-instrumentation-backfill: backlog
+  6-1-cartesia-websocket-and-ttfb-spike: backlog
+  6-2-cached-opener-system-and-cartesia-overlap: backlog
+  6-3-emphasis-vocalization-wiring: backlog
+  6-4-instrumentation-soak-embodiment-brief: backlog
   epic-6-retrospective: optional
-
-  # ───────────────── Epic 7: Speech Timing & Head Motion (v2 — promotes DR-002 + DR-004) ─────────────────
-  # Added 2026-05-28 (commit ccfc0a0 — design pass for DR-001/002/003/004).
-  # v2 work. NOT in current sprint. Coordinates with olaf-embodiment sibling
-  # project (consumer-side head/eye realizer). DR-004 closed DR-002's
-  # wire-shape question: emphasis becomes the 7th vocalization tag —
-  # additive Literal, no `schema_version` bump.
-  # Story 7.1's WS spike also resolves DR-001's TTFB keystone open question.
-  # See: decision-records.md §DR-002 + §DR-004 + epics.md §Epic 7.
-  epic-7: backlog
-  7-1-cartesia-websocket-and-ttfb-spike: backlog
-  7-2-talker-emphasis-mark-prompt-and-parsing: backlog
-  7-3-emphasis-vocalization-wiring: backlog
-  7-4-embodiment-brief-amendment-and-soak: backlog
-  epic-7-retrospective: optional
 
   # ───────────────── v1.5 Backlog (Post-v1) ─────────────────
   # Deferred from v1 in the 2026-05-06 direction shift. Tracked here for v1.5 sprint
@@ -182,9 +183,9 @@ development_status:
   v1.5-3-expanded-working-submodes: v1.5-backlog
   v1.5-4-configurable-idle-auto-sleep: v1.5-backlog
 
-  # ───────────────── v2 Backlog (Beyond v1.5; smaller than Epic 6/7) ─────────────────
+  # ───────────────── v2 Backlog (Beyond v1.5; smaller than Epic 6) ─────────────────
   # Added 2026-05-28 (commit ccfc0a0 — DR-003 promotion path). Activated only
   # if pipeline-to-dashboard log-format coupling actually starts to bite. The
-  # main v2 expression work is captured in Epics 6 + 7 above. See:
+  # main v2 expression work is captured in Epic 6 above. See:
   # decision-records.md §DR-003 + epics.md §v2 Backlog §Story v2-1.
   v2-1-events-jsonl-structlog-sink: v2-backlog
