@@ -1,5 +1,5 @@
 # generated: 2026-05-05
-# last_updated: 2026-05-12
+# last_updated: 2026-05-28
 # 2026-05-05: Epic 2 stories prepared (Amelia / bmad-agent-dev / bmad-create-story);
 #             epic-2 -> in-progress, all 5 stories -> ready-for-dev.
 # 2026-05-06: bmad-correct-course ran against the spec-triple direction shift
@@ -12,6 +12,16 @@
 # 2026-05-12: Story 5-5 added (cached audio for deterministic phrases:
 #             greetings, goodbyes, clarifications, thinking fillers).
 #             v1 story count: 30 -> 31. Status -> ready-for-dev.
+# 2026-05-28: v2 expression promotion (DR-001/002/003/004 design pass, commit ccfc0a0).
+#             Added Epic 6 (Conversational Openers, 5 stories) and Epic 7
+#             (Speech Timing & Head Motion, 4 stories) -> backlog. Added
+#             Story v2-1 (events.jsonl sink, DR-003 promotion path) under
+#             new v2-backlog status. v1 scope unchanged; v2 epics scheduled
+#             post-v1 launch. Story 5-5 stays at 'review' (it remains v1's
+#             shipping perceived-latency surface until Epic 6 lands and
+#             supersedes its filler design — see epics.md). v1 story count
+#             unchanged at 31; v2 story count added: 9 (epic 6: 5, epic 7:
+#             4) + 1 v2 backlog (v2-1).
 # project: olaf_companion
 # project_key: NOKEY
 # tracking_system: file-system
@@ -39,6 +49,11 @@
 #   - optional: Can be completed but not required
 #   - done: Retrospective has been completed
 #
+# Project-specific extension statuses (not standard bmad):
+#   - v1.5-backlog: Deferred from v1; tracked for v1.5 planning. Not in current v1 scope.
+#   - v2-backlog:   Deferred to v2 standalone backlog (not Epic 6/7 which are full v2 epics).
+#                   Tracked for v2 planning; activated only on demand (DR-003 promotion path).
+#
 # WORKFLOW NOTES:
 # ===============
 # - Epic transitions to 'in-progress' automatically when first story is created
@@ -47,7 +62,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-08  # Stories 4.4 + 4.5 → review (Amelia / bmad-dev-story)
+last_updated: 2026-05-28  # v2 expression promotion — Epic 6 + Epic 7 + Story v2-1 added (commit ccfc0a0)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -119,9 +134,44 @@ development_status:
   # which 5-5 changes substantially. Numerical ordering here is historical
   # (5-1..5-4 originally, 5-5 inserted); execution order is
   # 5-1 → 5-2 → 5-3 → 5-5 → 5-4.
+  #
+  # 2026-05-28 note: 5-5 remains v1's shipping perceived-latency-masking
+  # surface. Epic 6 (post-v1) supersedes 5-5's *filler design* but reuses
+  # the cached-audio infrastructure it ships — see epics.md Story 5.5
+  # supersession note.
   5-5-cached-audio-deterministic-phrases: review
   5-4-soak-tuning-and-v1-signoff: backlog
   epic-5-retrospective: optional
+
+  # ───────────────── Epic 6: Conversational Openers (v2 — promotes DR-001) ─────────────────
+  # Added 2026-05-28 (commit ccfc0a0 — design pass for DR-001/002/003/004).
+  # v2 work. NOT in current sprint. Supersedes Story 5.5's filler design
+  # post-v1; cached-audio infrastructure from 5.5 is reused. v1 ships 5.5
+  # unchanged until this epic lands.
+  # Keystone dependency: Cartesia TTFB measurement (Story 7.1 spike).
+  # See: decision-records.md §DR-001 + epics.md §Epic 6.
+  epic-6: backlog
+  6-1-opener-manifest-cached-library: backlog
+  6-2-talker-opener-tag-prompt-and-selector: backlog
+  6-3-cartesia-overlap-decouple-synth: backlog
+  6-4-timer-fallback-and-self-gating: backlog
+  6-5-latency-instrumentation-backfill: backlog
+  epic-6-retrospective: optional
+
+  # ───────────────── Epic 7: Speech Timing & Head Motion (v2 — promotes DR-002 + DR-004) ─────────────────
+  # Added 2026-05-28 (commit ccfc0a0 — design pass for DR-001/002/003/004).
+  # v2 work. NOT in current sprint. Coordinates with olaf-embodiment sibling
+  # project (consumer-side head/eye realizer). DR-004 closed DR-002's
+  # wire-shape question: emphasis becomes the 7th vocalization tag —
+  # additive Literal, no `schema_version` bump.
+  # Story 7.1's WS spike also resolves DR-001's TTFB keystone open question.
+  # See: decision-records.md §DR-002 + §DR-004 + epics.md §Epic 7.
+  epic-7: backlog
+  7-1-cartesia-websocket-and-ttfb-spike: backlog
+  7-2-talker-emphasis-mark-prompt-and-parsing: backlog
+  7-3-emphasis-vocalization-wiring: backlog
+  7-4-embodiment-brief-amendment-and-soak: backlog
+  epic-7-retrospective: optional
 
   # ───────────────── v1.5 Backlog (Post-v1) ─────────────────
   # Deferred from v1 in the 2026-05-06 direction shift. Tracked here for v1.5 sprint
@@ -131,3 +181,10 @@ development_status:
   v1.5-2-cross-restart-mood-persistence: v1.5-backlog
   v1.5-3-expanded-working-submodes: v1.5-backlog
   v1.5-4-configurable-idle-auto-sleep: v1.5-backlog
+
+  # ───────────────── v2 Backlog (Beyond v1.5; smaller than Epic 6/7) ─────────────────
+  # Added 2026-05-28 (commit ccfc0a0 — DR-003 promotion path). Activated only
+  # if pipeline-to-dashboard log-format coupling actually starts to bite. The
+  # main v2 expression work is captured in Epics 6 + 7 above. See:
+  # decision-records.md §DR-003 + epics.md §v2 Backlog §Story v2-1.
+  v2-1-events-jsonl-structlog-sink: v2-backlog
