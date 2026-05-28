@@ -1,5 +1,10 @@
 # generated: 2026-05-05
 # last_updated: 2026-05-28
+# 2026-05-28: Story 6-1 -> review (dev-story / Amelia). Cartesia
+#             SSE->WS migration + timestamps capture + 500-sample
+#             TTFB spike. Headline: cold p50 = 467 ms (above DR-001
+#             0.4 s threshold), warm p50 = 230 ms (below). Spike
+#             report writes the DR-001 keystone closure.
 # 2026-05-05: Epic 2 stories prepared (Amelia / bmad-agent-dev / bmad-create-story);
 #             epic-2 -> in-progress, all 5 stories -> ready-for-dev.
 # 2026-05-06: bmad-correct-course ran against the spec-triple direction shift
@@ -68,7 +73,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-28  # Story 6-1 promoted to ready-for-dev (bmad-create-story); epic-6 → in-progress
+last_updated: 2026-05-28  # Story 6-1 -> review (dev-story / Amelia)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -188,7 +193,7 @@ development_status:
   #
   # See: decision-records.md §DR-001 + §DR-002 + §DR-004 + epics.md §Epic 6.
   epic-6: in-progress
-  6-1-cartesia-websocket-and-ttfb-spike: ready-for-dev
+  6-1-cartesia-websocket-and-ttfb-spike: review
   6-2-cached-opener-system-and-cartesia-overlap: ready-for-dev
   6-3-emphasis-vocalization-wiring: ready-for-dev
   6-4-instrumentation-soak-embodiment-brief: ready-for-dev

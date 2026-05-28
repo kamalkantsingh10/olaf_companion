@@ -19,6 +19,7 @@ just test               # full test suite (including the integration test)
 just list-devices       # print PyAudio devices for setup.toml regex tuning
 just play-test-tone     # 1-second 440Hz beep through the configured speaker
 just regenerate-audio   # Story 5.5: pre-render cached audio assets (~3 min, hits Cartesia)
+just ttfb-spike         # Story 6.1: 500-sample Cartesia WS TTFB spike (~25 min, hits Cartesia). Writes report to build_documents/implementation-artifacts/6-1-ttfb-spike-report.md
 ```
 
 After `just run`, say **"Hey OLAF, what time is it?"** — within ~1.5s

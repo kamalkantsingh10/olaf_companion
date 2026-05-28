@@ -236,6 +236,14 @@ model = "sonic-3"
 # to 1.0 — keeping Tessa at her natural rate now that fillers mask the
 # perceived latency on slower turns.
 speed = 1.0
+# Story 6.1: Cartesia wire transport. Default "websocket" opens a
+# per-call WS via the SDK's tts.websocket_connect() and captures
+# per-word timestamps (consumed by Story 6.3's emphasis join). The
+# legacy v1 "sse" path is retained as an implementation-window
+# fallback only — flip back here if WS proves flaky during Story 6.4's
+# soak. The field (and the SSE branch) will be removed in a follow-up
+# once the WS path is settled.
+# transport = "websocket"
 
 # Story 3.5: four-topic event publisher. `adapter = "ros2"` for
 # production; `adapter = "log"` for local dev without a ROS 2 stack

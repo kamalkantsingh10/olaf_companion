@@ -55,6 +55,16 @@ play-test-tone:
 regenerate-audio *FLAGS:
     uv run python -m voice_agent_pipeline.audio.regenerate {{FLAGS}}
 
+# Story 6.1: Cartesia TTFB measurement spike on the WebSocket transport
+# (100+ requests, mixed transcript lengths). Writes a Markdown report to
+# `build_documents/implementation-artifacts/6-1-ttfb-spike-report.md`
+# with p25/p50/p75/p90 and the DR-001 Option D viability call-out.
+# Idempotent — re-running overwrites the previous report at the same
+# path (older reports are in git history if needed). Burns ~100
+# Cartesia synthesis tokens per run; expect ~3-5 minutes wall-clock.
+ttfb-spike:
+    uv run python -m voice_agent_pipeline.tts.ttfb_spike
+
 # Self-contained ROS 2 / DDS publish smoke test. Stands up the production
 # Ros2EventPublisher on the configured `[publisher].dds_domain_id` and an
 # in-process witness subscriber using the body's exact contract QoS, then

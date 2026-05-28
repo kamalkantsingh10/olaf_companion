@@ -338,13 +338,22 @@ class SttConfig(BaseModel):
 
 
 class TtsConfig(BaseModel):
-    """Cartesia Sonic-3 streaming TTS knobs (Story 2.3).
+    """Cartesia Sonic-3 streaming TTS knobs (Story 2.3 / 6.1).
 
     The TTS client streams audio frames back as the model synthesizes,
     so the speaker can begin playing within ~200-400 ms of the
     request (NFR4 target). v1 ships against Cartesia's Sonic-3 model;
     a v2 swap to a self-hosted TTS engine would land behind the same
     :class:`TTSClient` Protocol with no caller changes.
+
+    Story 6.1 added the :attr:`transport` knob to flip Cartesia between
+    the v1 SSE wire transport (``"sse"``) and the v2 WebSocket transport
+    (``"websocket"``, default). The WS path is the only path that
+    captures per-word ``timestamps`` events (Story 6.3 emphasis join
+    consumes them); the SSE path is retained as the implementation-window
+    fallback so a quick flip back is possible if WS proves flaky during
+    Story 6.4's soak. A future small story removes the SSE branch once
+    WS is settled.
 
     Attributes:
         voice_id: Cartesia voice ID. **Required** — operator picks one
@@ -367,6 +376,16 @@ class TtsConfig(BaseModel):
             intelligibility), ``>1.0`` speeds up. Tessa voice
             specifically reads slightly fast at 1.0; ``0.9`` is a
             comfortable default.
+        transport: Story 6.1 — Cartesia wire transport. ``"websocket"``
+            (default) opens a per-call WS via
+            ``AsyncCartesia.tts.websocket_connect()`` and captures
+            per-segment word-timestamp events for downstream consumers
+            (Story 6.3 emphasis). ``"sse"`` keeps the v1
+            ``tts.generate_sse(...)`` path; word timestamps are dropped
+            on this transport (Cartesia's SSE wire format does not
+            emit them in v1's configuration). Operators flip to SSE
+            only if the WS transport misbehaves during Story 6.4 soak
+            — the field is intentionally removable once WS is settled.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -375,6 +394,11 @@ class TtsConfig(BaseModel):
     default_emotion: str = "neutral"
     model: str = "sonic-3"
     speed: float = 0.9
+    # Story 6.1: default WebSocket so word timestamps are captured for
+    # Story 6.3's emphasis join. SSE retained as an implementation-window
+    # fallback; the field will be removed once WS proves stable in soak
+    # (Story 6.4 sign-off).
+    transport: Literal["websocket", "sse"] = "websocket"
 
 
 class MoodConfig(BaseModel):

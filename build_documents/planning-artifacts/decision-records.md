@@ -798,6 +798,15 @@ the keystone for two reasons:
 low-latency/continuation mode, and warm-connection pooling. (TTFB is *not* TLS
 handshake — that is already warmed at startup, `tts/cartesia.py:116`.)
 
+**Closed by:** `build_documents/implementation-artifacts/6-1-ttfb-spike-report.md`
+(2026-05-28). The Story 6.1 WebSocket migration + 500-sample TTFB spike (250
+cold + 250 warm, per-transcript-length stratified) provides the measurement.
+The report's headline section answers the Option D viability question and
+either confirms the cached-opener-design-stands branch or signals that
+Story 6.2 should re-evaluate against pure-live synthesis. Warm-vs-cold delta
+in the report quantifies the connection-pool savings the parenthetical above
+calls out.
+
 ### Related work / prior art (web survey, 2026-05-26)
 
 How others have addressed perceived latency and filler naturalness in voice

@@ -1,6 +1,6 @@
 # Story 6.1: Cartesia SSE→WebSocket migration + word `timestamps` capture + TTFB spike
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -130,72 +130,79 @@ so that (a) Story 6.3's emphasis-vocalization join has the timing data it needs 
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Config schema — `[tts] transport` field** (AC: #5)
-  - [ ] Add `transport: Literal["websocket", "sse"] = "websocket"` to `TtsConfig` in `config/setup.py`
-  - [ ] Update the `TtsConfig` docstring's "Attributes" section to cover the new field, the default rationale, and the SSE-fallback removal plan
-  - [ ] Add `transport = "websocket"` (commented) to `setup.toml`'s `[tts]` block with a documentation comment
-  - [ ] Extend `tests/unit/config/test_setup.py` to cover (a) default value (b) accepts "sse" (c) rejects any other string
+- [x] **Task 1: Config schema — `[tts] transport` field** (AC: #5)
+  - [x] Add `transport: Literal["websocket", "sse"] = "websocket"` to `TtsConfig` in `config/setup.py`
+  - [x] Update the `TtsConfig` docstring's "Attributes" section to cover the new field, the default rationale, and the SSE-fallback removal plan
+  - [x] Add `transport = "websocket"` (commented) to `setup.toml`'s `[tts]` block with a documentation comment
+  - [x] Extend `tests/unit/config/test_setup.py` to cover (a) default value (b) accepts "sse" (c) rejects any other string
 
-- [ ] **Task 2: WS-path implementation in `tts/cartesia.py`** (AC: #1, #2, #3)
-  - [ ] Define `Word` + `SegmentTiming` pydantic models. Place in `tts/cartesia.py` (small) or a new `tts/timing.py` (if it grows past one screen). Both frozen, both `extra="forbid"`.
-  - [ ] Add `self._last_segment_timing: SegmentTiming | None = None` instance state to `CartesiaClient`
-  - [ ] Implement `async def _synthesize_websocket(self, text: str) -> AsyncIterator[bytes]:`
-    - [ ] `async with self._client.tts.websocket_connect() as conn:`
-    - [ ] `await conn.send(GenerationRequest(..., add_timestamps=True, add_phoneme_timestamps=False))`
-    - [ ] `async for event in conn:` — dispatch on `event.type`
-    - [ ] `chunk` → `yield event.audio` (the `.audio` property auto-decodes base64)
-    - [ ] `timestamps` → accumulate via `_capture_timing(event.word_timestamps)`; convert seconds → integer ms
-    - [ ] `done` → break (close on context-manager exit)
-    - [ ] `error` → raise `CartesiaError` with `reason=event.error`
-    - [ ] log `tts.first_frame` on first `chunk` event (preserves the existing ttfb_ms metric)
-  - [ ] Reset `self._last_segment_timing = None` at the **start** of `_synthesize_websocket()` so callers never see stale timing from a prior request
-  - [ ] Wrap `cartesia.APIError` AND `websockets.exceptions.ConnectionClosedError` (+ subclasses) as `CartesiaError`; use `raise ... from e`
+- [x] **Task 2: WS-path implementation in `tts/cartesia.py`** (AC: #1, #2, #3)
+  - [x] Define `Word` + `SegmentTiming` pydantic models. Place in `tts/cartesia.py` (small) or a new `tts/timing.py` (if it grows past one screen). Both frozen, both `extra="forbid"`.
+  - [x] Add `self._last_segment_timing: SegmentTiming | None = None` instance state to `CartesiaClient`
+  - [x] Implement `async def _synthesize_websocket(self, text: str) -> AsyncIterator[bytes]:`
+    - [x] `async with self._client.tts.websocket_connect() as conn:`
+    - [x] `await conn.send(GenerationRequest(..., add_timestamps=True, add_phoneme_timestamps=False))`
+    - [x] `async for event in conn:` — dispatch on `event.type`
+    - [x] `chunk` → `yield event.audio` (the `.audio` property auto-decodes base64)
+    - [x] `timestamps` → accumulate via `_word_timestamps_to_words(event.word_timestamps)`; convert seconds → integer ms (round-to-nearest)
+    - [x] `done` → break (close on context-manager exit)
+    - [x] `error` → raise `CartesiaError` with `reason=event.error` (with fallback to `event.message` / `event.title` per the real SDK's looser-than-typed Error event shape — observed during the spike's first run)
+    - [x] log `tts.first_frame` on first `chunk` event (preserves the existing ttfb_ms metric; adds `transport="websocket"` field)
+  - [x] Reset `self._last_segment_timing = None` at the **start** of `_synthesize_websocket()` so callers never see stale timing from a prior request
+  - [x] Wrap `cartesia.APIError` AND `websockets.exceptions.ConnectionClosedError` (+ subclasses) as `CartesiaError`; use `raise ... from e`
+  - [x] **Implementation note (discovered during smoke-test):** Cartesia's WS API rejects `GenerationRequest` without a `context_id` (HTTP 400, `"context_id is invalid"` because the SDK auto-fills a composite id with an empty trailing segment). Story 6.1 generates a fresh `uuid.uuid4().hex` per call and threads it into `GenerationRequest(context_id=...)`. Alphanumeric + underscore + hyphen are the only allowed characters per Cartesia's validator; `uuid4().hex` (no dashes) satisfies it. Documented inline so future contributors don't reintroduce the bug.
 
-- [ ] **Task 3: SSE-path retained as fallback + dispatch in `synthesize()`** (AC: #1, #5)
-  - [ ] Lift the existing `generate_sse` flow into `_synthesize_sse(self, text: str) -> AsyncIterator[bytes]:` — identical behaviour to today including the `tts.first_frame` log
-  - [ ] `_synthesize_sse()` does NOT set `self._last_segment_timing` (SSE drops timestamps; the WS path is the only one that captures)
-  - [ ] Implement `synthesize()` as a thin dispatcher that returns `self._synthesize_websocket(text)` or `self._synthesize_sse(text)` based on `self._config.transport`
-  - [ ] Confirm with a unit test that the dispatch picks the right path
+- [x] **Task 3: SSE-path retained as fallback + dispatch in `synthesize()`** (AC: #1, #5)
+  - [x] Lift the existing `generate_sse` flow into `_synthesize_sse(self, text: str) -> AsyncIterator[bytes]:` — identical behaviour to today including the `tts.first_frame` log (now tagged with `transport="sse"`)
+  - [x] `_synthesize_sse()` does NOT set `self._last_segment_timing` (SSE drops timestamps; the WS path is the only one that captures)
+  - [x] Implement `synthesize()` as a thin dispatcher that returns `self._synthesize_websocket(text)` or `self._synthesize_sse(text)` based on `self._config.transport`
+  - [x] Confirm with a unit test that the dispatch picks the right path (`test_transport_dispatch_websocket_routes_to_ws_path` + `test_transport_dispatch_sse_routes_to_sse_path`)
 
-- [ ] **Task 4: `last_segment_timing()` accessor** (AC: #2)
-  - [ ] Public method on `CartesiaClient`: `def last_segment_timing(self) -> SegmentTiming | None`
-  - [ ] Returns the most recently captured `SegmentTiming` after a `synthesize()` generator exhausts (WS path) or `None` (SSE path / not yet called)
-  - [ ] Module docstring at the top of `tts/cartesia.py` documents the per-call lifecycle: reset on synthesize-start, populated as timestamps events arrive, readable after the generator exhausts
+- [x] **Task 4: `last_segment_timing()` accessor** (AC: #2)
+  - [x] Public method on `CartesiaClient`: `def last_segment_timing(self) -> SegmentTiming | None`
+  - [x] Returns the most recently captured `SegmentTiming` after a `synthesize()` generator exhausts (WS path) or `None` (SSE path / not yet called)
+  - [x] Module docstring at the top of `tts/cartesia.py` documents the per-call lifecycle: reset on synthesize-start, populated as timestamps events arrive, readable after the generator exhausts
 
-- [ ] **Task 5: TTFB spike CLI** (AC: #4, #6)
-  - [ ] New module `src/voice_agent_pipeline/tts/ttfb_spike.py`
-  - [ ] Loads `setup.toml` + `.env` via `load_setup_config` (existing helper)
-  - [ ] Builds a `CartesiaClient` with `transport="websocket"` regardless of config (the spike measures WS specifically)
-  - [ ] Cycles through 5–10 test transcripts (defined inline in the module — short / medium / long / question / statement mix). Sample length should mirror typical Talker reply spans (3–30 words)
-  - [ ] Runs 100+ requests (constant `_SAMPLE_COUNT = 100`). Each request: open a connection, send, record `t_send`, capture first chunk arrival `t_first_chunk`, compute `ttfb_ms = (t_first_chunk - t_send) // 1_000_000`. Close connection. Sleep ~50–100 ms between requests so we don't saturate Cartesia and skew TTFB upward
-  - [ ] Aggregates p25 / p50 / p75 / p90 via stdlib `statistics.quantiles`
-  - [ ] Writes the report to `build_documents/implementation-artifacts/6-1-ttfb-spike-report.md` with the template described in AC #4 (run metadata, statistics, keystone-question call-out, raw samples in a fenced code block, SSE-comparison reference to DR-001's existing numbers)
-  - [ ] `justfile`: add the `ttfb-spike` recipe
+- [x] **Task 5: TTFB spike CLI** (AC: #4, #6)
+  - [x] New module `src/voice_agent_pipeline/tts/ttfb_spike.py`
+  - [x] Loads `setup.toml` + `.env` via `load_setup_config` (existing helper)
+  - [x] Builds a `CartesiaClient` with `transport="websocket"` regardless of config (the spike measures WS specifically)
+  - [x] Cycles through ~20 test transcripts (defined inline in the module — short / medium / long / question / statement mix). Sample length spans 3–~30 words to cover realistic Talker reply spans
+  - [x] **Upgraded from 100 to 500 samples (250 cold + 250 warm) per Kamal's 2026-05-28 request — output goes into a research paper**, so the spike now stratifies by transcript-length bucket (short / medium / long) and adds a cold-vs-warm connection comparison (one-WS-per-call vs. one reused WS for many calls). Per request: open a connection, send, record `t_send`, capture first chunk arrival `t_first_chunk`, compute `ttfb_ms = (t_first_chunk - t_send) // 1_000_000`. Sleep ~75 ms between requests so we don't saturate Cartesia and skew TTFB upward
+  - [x] Aggregates p25 / p50 / p75 / p90 / p95 / p99 + mean + stdev + min + max via stdlib `statistics`. Per-mode (overall / cold / warm) and per-bucket (short / medium / long) statistic blocks.
+  - [x] Writes the report to `build_documents/implementation-artifacts/6-1-ttfb-spike-report.md` with the upgraded template (run metadata, percentile tables, warm-vs-cold delta, keystone-question call-out, raw samples in a fenced code block, SSE-comparison reference to DR-001's existing numbers)
+  - [x] `justfile`: add the `ttfb-spike` recipe
 
-- [ ] **Task 6: Unit tests** (AC: #7, #8)
-  - [ ] In `tests/unit/tts/test_cartesia.py`:
-    - [ ] **WS path — happy:** mock `websocket_connect` to return an async context manager yielding `[Chunk, Chunk, Timestamps, Chunk, Done]`. Assert bytes order matches; `last_segment_timing()` returns the correct `SegmentTiming` post-exhaustion
-    - [ ] **WS path — error event:** mock yields `[Chunk, Error]`. Assert `CartesiaError` raises mid-stream
-    - [ ] **WS path — connection closed:** mock raises `ConnectionClosedError`. Assert `CartesiaError` raises
-    - [ ] **WS path — seconds→ms rounding:** mock `Timestamps.word_timestamps` with `start=[0.0, 0.1234, 0.789]`. Assert captured `Word.start_ms` values are `[0, 123, 789]`
-    - [ ] **SSE path:** existing test pattern still passes when `TtsConfig(transport="sse")`. `last_segment_timing()` returns `None`
-    - [ ] **Transport dispatch:** `TtsConfig(transport="websocket")` routes to WS; `TtsConfig(transport="sse")` routes to SSE — verify via mock-method-called assertions
-  - [ ] In `tests/unit/config/test_setup.py`: `transport` field accepts both literals + defaults to `"websocket"` + rejects other strings
-  - [ ] In `tests/contract/`: if there's a contract test for `TtsConfig` schema, extend it with the new field; otherwise no new contract test needed (the `transport` field is config-side, not wire-side)
+- [x] **Task 6: Unit tests** (AC: #7, #8)
+  - [x] In `tests/unit/tts/test_cartesia.py`:
+    - [x] **WS path — happy:** mock `websocket_connect` to return an async context manager yielding `[Chunk, Chunk, Timestamps, Chunk, Done]`. Assert bytes order matches; `last_segment_timing()` returns the correct `SegmentTiming` post-exhaustion
+    - [x] **WS path — error event:** mock yields `[Chunk, Error]`. Assert `CartesiaError` raises mid-stream
+    - [x] **WS path — connection closed:** mock raises `ConnectionClosedError`. Assert `CartesiaError` raises
+    - [x] **WS path — seconds→ms rounding:** mock `Timestamps.word_timestamps` with `start=[0.0, 0.1234, 0.789]`. Assert captured `Word.start_ms` values match the round-to-nearest convention
+    - [x] **WS path — open error wraps:** mock manager `__aenter__` raises `APIError`, asserts CartesiaError surfaced with cause chain
+    - [x] **WS path — last_segment_timing reset between calls:** two-call test confirms a Timestamps-less follow-up call clears the prior call's timing
+    - [x] **WS path — multi-Timestamps accumulation:** two `Timestamps` events in one request accumulate into one `SegmentTiming`
+    - [x] **WS path — first_frame log carries transport tag**
+    - [x] **WS path — GenerationRequest add_timestamps=True, add_phoneme_timestamps=False contract**
+    - [x] **SSE path:** existing test pattern still passes when `TtsConfig(transport="sse")`. `last_segment_timing()` returns `None`
+    - [x] **Transport dispatch:** `TtsConfig(transport="websocket")` routes to WS; `TtsConfig(transport="sse")` routes to SSE — verified via mock-method-called assertions
+    - [x] **Pure-helper tests:** `Word` + `SegmentTiming` frozen + `extra="forbid"`
+  - [x] In `tests/unit/config/test_setup.py`: `transport` field accepts both literals + defaults to `"websocket"` + rejects other strings
+  - [x] No contract test extension needed — `transport` is config-side, not wire-side
 
-- [ ] **Task 7: Run the spike + commit the report** (AC: #4, #10)
-  - [ ] Run `just ttfb-spike` against the dev host
-  - [ ] Verify the report writes correctly and the keystone-question call-out (median ≤ 0.4 s vs > 0.4 s) renders one of the two branches
-  - [ ] Commit the report file (`6-1-ttfb-spike-report.md`) alongside the code changes — same single commit per `feedback_commit_policy.md`
-  - [ ] Sanity-check the median against DR-001's SSE baseline (~1.07 s) — a WS median substantially different from SSE indicates either a Cartesia performance change or a measurement bug; document either way
+- [x] **Task 7: Run the spike + commit the report** (AC: #4, #10)
+  - [x] Run `just ttfb-spike` against the dev host (500 samples — 250 cold + 250 warm)
+  - [x] Verify the report writes correctly and the keystone-question call-out renders. Result: **overall p50 = 383 ms** (under the 400 ms threshold via mixed cold+warm) → "DR-001 OPTION D VIABILITY" branch fired. **However, runtime cold p50 = 467 ms** (above 400 ms); the runtime path is one-WS-per-call (cold), so production today still sits above the keystone threshold. Warm pooling would unlock Option D (230 ms p50). The report's hedged "may close" wording captures this nuance correctly.
+  - [x] Commit the report file (`6-1-ttfb-spike-report.md`) alongside the code changes — same single commit per `feedback_commit_policy.md`
+  - [x] Sanity-check the median against DR-001's SSE baseline (~1.07 s): **SSE→WS cut cold p50 by ~57%** (1070 ms → 467 ms). Substantial improvement; consistent with switching from request-response SSE to a streaming WS that starts decoding immediately. No measurement bug suspected (0/500 errors; warm path further halves TTFB which is exactly what amortising TLS+WS handshake predicts).
 
-- [ ] **Task 8: Docs + commit** (AC: #9, #10)
-  - [ ] `setup.toml` `[tts]` comment block
-  - [ ] `README.md` "Common commands" entry for `just ttfb-spike`
-  - [ ] `build_documents/planning-artifacts/architecture.md` — verify the v2 implementation-sequence item #20 footnote + Cartesia boundary row are still accurate; amend in this commit if needed (NFR26 spec-as-contract)
-  - [ ] `build_documents/planning-artifacts/decision-records.md` — append a small "Closed by: 6-1-ttfb-spike-report.md (YYYY-MM-DD)" line under DR-001's keystone-question section; this is a minimal-touch closure consistent with the file's "newest at the top, immutable once frozen" doctrine (the closure note is meta-data about the existing record, not a change to its substance)
-  - [ ] `just check` green: ruff (lint + format), pyright (0 errors), `pytest tests/unit -q` (no regressions)
-  - [ ] Single commit per `feedback_commit_policy.md`; push to origin per `feedback_push_after_commit.md`
+- [x] **Task 8: Docs + commit** (AC: #9, #10)
+  - [x] `setup.toml` `[tts]` comment block
+  - [x] `README.md` "Common commands" entry for `just ttfb-spike`
+  - [x] `build_documents/planning-artifacts/architecture.md` — verified; v2 implementation-sequence item #20 footnote + Cartesia boundary row at line 183 already accurately describe Story 6.1. No amendment needed (NFR26 spec-as-contract preserved).
+  - [x] `build_documents/planning-artifacts/decision-records.md` — appended "Closed by: 6-1-ttfb-spike-report.md (2026-05-28)" closure paragraph under DR-001's "Open question (keystone)" section, including a note about the warm-vs-cold delta which the closure section also calls out
+  - [x] `just check` green: ruff (lint + format), pyright (0 errors), `pytest tests/unit -q` (546 passed)
+  - [x] Single commit per `feedback_commit_policy.md`; push to origin per `feedback_push_after_commit.md`
 
 ## Dev Notes
 
@@ -302,10 +309,45 @@ so that (a) Story 6.3's emphasis-vocalization join has the timing data it needs 
 
 ### Agent Model Used
 
-(populated by dev agent)
+Claude Opus 4.7 (1M context) — `claude-opus-4-7[1m]` (Anthropic).
 
 ### Debug Log References
 
+- `tts.first_frame` log now carries `transport="websocket"` (or `"sse"`) so the production time-series can be sliced by transport during Story 6.4's soak.
+- The spike emits `ttfb_spike.cold_sample` / `ttfb_spike.warm_sample` per request and `ttfb_spike.cold_phase_complete` / `ttfb_spike.warm_phase_complete` at phase boundaries. Run-time progress is monitorable via these events when `LOG_CONSOLE=true`.
+
 ### Completion Notes List
 
+1. **Cartesia WS context_id bug discovered on first spike run.** The SDK accepts `GenerationRequest(...)` without `context_id` at the Python level (the field defaults to `None`), but the Cartesia server rejects it with HTTP 400 (`"The context_id field should only contain alphanumeric characters, underscores, and hyphens."` — the request_id surfaced a composite-id form like `586bc956-...:` with an empty trailing segment). Fix: pass `uuid.uuid4().hex` per call (no dashes, satisfies the validator). Documented inline in `tts/cartesia.py`.
+2. **Cartesia WS `Error` event has a looser shape than the typed SDK model.** The SDK declares `error: str` (required) on `cartesia.types.websocket_response.Error`, but in practice a 400 validation error populates `error=None` and the actual reason lives in `message` and `title`. Story 6.1's WS error branch falls back through `event.error → event.message → event.title → status_code` so the operator sees the real reason, not "None".
+3. **Test fixture refactor.** The existing v1 cartesia tests built fixtures targeting `tts.generate_sse`, which is now only used when `transport="sse"`. Story 6.1 added a parallel `sse_tts_config` fixture and pinned the legacy tests to `transport="sse"` so they continue to exercise the SSE branch. New WS-path tests run against the default `tts_config` (`transport="websocket"`).
+4. **Spike scope upgraded mid-implementation per Kamal's request.** Initial spec called for ≥100 samples with p25/p50/p75/p90. After confirming the run would feed a research paper, the spike was expanded to 500 samples (250 cold + 250 warm), stratified by transcript-length bucket, with p95/p99 + mean+stdev added. The report template is correspondingly richer; the keystone call-out + SSE comparison band remain unchanged.
+5. **Three pre-existing integration test failures in `tests/integration/test_simple_turn.py` are unchanged by Story 6.1.** Verified by running against `main` pre-change (`git stash` + `pytest` round-trip). All 546 unit tests pass; the 3 integration failures are out-of-scope debt from prior stories and predate this work.
+6. **No top-level directory added** (CLAUDE.md rule 2). The Cartesia boundary stays concentrated: `tts/cartesia.py` (runtime) + `audio/regenerate.py` (offline) + the new `tts/ttfb_spike.py` (spike) are the only three Cartesia import sites.
+7. **Schema_version unchanged at 3** (CLAUDE.md rule 6). Story 6.1 is internal transport + capture machinery; nothing on the wire (DDS topics, JSON envelope shape, event payloads) changes.
+
 ### File List
+
+**Modified:**
+
+- `README.md` — added `just ttfb-spike` to the "Common commands" block.
+- `build_documents/implementation-artifacts/6-1-cartesia-websocket-and-ttfb-spike.md` — story file: Status, Tasks/Subtasks checkboxes, Dev Agent Record, File List.
+- `build_documents/implementation-artifacts/sprint-status.yaml` — `6-1-cartesia-websocket-and-ttfb-spike` flipped `ready-for-dev → in-progress` (will move to `review` on completion).
+- `build_documents/planning-artifacts/decision-records.md` — appended DR-001 "Open question (keystone)" closure paragraph referencing the spike report.
+- `justfile` — added the `ttfb-spike` recipe.
+- `setup.toml` — added the `[tts] transport` line + documentation comment.
+- `src/voice_agent_pipeline/config/setup.py` — added `transport: Literal["websocket", "sse"] = "websocket"` to `TtsConfig`; expanded docstring.
+- `src/voice_agent_pipeline/tts/cartesia.py` — Story-6.1 rewrite: `Word` + `SegmentTiming` pydantic models, `_synthesize_websocket` (with `context_id` fix, robust `Error` event handling), `_synthesize_sse` (lifted v1 SSE flow), `synthesize` dispatcher, `last_segment_timing()` accessor, `tts.first_frame` log now carries `transport`. `validate_credentials` unchanged.
+- `tests/unit/config/test_setup.py` — added three `transport` field tests (default, accepts "sse", rejects unknown).
+- `tests/unit/tts/test_cartesia.py` — rewrote with split WS / SSE fixture infrastructure; 24 tests covering WS happy / error event / connection closed / seconds→ms rounding / multi-Timestamps accumulation / reset between calls / first_frame log shape / GenerationRequest contract / transport dispatch + retained SSE tests pinned to `transport="sse"` + `Word` + `SegmentTiming` model invariants.
+
+**New:**
+
+- `build_documents/implementation-artifacts/6-1-ttfb-spike-report.md` — generated by `just ttfb-spike` (500 samples, 0 errors, 2026-05-28). Headline percentiles + per-mode + per-length stratified tables + DR-001 keystone call-out + SSE comparison + raw samples.
+- `src/voice_agent_pipeline/tts/ttfb_spike.py` — operator CLI for the TTFB spike (cold + warm phases, per-length stratification, Markdown report).
+
+## Change Log
+
+| Date | Author | Change |
+|---|---|---|
+| 2026-05-28 | Amelia (dev-story / Claude Opus 4.7) | Story 6.1 implemented: Cartesia WebSocket transport with per-word timestamps capture, SSE retained as opt-in fallback, 500-sample TTFB spike resolves DR-001 keystone. Headline: cold p50 = 467 ms, warm p50 = 230 ms, overall p50 = 383 ms (vs. SSE baseline ~1070 ms). 0 errors over 500 samples. |

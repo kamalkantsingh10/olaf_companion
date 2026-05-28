@@ -673,6 +673,71 @@ def test_tts_block_extra_key_rejected(tmp_path: Path) -> None:
     assert "unknown_tts_field" in str(exc_info.value)
 
 
+def test_tts_transport_defaults_to_websocket(tmp_path: Path) -> None:
+    """Story 6.1: ``[tts] transport`` defaults to ``"websocket"`` when omitted.
+
+    The default flipped from the v1 SSE wire to the v2 WebSocket wire
+    in Story 6.1 — captures per-word ``timestamps`` events Story 6.3's
+    emphasis join consumes. Operators with a working setup.toml that
+    omits the new field continue working without edit because the field
+    defaults to the desired v2 value.
+    """
+    toml_path, env_path = _write_files(tmp_path)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tts.transport == "websocket"
+
+
+def test_tts_transport_accepts_sse(tmp_path: Path) -> None:
+    """Story 6.1: ``[tts] transport = "sse"`` is accepted as the fallback path.
+
+    The SSE branch is retained for the implementation window so an
+    operator can flip back if the WS transport misbehaves during Story
+    6.4's soak. The loader does NOT remove the literal until a future
+    story removes the SSE branch itself.
+    """
+    body = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "sensitivity = 0.5\n"
+        "[tts]\n"
+        'voice_id = "stub-voice-uuid"\n'
+        'transport = "sse"\n' + _STT_AND_GREETING_BLOCKS
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=body)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tts.transport == "sse"
+
+
+def test_tts_transport_rejects_unknown_value(tmp_path: Path) -> None:
+    """Story 6.1: ``transport`` is ``Literal["websocket", "sse"]`` — typos fail loudly.
+
+    Misspelt transport names (e.g., ``"web-socket"`` or ``"WS"``) are
+    rejected at startup with a clear pydantic validation error rather
+    than silently selecting a default — same fail-fast posture as the
+    rest of TtsConfig (extra="forbid", literal-bounded fields).
+    """
+    body = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "sensitivity = 0.5\n"
+        "[tts]\n"
+        'voice_id = "stub-voice-uuid"\n'
+        'transport = "web-socket"\n' + _STT_AND_GREETING_BLOCKS
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=body)
+    with pytest.raises(ConfigError) as exc_info:
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert "transport" in str(exc_info.value).lower()
+
+
 def test_cartesia_api_key_required(tmp_path: Path) -> None:
     """Story 2.3: missing ``CARTESIA_API_KEY`` raises ConfigError naming the field.
 
