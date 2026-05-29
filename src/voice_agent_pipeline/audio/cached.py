@@ -6,13 +6,16 @@ architecture's boundary-concentration rule. Callers (``sequential_loop``,
 ``__main__.py``'s Stage 3 probe) speak through this module's typed surface
 rather than touching :mod:`pyaudio` directly.
 
-Story 5.5 trades runtime Cartesia calls for cached WAV playback on four
-deterministic-text surfaces:
+Story 5.5 trades runtime Cartesia calls for cached WAV playback on
+four deterministic-text surfaces:
 
 - **Wake greetings** — ``[greeting.greetings_by_mood]`` per Story 4.5
 - **Goodbyes** — ``[goodbye] phrases`` per the 2026-05-09 commit
 - **Clarifications** — ``[stt] clarification_prompts`` per Story 2.4
-- **Thinking fillers** — ``[filler.phrases_by_mood]`` per Story 5.5 itself
+- **Openers** — ``[openers.phrases_by_bucket]`` per Story 6.2
+  (function-bucketed; supersedes Story 5.5's mood-bucketed
+  ``[filler]`` surface, which was retired in Story 6.2 — manifest
+  schema bumped 1 → 2)
 
 Each phrase is rendered once via ``just regenerate-audio`` (which calls
 :class:`voice_agent_pipeline.tts.cartesia.CartesiaClient` per phrase),
@@ -47,9 +50,10 @@ from typing import Literal
 
 import pyaudio
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from voice_agent_pipeline.audio._silence import suppress_native_stderr
+from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.errors import StartupValidationError
 from voice_agent_pipeline.schemas.mood_event import Mood
@@ -73,7 +77,12 @@ _DEFAULT_MANIFEST_PATH = Path("assets/audio/manifest.json")
 # :class:`CachedAudioEntry` or :class:`CachedAudioManifest`. Operators
 # whose manifest's version doesn't match the build's expected version
 # must regenerate — the validator rejects mismatched versions.
-_MANIFEST_SCHEMA_VERSION = 1
+#
+# Story 6.2 bumped 1 -> 2: dropped the ``"filler"`` surface, added
+# ``"opener"`` surface + ``bucket`` field on entries. Operators
+# pulling Story 6.2 see a StartupValidationError on first restart
+# until they run ``just regenerate-audio``.
+_MANIFEST_SCHEMA_VERSION = 2
 
 # Stream chunk size for streaming WAV bytes to PyAudio. 4096 frames @
 # 16 kHz = ~256 ms per write — small enough to keep the event loop
@@ -87,7 +96,9 @@ _PLAYBACK_CHUNK_FRAMES = 4096
 _AUDIO_DRAIN_TAIL_MS = 250
 
 
-CachedAudioSurface = Literal["greeting", "goodbye", "clarification", "filler"]
+# Story 6.2: "filler" dropped, "opener" added. Manifest schema bumped
+# 1 -> 2 in the same story (see ``_MANIFEST_SCHEMA_VERSION`` above).
+CachedAudioSurface = Literal["greeting", "goodbye", "clarification", "opener"]
 
 
 class CachedAudioEntry(BaseModel):
@@ -95,18 +106,34 @@ class CachedAudioEntry(BaseModel):
 
     Frozen pydantic model — manifest entries are immutable once
     loaded. The :attr:`phrase_hash` is the cache key; it changes when
-    any of phrase / voice_id / tts_model changes, forcing regeneration.
+    any of phrase / voice_id / tts_model / (mood | bucket) changes,
+    forcing regeneration.
+
+    Surface / mood / bucket relationship (Story 6.2):
+
+    - ``surface = "greeting"`` → mood-bucketed: ``mood is not None``
+      and ``bucket is None``.
+    - ``surface = "opener"`` → function-bucketed: ``bucket is not
+      None`` and ``mood is None``.
+    - ``surface in ("goodbye", "clarification")`` → flat: both
+      ``mood`` and ``bucket`` are ``None``.
+
+    The ``model_validator`` below enforces this exactly so the
+    constraint can't drift silently.
 
     Attributes:
         surface: Which surface this phrase belongs to. Determines the
             on-disk path prefix (``assets/audio/<surface>/...``).
-        mood: For mood-bucketed surfaces (greeting, filler) the
-            current :data:`Mood` Literal value. ``None`` for the flat
-            surfaces (goodbye, clarification).
-        phrase_hash: ``sha256(phrase + voice_id + tts_model)`` —
-            cache invalidation key. Hex-encoded; first 16 chars are
-            sufficient for collision-resistance at our scale (~200
-            phrases) and keep the manifest readable.
+        mood: For mood-bucketed surfaces (greeting) the current
+            :data:`Mood` Literal value. ``None`` for openers + the
+            flat surfaces (goodbye, clarification).
+        bucket: For function-bucketed surfaces (opener) the
+            :data:`OpenerBucket` Literal value. ``None`` for
+            mood-bucketed + flat surfaces. Added in Story 6.2.
+        phrase_hash: ``sha256(phrase + voice_id + tts_model + (mood
+            OR bucket))`` — cache invalidation key. Hex-encoded; first
+            16 chars are sufficient for collision-resistance at our
+            scale (~200 phrases) and keep the manifest readable.
         phrase: The literal text. Stored alongside the hash for
             human-readability and to support the regenerator's
             "add/remove/edit" diff at next run.
@@ -115,19 +142,43 @@ class CachedAudioEntry(BaseModel):
             into a submodule or sibling repo without breaking the
             manifest).
         duration_ms: Wall-clock duration of the rendered audio.
-            Recorded so the filler-timing logic can decide whether
-            a filler will fit the expected gap before the real
-            response arrives.
+            Recorded so opener-timing logic can decide whether the
+            opener will fit the expected gap before the real response
+            arrives.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     surface: CachedAudioSurface
-    mood: Mood | None
+    mood: Mood | None = None
+    bucket: OpenerBucket | None = None
     phrase_hash: str
     phrase: str
     path: str
     duration_ms: int
+
+    @model_validator(mode="after")
+    def _validate_surface_mood_bucket_consistency(self) -> "CachedAudioEntry":
+        """Enforce the (surface, mood, bucket) one-of-the-other rule."""
+        if self.surface == "greeting":
+            if self.mood is None or self.bucket is not None:
+                raise ValueError(
+                    "surface='greeting' requires mood set and bucket None; "
+                    f"got mood={self.mood!r}, bucket={self.bucket!r}",
+                )
+        elif self.surface == "opener":
+            if self.bucket is None or self.mood is not None:
+                raise ValueError(
+                    "surface='opener' requires bucket set and mood None; "
+                    f"got mood={self.mood!r}, bucket={self.bucket!r}",
+                )
+        else:  # goodbye, clarification
+            if self.mood is not None or self.bucket is not None:
+                raise ValueError(
+                    f"surface={self.surface!r} requires mood=None and bucket=None; "
+                    f"got mood={self.mood!r}, bucket={self.bucket!r}",
+                )
+        return self
 
 
 class CachedAudioManifest(BaseModel):
@@ -166,12 +217,13 @@ class CachedAudioManifest(BaseModel):
         surface: CachedAudioSurface,
         phrase: str,
         mood: Mood | None = None,
+        bucket: OpenerBucket | None = None,
     ) -> CachedAudioEntry:
-        """Find the entry matching ``(surface, phrase, mood)``.
+        """Find the entry matching ``(surface, phrase, mood, bucket)``.
 
         Linear scan — at ~200 entries the cost is microseconds and
         avoids carrying a duplicate index dict. Called once per
-        greeting/goodbye/clarification/filler emission.
+        greeting/goodbye/clarification/opener emission.
 
         Args:
             surface: Which surface the phrase belongs to.
@@ -180,8 +232,10 @@ class CachedAudioManifest(BaseModel):
                 whitespace-sensitive). Operators editing ``setup.toml``
                 MUST run ``just regenerate-audio`` after any text
                 change for this lookup to succeed.
-            mood: For mood-bucketed surfaces, the bucket to look in.
-                For flat surfaces, must be ``None``. Mismatch raises.
+            mood: For mood-bucketed surfaces (greeting), the bucket
+                to look in. For other surfaces, must be ``None``.
+            bucket: For function-bucketed surfaces (opener), the
+                bucket to look in. For other surfaces, must be ``None``.
 
         Raises:
             KeyError: If no entry matches. The error names the missing
@@ -192,10 +246,16 @@ class CachedAudioManifest(BaseModel):
                 asking for a phrase that isn't in setup.toml.
         """
         for entry in self.entries:
-            if entry.surface == surface and entry.phrase == phrase and entry.mood == mood:
+            if (
+                entry.surface == surface
+                and entry.phrase == phrase
+                and entry.mood == mood
+                and entry.bucket == bucket
+            ):
                 return entry
         raise KeyError(
-            f"no cached audio for surface={surface!r}, phrase={phrase!r}, mood={mood!r}",
+            f"no cached audio for surface={surface!r}, phrase={phrase!r}, "
+            f"mood={mood!r}, bucket={bucket!r}",
         )
 
     def phrases_for_surface(
@@ -217,28 +277,36 @@ def compute_phrase_hash(
     voice_id: str,
     tts_model: str,
     mood: Mood | None,
+    bucket: OpenerBucket | None = None,
 ) -> str:
-    """Compute the cache key for a (phrase, mood) rendered with a given voice + model.
+    """Compute the cache key for a (phrase, mood, bucket) rendered with a voice + model.
 
     Hex-encoded SHA-256, truncated to 16 chars. At our scale (~200
     phrases) collision probability is negligible (~10^-19) and a short
     hash keeps the manifest readable. The full SHA-256 would buy
     cryptographic-strength uniqueness we don't need.
 
-    Why mood is part of the hash: phrases legitimately repeat across
-    mood buckets — "yeah?" is in `calm`, `curious`, and `sleepy`
-    greeting buckets; "hmm" appears in nearly every filler bucket.
-    Without mood in the hash, those collapse to a single manifest
-    entry, and the runtime lookup (which keys on ``(surface, phrase,
-    mood)``) fails for the missing buckets at first fire.
+    Why mood / bucket is part of the hash: phrases legitimately repeat
+    across buckets — "yeah?" is in ``calm``, ``curious``, and
+    ``sleepy`` greeting buckets; ``"yeah"`` is in the ``acknowledge``
+    opener bucket. Without the discriminator in the hash, those
+    collapse to a single manifest entry, and the runtime lookup
+    (which keys on ``(surface, phrase, mood | bucket)``) fails for
+    the missing slots at first fire.
+
+    Story 6.2 added ``bucket`` to the hash for the opener surface.
+    The hash input encodes whichever discriminator is non-None
+    (greetings pass ``mood``; openers pass ``bucket``; flat surfaces
+    pass neither and the ``__none__`` sentinel lands).
 
     Args:
         phrase: The literal text to render.
         voice_id: Cartesia voice id from ``[tts] voice_id``.
         tts_model: Cartesia model from ``[tts] model``.
-        mood: Mood bucket the phrase belongs to. ``None`` for flat
-            surfaces (goodbye, clarification) where the same phrase
-            never repeats across buckets.
+        mood: Mood bucket the phrase belongs to (for greetings).
+            ``None`` for openers + flat surfaces.
+        bucket: Opener bucket the phrase belongs to (for openers).
+            ``None`` for greetings + flat surfaces.
 
     Returns:
         16-char hex string suitable as a manifest key.
@@ -253,9 +321,13 @@ def compute_phrase_hash(
     h.update(b"\x00")
     h.update(tts_model.encode("utf-8"))
     h.update(b"\x00")
-    # Encode None as a sentinel that can't collide with a real mood
-    # value (Mood is a Literal of named lowercase strings).
-    h.update((mood or "__none__").encode("utf-8"))
+    # Encode the discriminator: mood OR bucket OR the sentinel. The
+    # Mood and OpenerBucket Literals have disjoint value sets (mood
+    # values are emotions; bucket values are function names) so even
+    # if a future contributor accidentally passed both, the hash
+    # would still discriminate. Pass exactly one in practice.
+    discriminator = mood or bucket or "__none__"
+    h.update(discriminator.encode("utf-8"))
     return h.hexdigest()[:16]
 
 
@@ -373,7 +445,9 @@ def load_and_validate_manifest(
 
     # Invariant 3: every required phrase has an entry. Build the set
     # of expected phrase_hashes from setup.toml; the diff against the
-    # manifest is the operator-actionable list.
+    # manifest is the operator-actionable list. Story 6.2 swapped the
+    # filler enumeration for the opener enumeration; greetings/
+    # goodbyes/clarifications unchanged.
     expected_hashes: dict[str, tuple[str, str, str | None]] = {}
     for mood, bucket in config.greeting.greetings_by_mood.items():
         for phrase in bucket:
@@ -385,10 +459,16 @@ def load_and_validate_manifest(
     for phrase in config.stt.clarification_prompts:
         h = compute_phrase_hash(phrase, config.tts.voice_id, config.tts.model, None)
         expected_hashes[h] = ("clarification", phrase, None)
-    for mood, bucket in config.filler.phrases_by_mood.items():
-        for phrase in bucket:
-            h = compute_phrase_hash(phrase, config.tts.voice_id, config.tts.model, mood)
-            expected_hashes[h] = ("filler", phrase, mood)
+    for opener_bucket, phrases in config.openers.phrases_by_bucket.items():
+        for phrase in phrases:
+            h = compute_phrase_hash(
+                phrase,
+                config.tts.voice_id,
+                config.tts.model,
+                mood=None,
+                bucket=opener_bucket,
+            )
+            expected_hashes[h] = ("opener", phrase, opener_bucket)
 
     have_hashes = {e.phrase_hash for e in manifest.entries}
     missing = set(expected_hashes.keys()) - have_hashes

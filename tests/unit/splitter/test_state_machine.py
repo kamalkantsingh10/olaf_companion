@@ -12,6 +12,7 @@ from voice_agent_pipeline.errors import SplitterError
 from voice_agent_pipeline.splitter.state_machine import (
     EmotionTagEvent,
     EndOfStreamEvent,
+    OpenerTagEvent,
     StateMachine,
     TextEvent,
     VocalizationTagEvent,
@@ -272,3 +273,82 @@ def test_underscore_in_vocalization_name() -> None:
     machine = StateMachine()
     events = _drain(machine, "[clears_throat]")
     assert events == [VocalizationTagEvent("clears_throat"), EndOfStreamEvent()]
+
+
+# ---------------------------------------------------------------------------
+# Story 6.2 — <opener bucket="X"/> tag
+# ---------------------------------------------------------------------------
+
+
+def test_opener_tag_emits_opener_event() -> None:
+    """A self-closing opener tag emits exactly one OpenerTagEvent."""
+    machine = StateMachine()
+    events = _drain(machine, '<opener bucket="thinking"/>')
+    assert events == [OpenerTagEvent("thinking"), EndOfStreamEvent()]
+
+
+def test_opener_tag_at_start_followed_by_text() -> None:
+    """The common reply shape: opener tag, then sentence text."""
+    machine = StateMachine()
+    events = _drain(machine, '<opener bucket="acknowledge"/> yeah sounds good.')
+    assert OpenerTagEvent("acknowledge") in events
+    text_events = [e for e in events if isinstance(e, TextEvent)]
+    full_text = "".join(e.text for e in text_events)
+    # Whitespace between tag and text is preserved; the spec says the
+    # *tag* is stripped from Cartesia's input, not surrounding text.
+    assert "yeah sounds good." in full_text
+
+
+def test_opener_tag_split_across_token_boundary() -> None:
+    """Tag split mid-attribute survives the consume boundary."""
+    machine = StateMachine()
+    events = _drain(machine, "Hello ", '<opener bucket="look', '_up"/>', " world.")
+    assert OpenerTagEvent("look_up") in events
+    text_events = [e for e in events if isinstance(e, TextEvent)]
+    full_text = "".join(e.text for e in text_events)
+    assert "Hello " in full_text
+    assert " world." in full_text
+
+
+def test_opener_tag_split_at_every_byte_position() -> None:
+    """For each split index, the same OpenerTagEvent fires exactly once."""
+    full = '<opener bucket="delegate"/>'
+    for i in range(1, len(full)):
+        machine = StateMachine()
+        events = _drain(machine, full[:i], full[i:])
+        assert events == [OpenerTagEvent("delegate"), EndOfStreamEvent()], (
+            f"split at byte {i} produced {events!r}"
+        )
+
+
+def test_opener_tag_with_invalid_bucket_raises_splitter_error() -> None:
+    """An unknown bucket name → SplitterError (fail-fast per CLAUDE.md rule 4)."""
+    machine = StateMachine()
+    with pytest.raises(SplitterError):
+        # "ramble" isn't in the OpenerBucket Literal.
+        list(machine.consume('<opener bucket="ramble"/>'))
+
+
+def test_opener_and_emotion_tags_interleave_cleanly() -> None:
+    """A reply with BOTH opener and emotion tags emits both events in order."""
+    machine = StateMachine()
+    events = _drain(
+        machine,
+        '<opener bucket="thinking"/> hmm, ',
+        '<emotion value="excited"/> here we go!',
+    )
+    assert OpenerTagEvent("thinking") in events
+    assert EmotionTagEvent("excited") in events
+    # OpenerTagEvent must fire before EmotionTagEvent (order preserved).
+    opener_idx = next(i for i, e in enumerate(events) if isinstance(e, OpenerTagEvent))
+    emotion_idx = next(i for i, e in enumerate(events) if isinstance(e, EmotionTagEvent))
+    assert opener_idx < emotion_idx
+
+
+def test_unknown_angle_bracket_tag_falls_back_to_text() -> None:
+    """``<other/>`` is neither opener nor emotion → emitted as plain text."""
+    machine = StateMachine()
+    events = _drain(machine, "<other/>")
+    text_events = [e for e in events if isinstance(e, TextEvent)]
+    full_text = "".join(e.text for e in text_events)
+    assert "<" in full_text  # accumulated chars survive as text

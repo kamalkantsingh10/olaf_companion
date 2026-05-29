@@ -1,10 +1,14 @@
 """Hand-rolled streaming SSML state machine.
 
-Story 3.3 — parses two surface forms inline within an otherwise plain-text
+Story 3.3 — parses three surface forms inline within an otherwise plain-text
 token stream:
 
 - **Emotion tag**: ``<emotion value="X"/>`` (Cartesia inline emotion).
 - **Vocalization tag**: ``[name]`` (Cartesia inline vocalization burst).
+- **Opener tag** (Story 6.2): ``<opener bucket="X"/>`` — selects which
+  cached opener take plays at the start of the Talker's reply. Strips
+  from the text Cartesia renders (it's a semantic side-effect, not
+  spoken content).
 
 The architectural promise (FR18): char-by-char streaming, **zero
 external dependencies** (no regex, no XML parser — both buffer the
@@ -20,7 +24,14 @@ buffer needs to accumulate text from "no match yet" to "match found"
 — that's the full stream, defeating streaming. An XML parser wants the
 full document. A char-by-char state machine emits ``TextEvent``s as
 soon as text is "definitely not part of a tag," and uses a tiny per-
-state buffer (~32 bytes worst case for ``<emotion value="..."/>``).
+state buffer (~40 bytes worst case for ``<opener bucket="acknowledge"/>``).
+
+Disambiguating ``<emotion`` and ``<opener`` after the ``<``: when
+the parser sees ``<``, it enters ``MAYBE_TAG`` and reads chars until
+the prefix is determined. The first non-letter char (space, ``/``,
+``>``) tells us which tag (or none — fall back to text). This
+generalises the v1's single-tag ``MAYBE_EMOTION_TAG`` state to a
+two-way branch without adding parser depth.
 
 Surface
 -------
@@ -42,8 +53,9 @@ Out of scope (Story 3.3 explicitly does NOT do):
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
+from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.errors import SplitterError
 
 # ---------------------------------------------------------------------------
@@ -78,13 +90,26 @@ class VocalizationTagEvent:
 
 
 @dataclass(frozen=True)
+class OpenerTagEvent:
+    """A fully-assembled ``<opener bucket="X"/>`` tag's bucket (Story 6.2).
+
+    The bucket is the resolved :data:`OpenerBucket` Literal value —
+    invalid bucket names raise :class:`SplitterError` at parse time
+    (the parser validates against the canonical Literal so
+    downstream consumers can ``Literal``-narrow without re-checking).
+    """
+
+    bucket: OpenerBucket
+
+
+@dataclass(frozen=True)
 class EndOfStreamEvent:
     """Sentinel emitted by :meth:`StateMachine.flush`. No payload."""
 
 
 #: Tagged-union of all parse events. Story 3.7's segmenter pattern-matches
 #: on this type.
-ParseEvent = TextEvent | EmotionTagEvent | VocalizationTagEvent | EndOfStreamEvent
+ParseEvent = TextEvent | EmotionTagEvent | VocalizationTagEvent | OpenerTagEvent | EndOfStreamEvent
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +120,16 @@ ParseEvent = TextEvent | EmotionTagEvent | VocalizationTagEvent | EndOfStreamEve
 # Internal states. Literal[...] not enum.Enum per CLAUDE.md rule #3.
 _State = Literal[
     "TEXT",  # accumulating plain text
-    "MAYBE_EMOTION_TAG",  # saw `<`, accumulating in case it's `<emotion ...`
-    "IN_EMOTION_TAG",  # confirmed `<emotion ...`, reading until `/>`
+    "MAYBE_TAG",  # saw `<`, accumulating to decide: emotion / opener / not-a-tag
+    "IN_EMOTION_TAG",  # confirmed `<emotion ...`, reading until `>`
+    "IN_OPENER_TAG",  # confirmed `<opener ...`, reading until `>`  (Story 6.2)
     "MAYBE_VOCALIZATION_TAG",  # saw `[`, accumulating identifier chars
 ]
+
+
+# Tag prefixes the MAYBE_TAG state disambiguates between.
+_EMOTION_PREFIX = "<emotion "
+_OPENER_PREFIX = "<opener "
 
 
 class StateMachine:
@@ -137,7 +168,12 @@ class StateMachine:
         protocol violation. v1 fail-fast (architecture.md §"Error
         Handling"); the process crashes and systemd restarts.
         """
-        if self._state in ("MAYBE_EMOTION_TAG", "IN_EMOTION_TAG", "MAYBE_VOCALIZATION_TAG"):
+        if self._state in (
+            "MAYBE_TAG",
+            "IN_EMOTION_TAG",
+            "IN_OPENER_TAG",
+            "MAYBE_VOCALIZATION_TAG",
+        ):
             raise SplitterError(
                 state=self._state,
                 partial=self._tag_buf,
@@ -153,22 +189,24 @@ class StateMachine:
     def _step(self, ch: str) -> Iterator[ParseEvent]:
         if self._state == "TEXT":
             yield from self._step_text(ch)
-        elif self._state == "MAYBE_EMOTION_TAG":
-            yield from self._step_maybe_emotion(ch)
+        elif self._state == "MAYBE_TAG":
+            yield from self._step_maybe_tag(ch)
         elif self._state == "IN_EMOTION_TAG":
             yield from self._step_in_emotion(ch)
+        elif self._state == "IN_OPENER_TAG":
+            yield from self._step_in_opener(ch)
         elif self._state == "MAYBE_VOCALIZATION_TAG":
             yield from self._step_maybe_vocalization(ch)
 
     def _step_text(self, ch: str) -> Iterator[ParseEvent]:
         if ch == "<":
-            # Possible start of an emotion tag. Flush text buffer
-            # immediately — we know the run of text ended here.
+            # Possible start of an emotion / opener tag. Flush text
+            # buffer immediately — we know the run of text ended here.
             if self._text_buf:
                 yield TextEvent(self._text_buf)
                 self._text_buf = ""
             self._tag_buf = "<"
-            self._state = "MAYBE_EMOTION_TAG"
+            self._state = "MAYBE_TAG"
         elif ch == "[":
             # Possible start of a vocalization. Same flush.
             if self._text_buf:
@@ -179,29 +217,85 @@ class StateMachine:
         else:
             self._text_buf += ch
 
-    def _step_maybe_emotion(self, ch: str) -> Iterator[ParseEvent]:
-        # Accumulate until we either confirm `<emotion ` (transition to
-        # IN_EMOTION_TAG) or rule it out (fall back to TEXT, emitting
-        # the accumulated chars as text).
+    def _step_maybe_tag(self, ch: str) -> Iterator[ParseEvent]:
+        """Disambiguate ``<...`` into emotion / opener / not-a-tag (Story 6.2).
+
+        Accumulate until either prefix is confirmed (transition to the
+        corresponding ``IN_*_TAG`` state) or ruled out (fall back to
+        TEXT, emitting the accumulated chars). Story 6.2 extends the
+        v1 single-emotion branch to a two-way branch; the structure
+        mirrors the v1 ``_step_maybe_emotion`` exactly.
+        """
         self._tag_buf += ch
-        prefix = "<emotion "
-        if len(self._tag_buf) <= len(prefix):
-            # Still validating prefix.
-            if self._tag_buf == prefix[: len(self._tag_buf)]:
-                if self._tag_buf == prefix:
-                    # Confirmed — switch to attribute-reading mode.
-                    self._state = "IN_EMOTION_TAG"
-                # else: still building prefix, no state change.
-            else:
-                # Prefix mismatch — what we accumulated isn't an emotion
-                # tag. Fall back to text.
+        # Is the buffer still a strict prefix of EITHER known tag?
+        # Once it stops being a prefix of either, we know it's not a
+        # recognised tag; fall back to text.
+        emotion_match = _EMOTION_PREFIX.startswith(self._tag_buf)
+        opener_match = _OPENER_PREFIX.startswith(self._tag_buf)
+        if self._tag_buf == _EMOTION_PREFIX:
+            # Confirmed emotion — switch to attribute-reading mode.
+            self._state = "IN_EMOTION_TAG"
+            return
+        if self._tag_buf == _OPENER_PREFIX:
+            # Confirmed opener — switch to attribute-reading mode.
+            self._state = "IN_OPENER_TAG"
+            return
+        if emotion_match or opener_match:
+            # Still building toward one of the known prefixes; no
+            # state change needed. Defensive sanity-check: shouldn't
+            # be longer than the longest prefix (which would mean we
+            # missed the confirmation transition above).
+            if len(self._tag_buf) > max(len(_EMOTION_PREFIX), len(_OPENER_PREFIX)):
                 yield TextEvent(self._tag_buf)
                 self._tag_buf = ""
                 self._state = "TEXT"
-        else:
-            # Should not be reachable — the prefix check transitions to
-            # IN_EMOTION_TAG when complete. Defensive fallback.
-            yield TextEvent(self._tag_buf)
+            return
+        # Prefix mismatch — whatever we accumulated isn't a known
+        # tag. Fall back to text so we don't lose the chars.
+        yield TextEvent(self._tag_buf)
+        self._tag_buf = ""
+        self._state = "TEXT"
+
+    def _step_in_opener(self, ch: str) -> Iterator[ParseEvent]:
+        """Read until ``>`` closes the opener tag; emit :class:`OpenerTagEvent`.
+
+        Story 6.2: mirrors :meth:`_step_in_emotion` exactly — accept
+        both self-closing (``/>``) and non-self-closing (``>``) forms
+        because LLMs sometimes drop the trailing ``/`` despite a
+        self-closing prompt example.
+
+        Invalid bucket values raise :class:`SplitterError` rather than
+        falling back to text (the LLM emitted a typed semantic
+        instruction; if the bucket is wrong, that's a prompt-drift
+        defect we want loud, not a silent skip that would mask the
+        regression).
+        """
+        self._tag_buf += ch
+        if ch == ">":
+            # Slice off the leading `<opener ` and trailing `>`.
+            body = self._tag_buf[len(_OPENER_PREFIX) : -1].strip()
+            body = body.rstrip("/").rstrip()
+            bucket = _parse_opener_bucket(body)
+            if bucket is None:
+                # Malformed attribute (e.g., missing bucket="..." form).
+                # Same fall-through-to-text behaviour as the emotion
+                # branch so we don't drop content on a typo.
+                yield TextEvent(self._tag_buf)
+            else:
+                # Validate against the canonical OpenerBucket Literal —
+                # an unknown bucket name is a contract violation that
+                # should fail loud per CLAUDE.md rule #4.
+                if bucket not in get_args(OpenerBucket):
+                    raise SplitterError(
+                        state=self._state,
+                        partial=self._tag_buf,
+                        reason=f"unknown opener bucket {bucket!r}; "
+                        f"valid: {sorted(get_args(OpenerBucket))}",
+                    )
+                # The Literal check above narrows ``bucket`` to
+                # :data:`OpenerBucket` semantically; cast keeps pyright
+                # quiet (the runtime check happened on the line above).
+                yield OpenerTagEvent(bucket=bucket)  # type: ignore[arg-type]
             self._tag_buf = ""
             self._state = "TEXT"
 
@@ -224,7 +318,7 @@ class StateMachine:
         self._tag_buf += ch
         if ch == ">":
             # Slice off the leading `<emotion ` and trailing `>`.
-            body = self._tag_buf[len("<emotion ") : -1].strip()
+            body = self._tag_buf[len(_EMOTION_PREFIX) : -1].strip()
             # Strip optional trailing `/` from the self-closing form.
             body = body.rstrip("/").rstrip()
             value = _parse_emotion_value(body)
@@ -275,13 +369,27 @@ def _parse_emotion_value(attr_body: str) -> str | None:
     Returns ``None`` on malformed input. The state machine's caller
     falls back to plain-text emission so we don't drop content.
     """
-    # Expected form: `value="X"`. Strip whitespace, validate prefix,
-    # extract the quoted value.
+    return _parse_quoted_attribute(attr_body, attr_name="value")
+
+
+def _parse_opener_bucket(attr_body: str) -> str | None:
+    """Extract the ``X`` from ``bucket="X"`` (Story 6.2 opener tag form).
+
+    Returns ``None`` on malformed input. Caller falls back to text
+    emission for malformed attributes, but validates the extracted
+    bucket against the :data:`OpenerBucket` Literal and raises
+    :class:`SplitterError` for an unknown-but-well-formed bucket.
+    """
+    return _parse_quoted_attribute(attr_body, attr_name="bucket")
+
+
+def _parse_quoted_attribute(attr_body: str, attr_name: str) -> str | None:
+    """Generic ``attr_name="X"`` extractor — backs emotion + opener helpers."""
     body = attr_body.strip()
-    if not body.startswith('value="'):
+    prefix = f'{attr_name}="'
+    if not body.startswith(prefix):
         return None
-    # Find the closing quote.
-    rest = body[len('value="') :]
+    rest = body[len(prefix) :]
     if '"' not in rest:
         return None
     return rest.split('"', 1)[0]

@@ -23,9 +23,9 @@ import pytest
 from pydantic import SecretStr
 
 from tests._factories import (
-    minimal_filler_config,
     minimal_goodbye_config,
     minimal_greeting_config,
+    minimal_openers_config,
     minimal_stt_config,
 )
 from voice_agent_pipeline.audio.cached import (
@@ -123,7 +123,7 @@ def _entry(
 
 def _manifest(entries: list[CachedAudioEntry]) -> CachedAudioManifest:
     return CachedAudioManifest(
-        schema_version=1,
+        schema_version=2,
         generated_at=datetime.now(tz=UTC),
         voice_id="v",
         tts_model="m",
@@ -179,7 +179,7 @@ def test_phrases_for_surface_filters_by_surface() -> None:
 def _write_valid_manifest(tmp_path: Path, **overrides: Any) -> Path:
     """Write a minimal valid manifest under tmp_path; return the path."""
     body = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": "2026-05-12T00:00:00+00:00",
         "voice_id": "v",
         "tts_model": "m",
@@ -195,7 +195,7 @@ def test_load_manifest_happy_path(tmp_path: Path) -> None:
     """A valid manifest file parses into a CachedAudioManifest."""
     path = _write_valid_manifest(tmp_path)
     m = load_manifest(path)
-    assert m.schema_version == 1
+    assert m.schema_version == 2
     assert m.voice_id == "v"
 
 
@@ -242,16 +242,33 @@ def _make_setup_config(tmp_path: Path) -> SetupConfig:
         stt=minimal_stt_config(),
         greeting=minimal_greeting_config(),
         goodbye=minimal_goodbye_config(),
-        filler=minimal_filler_config(),
+        openers=minimal_openers_config(),
     )
 
 
 def _all_required_entries(config: SetupConfig, tmp_path: Path) -> list[dict[str, Any]]:
-    """Build manifest-shaped entries covering every phrase in setup.toml."""
+    """Build manifest-shaped entries covering every phrase in setup.toml.
+
+    Story 6.2: surface 'opener' is bucket-keyed (`bucket=`), surface
+    'greeting' is mood-keyed (`mood=`), 'goodbye' / 'clarification'
+    are flat (both None). Mirrors the production
+    `_plan_phrases` enumeration in `audio/regenerate.py`.
+    """
     entries: list[dict[str, Any]] = []
 
-    def _push(surface: str, phrase: str, mood: str | None) -> None:
-        h = compute_phrase_hash(phrase, config.tts.voice_id, config.tts.model, mood)  # type: ignore[arg-type]
+    def _push(
+        surface: str,
+        phrase: str,
+        mood: str | None,
+        bucket: str | None,
+    ) -> None:
+        h = compute_phrase_hash(
+            phrase,
+            config.tts.voice_id,
+            config.tts.model,
+            mood=mood,  # type: ignore[arg-type]
+            bucket=bucket,  # type: ignore[arg-type]
+        )
         # The probe checks ``Path(entry.path).exists()`` — we touch
         # each WAV path so the file-presence invariant passes.
         path = tmp_path / f"{h}.wav"
@@ -260,6 +277,7 @@ def _all_required_entries(config: SetupConfig, tmp_path: Path) -> list[dict[str,
             {
                 "surface": surface,
                 "mood": mood,
+                "bucket": bucket,
                 "phrase_hash": h,
                 "phrase": phrase,
                 "path": str(path),
@@ -267,16 +285,16 @@ def _all_required_entries(config: SetupConfig, tmp_path: Path) -> list[dict[str,
             },
         )
 
-    for mood, bucket in config.greeting.greetings_by_mood.items():
-        for phrase in bucket:
-            _push("greeting", phrase, mood)
+    for mood, phrases in config.greeting.greetings_by_mood.items():
+        for phrase in phrases:
+            _push("greeting", phrase, mood, None)
     for phrase in config.goodbye.phrases:
-        _push("goodbye", phrase, None)
+        _push("goodbye", phrase, None, None)
     for phrase in config.stt.clarification_prompts:
-        _push("clarification", phrase, None)
-    for mood, bucket in config.filler.phrases_by_mood.items():
-        for phrase in bucket:
-            _push("filler", phrase, mood)
+        _push("clarification", phrase, None, None)
+    for bucket, phrases in config.openers.phrases_by_bucket.items():
+        for phrase in phrases:
+            _push("opener", phrase, None, bucket)
     return entries
 
 

@@ -14,9 +14,9 @@ import pytest
 from pydantic import SecretStr
 
 from tests._factories import (
-    minimal_filler_config,
     minimal_goodbye_config,
     minimal_greeting_config,
+    minimal_openers_config,
 )
 from voice_agent_pipeline.config.setup import (
     AudioConfig,
@@ -71,7 +71,7 @@ def _setup(stt: SttConfig, groq_api_key: SecretStr | None = _DEFAULT_GROQ_KEY) -
         # during model_construct.
         greeting=minimal_greeting_config(),
         goodbye=minimal_goodbye_config(),
-        filler=minimal_filler_config(),
+        openers=minimal_openers_config(),
     )
 
 

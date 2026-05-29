@@ -40,9 +40,9 @@ def stub_config() -> SetupConfig:
     # SetupConfig's default_factory chain doesn't trip on the (now-required)
     # non-empty clarification_prompts and per-mood greeting/filler buckets.
     from tests._factories import (
-        minimal_filler_config,
         minimal_goodbye_config,
         minimal_greeting_config,
+        minimal_openers_config,
         minimal_stt_config,
     )
 
@@ -52,7 +52,7 @@ def stub_config() -> SetupConfig:
         stt=minimal_stt_config(),
         greeting=minimal_greeting_config(),
         goodbye=minimal_goodbye_config(),
-        filler=minimal_filler_config(),
+        openers=minimal_openers_config(),
     )
 
 

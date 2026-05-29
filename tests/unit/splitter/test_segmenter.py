@@ -299,3 +299,62 @@ def test_flush_emits_buffered_partial_segment() -> None:
     segments = _drain(seg, '<emotion value="content"/> No terminator')
     assert len(segments) == 1
     assert "No terminator" in segments[0].text
+
+
+# ---------------------------------------------------------------------------
+# Story 6.2 — opener-tag callback + tag-strip
+# ---------------------------------------------------------------------------
+
+
+def test_opener_tag_invokes_callback_with_bucket() -> None:
+    """The segmenter's opener_callback fires synchronously per OpenerTagEvent."""
+    seen: list[str] = []
+    seg = Segmenter(_make_mapping(), opener_callback=lambda b: seen.append(b))
+    _drain(seg, '<opener bucket="thinking"/> hmm yes.')
+    assert seen == ["thinking"]
+
+
+def test_opener_tag_stripped_from_segment_text() -> None:
+    """The tag itself does NOT appear in Segment.text (Cartesia would render it)."""
+    seg = Segmenter(_make_mapping(), opener_callback=lambda _b: None)
+    segments = _drain(seg, '<opener bucket="acknowledge"/> yeah sure.')
+    full_text = "".join(s.text for s in segments)
+    assert "<opener" not in full_text
+    assert "bucket=" not in full_text
+    assert "yeah sure." in full_text
+
+
+def test_opener_tag_with_no_callback_silently_consumes() -> None:
+    """Default opener_callback=None: tag is parsed but no callback fires."""
+    # No exception, no callback wired — just check the tag doesn't
+    # leak into Segment.text. The segmenter being constructible
+    # without a callback is the use-case for splitter-only tests.
+    seg = Segmenter(_make_mapping())
+    segments = _drain(seg, '<opener bucket="thinking"/> hmm okay.')
+    full_text = "".join(s.text for s in segments)
+    assert "<opener" not in full_text
+
+
+def test_opener_tag_does_not_trigger_segment_emission() -> None:
+    """A tag with no surrounding text doesn't emit a Segment by itself."""
+    seg = Segmenter(_make_mapping(), opener_callback=lambda _b: None)
+    segments = _drain(seg, '<opener bucket="acknowledge"/>')
+    # Just the EndOfStream pass; no segments because no text + no
+    # vocalizations + no emotion change. The callback fires; the
+    # segment list is empty.
+    assert segments == []
+
+
+def test_opener_and_emotion_tags_both_work() -> None:
+    """Opener tag + emotion tag in the same stream: callback fires; emotion attaches."""
+    seen: list[str] = []
+    seg = Segmenter(_make_mapping(), opener_callback=lambda b: seen.append(b))
+    segments = _drain(
+        seg,
+        '<opener bucket="thinking"/> <emotion value="excited"/> Here we go!',
+    )
+    assert seen == ["thinking"]
+    # The single segment carries the excited emotion.
+    assert len(segments) == 1
+    assert segments[0].speech_emotion_payload is not None
+    assert segments[0].speech_emotion_payload.emotion == "excited"

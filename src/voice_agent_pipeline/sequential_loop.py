@@ -56,7 +56,8 @@ from voice_agent_pipeline.activity.machine import ActivityFSM
 from voice_agent_pipeline.audio._silence import suppress_native_stderr
 from voice_agent_pipeline.audio.cached import CachedAudioManifest, play_cached
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
-from voice_agent_pipeline.audio.filler import maybe_play_filler
+from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
+from voice_agent_pipeline.audio.openers import pick_opener, trigger_opener_fallback
 from voice_agent_pipeline.config.expression_map import load_from_path
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.mood.controller import MoodController
@@ -225,13 +226,13 @@ async def run_sequential_loop(
             # bot replies (working → speaking → listening). The
             # greeting is a pre-turn nicety.
 
-            # Story 5.5: ring buffer of recently-played filler hashes.
+            # Story 6.2: ring buffer of recently-played opener hashes.
             # Persists across turns within a single wake session so the
             # last-N suppression actually suppresses across turns.
             # maxlen = max_consecutive_repeat + 1 → at minimum the
-            # immediately-previous filler is excluded.
-            recent_fillers: deque[str] = deque(
-                maxlen=config.filler.max_consecutive_repeat + 1,
+            # immediately-previous opener is excluded.
+            recent_openers: deque[str] = deque(
+                maxlen=config.openers.max_consecutive_repeat + 1,
             )
 
             # Conversation loop — runs until the bot calls
@@ -253,25 +254,39 @@ async def run_sequential_loop(
                 await fsm.on_speech_started()
                 await fsm.on_speech_ended()
 
-                # Story 5.5: spawn the filler task immediately after
-                # VAD end-of-speech. The task sleeps up to
-                # `min_pause_ms`; if `audio_started` fires before then
-                # (fast turn), it returns without playing. The
-                # downstream paths (clarification + real Talker reply)
-                # both signal `audio_started` and `await filler_task`
-                # before opening their output streams — that's how we
-                # serialize filler vs real audio without sharing a
-                # stream.
-                audio_started = asyncio.Event()
-                filler_task = asyncio.create_task(
-                    maybe_play_filler(
+                # Story 6.2: spawn the opener-fallback timer task on
+                # VAD end-of-speech. Two events coordinate with the
+                # splitter-driven opener path:
+                #
+                # - `opener_selected` — set by the splitter callback
+                #   when the LLM emits `<opener bucket="..."/>`. The
+                #   fallback task `wait_for`s on this; if set before
+                #   `timer_fallback_ms` expires, the fallback exits
+                #   without playing.
+                # - `opener_already_playing` — set by EITHER the
+                #   splitter callback OR the fallback task itself
+                #   right before each starts playback. Acts as the
+                #   race-window check: whichever path commits first
+                #   wins, the other silently bails.
+                #
+                # Unlike Story 5.5's filler design, the real-answer
+                # path does NOT await this task before opening its
+                # output stream — that's the Cartesia overlap
+                # deletion (DR-001's serialization-tax fix). PyAudio's
+                # device-level serialization handles the playback
+                # ordering on the speaker.
+                opener_selected = asyncio.Event()
+                opener_already_playing = asyncio.Event()
+                opener_fallback_task = asyncio.create_task(
+                    trigger_opener_fallback(
                         pa=pa,
                         indices=indices,
-                        mood=mood_state.current,
                         manifest=manifest,
-                        min_pause_ms=config.filler.min_pause_ms,
-                        audio_started=audio_started,
-                        recent=recent_fillers,
+                        timer_fallback_ms=config.openers.timer_fallback_ms,
+                        timer_fallback_bucket=config.openers.timer_fallback_bucket,
+                        opener_selected=opener_selected,
+                        opener_already_playing=opener_already_playing,
+                        recent=recent_openers,
                     ),
                 )
 
@@ -299,13 +314,16 @@ async def run_sequential_loop(
                         config.stt.clarification_prompts,
                     )
                     log.info("clarification.picked", text=clarification_text)
-                    # Story 5.5: signal "real audio is about to start"
-                    # to the filler task, then await it. If the filler
-                    # hadn't started yet, it returns immediately; if
-                    # it had, we wait for it to finish playing so the
-                    # output stream is free before we open ours.
-                    audio_started.set()
-                    await filler_task
+                    # Story 6.2: clarification short-circuits to a
+                    # cached phrase, so we don't want a fallback opener
+                    # firing on top. Cancel the timer (set
+                    # `opener_selected` so the wait_for returns) and
+                    # drain the task. If the fallback already started
+                    # playing, `await opener_fallback_task` waits for
+                    # it to finish so the speaker is free before we
+                    # play the clarification.
+                    opener_selected.set()
+                    await opener_fallback_task
                     await fsm.on_first_audio_frame()
                     # Clarifications are deterministic text; play from
                     # cached WAV instead of hitting Cartesia. No mood
@@ -348,8 +366,11 @@ async def run_sequential_loop(
                     tool_registry,
                     stt_result.text,
                     fsm,
-                    audio_started=audio_started,
-                    filler_task=filler_task,
+                    manifest=manifest,
+                    opener_selected=opener_selected,
+                    opener_already_playing=opener_already_playing,
+                    opener_fallback_task=opener_fallback_task,
+                    recent_openers=recent_openers,
                     publisher=event_publisher,
                     segmenter=segmenter,
                     emotion_cache=emotion_cache,
@@ -625,8 +646,11 @@ async def _stream_and_speak(
     tool_registry: ToolRegistry,
     prompt: str,
     fsm: ActivityFSM,
-    audio_started: asyncio.Event,
-    filler_task: asyncio.Task[None],
+    manifest: CachedAudioManifest,
+    opener_selected: asyncio.Event,
+    opener_already_playing: asyncio.Event,
+    opener_fallback_task: asyncio.Task[None],
+    recent_openers: deque[str],
     publisher: EventPublisher,
     segmenter: Segmenter,
     emotion_cache: LastPublishedCache,
@@ -637,13 +661,25 @@ async def _stream_and_speak(
     Token-streaming for snappier perceived latency (the canonical
     voice-AI win): we don't wait for the full LLM response before
     starting Cartesia. As tokens arrive, they feed the ``segmenter``,
-    which parses the ``<emotion .../>`` and ``[vocalization]`` tags and
-    yields :class:`Segment`s on sentence / emotion boundaries. For each
-    segment we publish its ``speech_emotion`` + ``vocalization`` events
-    and then synthesize its (tag-cleaned) text — so the body reacts in
-    lockstep with the spoken audio. (The pipecat assembly did this in
-    ``CartesiaSynthesisProcessor`` + ``_PrePublishProcessor``; the
-    half-duplex migration had dropped it.)
+    which parses the ``<emotion .../>``, ``<opener .../>`` (Story
+    6.2), and ``[vocalization]`` tags and yields :class:`Segment`s on
+    sentence / emotion boundaries. For each segment we publish its
+    ``speech_emotion`` + ``vocalization`` events and then synthesize
+    its (tag-cleaned) text — so the body reacts in lockstep with the
+    spoken audio.
+
+    Story 6.2 — opener + Cartesia overlap
+    -------------------------------------
+
+    Register an opener callback on the segmenter that fires when the
+    LLM emits ``<opener bucket="..."/>``: cancel the fallback timer,
+    claim the playing slot, and spawn a background cached-opener
+    playback task. **The real-answer path does NOT await opener
+    playback before opening its own output stream** — that was the
+    Story-5.5 serialization tax DR-001 surfaced. The Cartesia
+    network call is unblocked the moment the splitter has the first
+    non-tag text; PyAudio's device-level serialization handles the
+    audio ordering on the speaker.
 
     The bot's ``working → speaking`` FSM transition fires just before
     the FIRST segment's audio starts — that's when the user starts
@@ -662,15 +698,61 @@ async def _stream_and_speak(
     emotion_cache.reset()
     turn_id = uuid4()
 
-    # Story 5.5: the output stream is opened LAZILY on the first
-    # segment's first chunk. This serializes against any concurrent
-    # filler audio: we signal `audio_started` + await `filler_task`
-    # right before opening, so the filler stream is closed before ours.
+    # Story 6.2: track all opener-related playback tasks so a clean
+    # shutdown (and the tool-only-reply branch below) can await them
+    # without the asyncio cleanup-warning noise.
+    opener_play_tasks: list[asyncio.Task[None]] = []
+
+    # The output stream is opened LAZILY on the first segment's first
+    # chunk. Real-answer audio and opener audio open DIFFERENT
+    # PyAudio output streams (the opener path is `play_cached`, which
+    # owns its own stream); PyAudio serialises them on the device.
     out_stream: Any = None
 
     full_text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     fsm_speaking_fired = False
+
+    async def _play_opener_from_tag(bucket: OpenerBucket) -> None:
+        """Splitter-driven opener playback. Picks + plays one take."""
+        pick = pick_opener(manifest, bucket, recent_openers)
+        if pick is None:
+            # Bucket empty (the OpenersConfig validator should
+            # prevent this in production). Defensive log + bail.
+            log.warning("opener.no_pick_from_splitter", bucket=bucket)
+            return
+        log.info(
+            "opener.splitter_picked",
+            bucket=bucket,
+            phrase=pick.phrase,
+            duration_ms=pick.duration_ms,
+        )
+        recent_openers.append(pick.phrase_hash)
+        await play_cached(pa, cast(int, indices.output_index), Path(pick.path))
+
+    def _on_opener_selected(bucket: OpenerBucket) -> None:
+        """Sync callback the segmenter invokes on every OpenerTagEvent.
+
+        - Cancel the fallback timer (set ``opener_selected``).
+        - Race-window check: if the fallback already started playing
+          (``opener_already_playing.is_set()``), silently drop the
+          tag so we don't double-play.
+        - Claim the slot and spawn the background playback task.
+        """
+        if opener_already_playing.is_set():
+            log.debug("opener.late_tag_or_fallback_won", bucket=bucket)
+            opener_selected.set()  # still cancel the timer if pending
+            return
+        opener_selected.set()
+        opener_already_playing.set()
+        opener_play_tasks.append(asyncio.create_task(_play_opener_from_tag(bucket)))
+
+    # Story 6.2: rebind the segmenter's opener callback every turn.
+    # The segmenter is shared across turns (its `.reset()` is the
+    # per-turn boundary), so we have to overwrite the callback rather
+    # than construct a new segmenter — keeps the state machine's
+    # implementation detail private.
+    segmenter.opener_callback = _on_opener_selected
 
     async def _speak_segment(segment: Segment) -> None:
         """Publish a segment's events, then synthesize its text via Cartesia."""
@@ -693,12 +775,16 @@ async def _stream_and_speak(
 
         # Fire the FSM transition right before the first segment's first
         # chunk lands — the "user hears the bot" moment.
+        #
+        # Story 6.2 (overlap deletion): we DO NOT await the opener
+        # fallback task here. The Cartesia synth call fires
+        # immediately; opener playback (if any) and the real-answer
+        # playback land on the same physical speaker — PyAudio's
+        # `stream.write` blocks until the OS buffer has room, which
+        # serialises them naturally. The Story 5.5 serialization tax
+        # (await filler_task before opening output stream) is gone;
+        # that's the whole point of this story.
         if not fsm_speaking_fired:
-            # Story 5.5: signal the filler task that real audio is about
-            # to start; await it so its output stream is closed before
-            # we open ours.
-            audio_started.set()
-            await filler_task
             await fsm.on_first_audio_frame()
             fsm_speaking_fired = True
             with suppress_native_stderr():
@@ -738,17 +824,23 @@ async def _stream_and_speak(
         for segment in segmenter.flush():
             await _speak_segment(segment)
 
-        # If the LLM produced no spoken text (tool-call-only reply, or a
-        # reply that was all stripped tags), we never fired
-        # ``on_first_audio_frame`` and never opened the output stream.
-        # Fire the FSM transition + await the filler task (in case it's
-        # still running) so the caller's ``on_last_audio_frame`` lands
-        # cleanly. Story 5.5: the filler await handles the "Talker
-        # emitted only tools, but a filler is mid-playback" edge case.
+        # If the LLM produced no spoken text (tool-call-only reply, or
+        # a reply that was all stripped tags), we never fired
+        # ``on_first_audio_frame``. Cancel the opener fallback (the
+        # tool-only path doesn't want a stranded "hmm" with no follow-
+        # up speech) and drain any in-flight opener playback before
+        # the caller's ``on_last_audio_frame`` lands. Story 6.2
+        # parallel to the Story 5.5 edge-case handling.
         if not fsm_speaking_fired:
-            audio_started.set()
-            await filler_task
+            opener_selected.set()
             await fsm.on_first_audio_frame()
+
+        # Always drain the opener fallback + any splitter-driven
+        # opener playback tasks before returning, so cleanup is
+        # deterministic and we don't leak Task warnings.
+        await opener_fallback_task
+        for play_task in opener_play_tasks:
+            await play_task
 
         # Trailing drain — let the OS finish playing buffered audio.
         # Only if we actually opened the stream (out_stream is None
@@ -759,6 +851,10 @@ async def _stream_and_speak(
         if out_stream is not None:
             out_stream.stop_stream()
             out_stream.close()
+        # Best-effort callback unbind — keep the segmenter from
+        # holding a closure over this turn's state past the function
+        # boundary. The next turn rebinds.
+        segmenter.opener_callback = None
 
     full_text = "".join(full_text_parts)
     return full_text, tool_calls

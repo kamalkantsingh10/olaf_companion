@@ -1,5 +1,13 @@
 # generated: 2026-05-05
-# last_updated: 2026-05-28
+# last_updated: 2026-05-29
+# 2026-05-29: Story 6-2 -> review (dev-story / Amelia). Cached
+#             function-bucketed opener system (5 buckets) + LLM
+#             <opener bucket=".."/> tag + timer fallback; retired
+#             the Story 5.5 filler design; deleted the ~1 s
+#             serialization tax (await filler_task) for Cartesia
+#             overlap; manifest schema 1 -> 2 (opener surface).
+#             Design-checkpoint: shipped cached as specified
+#             (default presumption; cold-path p50 467 ms).
 # 2026-05-28: Story 6-1 -> review (dev-story / Amelia). Cartesia
 #             SSE->WS migration + timestamps capture + 500-sample
 #             TTFB spike. Headline: cold p50 = 467 ms (above DR-001
@@ -73,7 +81,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-28  # Story 6-1 -> review (dev-story / Amelia)
+last_updated: 2026-05-29  # Story 6-2 -> review (dev-story / Amelia)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -194,7 +202,7 @@ development_status:
   # See: decision-records.md §DR-001 + §DR-002 + §DR-004 + epics.md §Epic 6.
   epic-6: in-progress
   6-1-cartesia-websocket-and-ttfb-spike: review
-  6-2-cached-opener-system-and-cartesia-overlap: ready-for-dev
+  6-2-cached-opener-system-and-cartesia-overlap: review
   6-3-emphasis-vocalization-wiring: ready-for-dev
   6-4-instrumentation-soak-embodiment-brief: ready-for-dev
   epic-6-retrospective: optional

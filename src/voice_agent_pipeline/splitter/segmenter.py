@@ -28,10 +28,12 @@ What this module does NOT do:
   ``working → listening`` transitions.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
+from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.config.expression_map import ExpressionMapConfig
 from voice_agent_pipeline.splitter.mapping import (
     SpeechEmotionPayload,
@@ -42,10 +44,13 @@ from voice_agent_pipeline.splitter.mapping import (
 from voice_agent_pipeline.splitter.state_machine import (
     EmotionTagEvent,
     EndOfStreamEvent,
+    OpenerTagEvent,
     StateMachine,
     TextEvent,
     VocalizationTagEvent,
 )
+
+log = structlog.get_logger(__name__)
 
 # Sentence-terminator characters. v1 punts on the false-positive cases
 # (decimals like ``3.14``, abbreviations like ``Mr.``) per Story 3.3
@@ -96,9 +101,32 @@ class Segmenter:
     is the turn-boundary hook.
     """
 
-    def __init__(self, mapping: ExpressionMapConfig) -> None:
+    def __init__(
+        self,
+        mapping: ExpressionMapConfig,
+        opener_callback: Callable[[OpenerBucket], None] | None = None,
+    ) -> None:
+        """Construct the segmenter.
+
+        Args:
+            mapping: The :class:`ExpressionMapConfig` used to resolve
+                emotion + vocalization tags into payloads.
+            opener_callback: Story 6.2 — invoked synchronously on
+                every :class:`OpenerTagEvent` the splitter sees. The
+                runtime registers a callback that (a) signals the
+                opener-fallback timer to cancel and (b) spawns a
+                cached-opener playback task. Callback fires AT MOST
+                ONCE per turn in practice (the Talker prompt teaches
+                one tag per reply); the segmenter calls it every time
+                a tag is seen so the runtime owns dedup if needed
+                (which it does via the ``opener_already_playing``
+                event). ``None`` (default) means opener tags are
+                silently consumed — useful for tests that exercise
+                splitter behaviour without the runtime wiring.
+        """
         self._mapping = mapping
         self._machine = StateMachine()
+        self.opener_callback = opener_callback
         self._buffer: str = ""
         # When `current_emotion` is set, the **next** segment we emit
         # will carry it as its payload. This is how an emotion tag
@@ -145,6 +173,8 @@ class Segmenter:
             yield from self._handle_emotion_change(event.value)
         elif isinstance(event, VocalizationTagEvent):
             yield from self._handle_vocalization(event.name)
+        elif isinstance(event, OpenerTagEvent):
+            self._handle_opener(event.bucket)
         elif isinstance(event, EndOfStreamEvent):
             yield from self._flush_buffer()
         # No `else` — ParseEvent is a closed union; pyright catches
@@ -191,6 +221,29 @@ class Segmenter:
 
         self._current_emotion = resolve(raw_tag, self._mapping)
         self._emotion_attached = False
+
+    def _handle_opener(self, bucket: OpenerBucket) -> None:
+        """Story 6.2: invoke the runtime's opener callback (if any).
+
+        The opener tag is a **side-channel** signal — it does NOT
+        contribute to the text that reaches Cartesia (the state
+        machine already stripped the tag from the stream), it does
+        NOT segment-break, and it does NOT publish an embodiment
+        event of its own. The only effect is calling the callback so
+        the runtime can spawn a cached-opener playback task.
+
+        Defensive log on every tag so soak-time anomalies (e.g., LLM
+        emits multiple openers in one reply) are visible in the
+        log time-series.
+        """
+        log.info("opener.tag_seen", bucket=bucket)
+        if self.opener_callback is not None:
+            # Synchronous callback — the runtime's callback spawns
+            # an asyncio task internally for the playback. Keeping
+            # this sync avoids painting the segmenter's surface area
+            # with awaitables, since the rest of `_handle_event` is
+            # sync too.
+            self.opener_callback(bucket)
 
     def _handle_vocalization(self, name: str) -> Iterator[Segment]:
         """Resolve the vocalization, attach to current segment, decide TTS text.

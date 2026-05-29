@@ -40,23 +40,13 @@ _STT_BLOCK = '[stt]\nclarification_prompts = ["huh?"]\n'
 # building custom TOMLs append a minimal block.
 _GOODBYE_BLOCK = '[goodbye]\nphrases = ["bye"]\n'
 
-# Story 5.5 (2026-05-12): filler block is required at startup; the
-# model_validator demands ≥1 entry per Mood Literal value. Minimal
-# valid set used by tests that don't define their own [filler] block.
-_FILLER_BLOCK = (
-    "[filler.phrases_by_mood]\n"
-    'calm = ["hmm"]\n'
-    'happy = ["oh!"]\n'
-    'playful = ["oo!"]\n'
-    'curious = ["hmm interesting"]\n'
-    'thoughtful = ["mm"]\n'
-    'sleepy = ["mmh"]\n'
-    'grumpy = ["uh"]\n'
-    'excited = ["ooh!"]\n'
-)
+# Story 6.2 (2026-05-28): [filler] retired in favour of [openers].
+# OpenersConfig has Python-side defaults (`_DEFAULT_OPENERS`) so a
+# missing [openers] block does NOT fail the loader — tests building
+# custom TOMLs no longer need to append one.
 
 # Combined snippet — most custom-TOML tests use this.
-_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK + _GOODBYE_BLOCK + _FILLER_BLOCK
+_STT_AND_GREETING_BLOCKS = _STT_BLOCK + _GREETING_BLOCK + _GOODBYE_BLOCK
 
 
 _VALID_TOML = (
@@ -446,7 +436,7 @@ def test_stt_clarification_prompts_explicit_override(tmp_path: Path) -> None:
     )
     toml_path, env_path = _write_files(
         tmp_path,
-        toml_body=toml_with_clarification + _GREETING_BLOCK + _GOODBYE_BLOCK + _FILLER_BLOCK,
+        toml_body=toml_with_clarification + _GREETING_BLOCK + _GOODBYE_BLOCK,
     )
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
     assert config.stt.clarification_prompts == ["huh?", "say again?"]
@@ -1185,36 +1175,65 @@ def test_tools_both_disabled(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Story 5.5 — FillerConfig validation
+# Story 6.2 — OpenersConfig validation (supersedes Story 5.5 FillerConfig tests)
 # ---------------------------------------------------------------------------
 
 
-def test_filler_defaults_with_valid_toml(tmp_path: Path) -> None:
-    """Story 5.5: ``[filler.phrases_by_mood]`` from TOML round-trips with defaults.
+def test_openers_defaults_apply_when_toml_omits_block(tmp_path: Path) -> None:
+    """Story 6.2: ``[openers]`` is optional — defaults provide a starter set.
 
-    The starter set ships in setup.toml; tests load it and assert every
-    mood bucket is non-empty (the model_validator would reject otherwise)
-    and the min_pause_ms/max_consecutive_repeat defaults apply when
-    those fields aren't specified.
+    Unlike Story 5.5's required ``[filler]`` block, Story 6.2 ships
+    sensible per-bucket defaults (`_DEFAULT_OPENERS`) so an operator's
+    setup.toml without an [openers] section still gets a working
+    opener subsystem. Operators expand the buckets over time.
     """
-    toml_path, env_path = _write_files(tmp_path)  # uses _VALID_TOML
+    toml_path, env_path = _write_files(tmp_path)  # uses _VALID_TOML (no [openers])
     config = load_setup_config(toml_path=toml_path, env_path=env_path)
-    # Every Mood key has at least one entry.
-    for mood, bucket in config.filler.phrases_by_mood.items():
-        assert bucket, f"mood {mood!r} has empty filler bucket"
-    # Threshold + suppression defaults.
-    assert config.filler.min_pause_ms == 400
-    assert config.filler.max_consecutive_repeat == 0
+    # Every OpenerBucket Literal value has at least one phrase.
+    for bucket, phrases in config.openers.phrases_by_bucket.items():
+        assert phrases, f"bucket {bucket!r} has empty opener list"
+    # Defaults for the threshold + fallback.
+    assert config.openers.timer_fallback_ms == 700
+    assert config.openers.timer_fallback_bucket == "acknowledge"
+    assert config.openers.max_consecutive_repeat == 0
 
 
-def test_filler_missing_mood_raises(tmp_path: Path) -> None:
-    """Story 5.5: missing a Mood Literal value → ConfigError from model_validator.
+def test_openers_explicit_toml_overrides_defaults(tmp_path: Path) -> None:
+    """Story 6.2: explicit ``[openers.phrases_by_bucket]`` replaces the defaults."""
+    toml_with_openers = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n' + _STT_AND_GREETING_BLOCKS + "[openers]\n"
+        "timer_fallback_ms = 500\n"
+        'timer_fallback_bucket = "thinking"\n'
+        "[openers.phrases_by_bucket]\n"
+        'thinking = ["alright"]\n'
+        'acknowledge = ["sure"]\n'
+        'look_up = ["one moment"]\n'
+        'delegate = ["give me a second"]\n'
+        'react = ["really"]\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_openers)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.openers.timer_fallback_ms == 500
+    assert config.openers.timer_fallback_bucket == "thinking"
+    assert config.openers.phrases_by_bucket["thinking"] == ["alright"]
+    assert config.openers.phrases_by_bucket["react"] == ["really"]
 
-    Mirrors the greeting test — same validator pattern, same failure
-    shape. Operator misconfigures by adding a new mood to the enum
-    without populating its filler bucket → startup catches it.
+
+def test_openers_missing_bucket_raises(tmp_path: Path) -> None:
+    """Story 6.2: an OpenerBucket value missing from the override → ConfigError.
+
+    When the operator explicitly defines ``[openers.phrases_by_bucket]``
+    but omits a Literal value, the model_validator catches the
+    half-populated map at startup rather than at first fire.
     """
-    toml_with_missing_mood = (
+    toml_with_missing_bucket = (
         "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
@@ -1223,29 +1242,25 @@ def test_filler_missing_mood_raises(tmp_path: Path) -> None:
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
         "[tts]\n"
         'voice_id = "v"\n'
-        + _STT_BLOCK
-        + _GREETING_BLOCK
-        + _GOODBYE_BLOCK
-        + "[filler.phrases_by_mood]\n"
-        # Only "calm" — missing the other 7 mood keys.
-        + 'calm = ["hmm"]\n'
+        + _STT_AND_GREETING_BLOCKS
+        + "[openers.phrases_by_bucket]\n"
+        # Only "thinking" — missing the other 4 buckets.
+        + 'thinking = ["hmm"]\n'
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_missing_mood)
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_missing_bucket)
     with pytest.raises(ConfigError) as exc_info:
         load_setup_config(toml_path=toml_path, env_path=env_path)
-    # Error message names the missing-bucket failure.
     assert "missing or empty entries" in str(exc_info.value)
-    assert "filler" in str(exc_info.value)
+    assert "openers" in str(exc_info.value).lower()
 
 
-def test_filler_extra_mood_key_rejected(tmp_path: Path) -> None:
-    """Story 5.5: ``ecstatic`` (not in Mood Literal) → pydantic rejects the key.
+def test_openers_extra_bucket_key_rejected(tmp_path: Path) -> None:
+    """Story 6.2: an unknown bucket name → pydantic rejects at parse time.
 
-    Catches operator typos at parse time — typing ``"excited"`` is
-    fine but ``"ecstatic"`` should fail loudly so the operator notices
-    before runtime.
+    Catches operator typos: ``"thinking"`` ok; ``"think"`` should fail
+    loudly because it isn't in the :data:`OpenerBucket` Literal.
     """
-    toml_with_bad_mood = (
+    toml_with_bad_bucket = (
         "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
@@ -1253,29 +1268,28 @@ def test_filler_extra_mood_key_rejected(tmp_path: Path) -> None:
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
         "[tts]\n"
-        'voice_id = "v"\n'
-        + _STT_BLOCK
-        + _GREETING_BLOCK
-        + _GOODBYE_BLOCK
-        + "[filler.phrases_by_mood]\n"
-        'calm = ["hmm"]\n'
-        'happy = ["oh!"]\n'
-        'playful = ["oo!"]\n'
-        'curious = ["hmm interesting"]\n'
-        'thoughtful = ["mm"]\n'
-        'sleepy = ["mmh"]\n'
-        'grumpy = ["uh"]\n'
-        'excited = ["ooh!"]\n'
-        'ecstatic = ["wow!"]\n'  # not in Mood Literal
+        'voice_id = "v"\n' + _STT_AND_GREETING_BLOCKS + "[openers.phrases_by_bucket]\n"
+        'thinking = ["hmm"]\n'
+        'acknowledge = ["yeah"]\n'
+        'look_up = ["let me check"]\n'
+        'delegate = ["alright working on it"]\n'
+        'react = ["oh"]\n'
+        'think = ["typo!"]\n'  # not in OpenerBucket Literal
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_mood)
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_bucket)
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)
 
 
-def test_filler_threshold_must_be_positive(tmp_path: Path) -> None:
-    """Story 5.5: ``min_pause_ms = 0`` is rejected (gt=0 constraint)."""
-    toml_with_zero_threshold = (
+def test_openers_timer_fallback_ms_clamped_to_2000(tmp_path: Path) -> None:
+    """Story 6.2: ``timer_fallback_ms`` > 2000 is rejected (le=2000 constraint).
+
+    The clamp prevents a misconfig breaking NFR33 (opener onset ≤ 700
+    ms p95). Even at the max 2 s the operator's choice is a deliberate
+    deviation, not a typo silently breaking the perceived-latency
+    contract.
+    """
+    toml_with_huge_timer = (
         "schema_version = 3\n"
         "[audio]\n"
         'input_device_name = "USB.*Mic.*"\n'
@@ -1283,8 +1297,27 @@ def test_filler_threshold_must_be_positive(tmp_path: Path) -> None:
         "[wakeword]\n"
         'model_path = "models/wakeword/hey_olaf.ppn"\n'
         "[tts]\n"
-        'voice_id = "v"\n' + _STT_AND_GREETING_BLOCKS + "[filler]\nmin_pause_ms = 0\n"
+        'voice_id = "v"\n' + _STT_AND_GREETING_BLOCKS + "[openers]\ntimer_fallback_ms = 9999\n"
     )
-    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_zero_threshold)
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_huge_timer)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+def test_openers_timer_fallback_bucket_must_be_known(tmp_path: Path) -> None:
+    """Story 6.2: an unknown ``timer_fallback_bucket`` Literal value → ConfigError."""
+    toml_with_bad_fallback = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'voice_id = "v"\n'
+        + _STT_AND_GREETING_BLOCKS
+        + '[openers]\ntimer_fallback_bucket = "unknown"\n'
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_fallback)
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)

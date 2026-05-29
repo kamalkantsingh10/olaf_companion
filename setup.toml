@@ -405,52 +405,56 @@ phrases = [
     "okay, off to rest",
 ]
 
-# Story 5.5 (2026-05-12): thinking fillers ("hmm", "uh", "let me think")
-# played on VAD end-of-speech IF the real Talker+Cartesia chain hasn't
-# produced its first audio frame within `min_pause_ms`. Mood-bucketed so
-# Ooppi's filler matches her current mood — same source-of-truth design
-# as [greeting.greetings_by_mood] (text lives here in setup.toml, NOT in
-# Python defaults).
+# Story 6.2 (2026-05-28): function-bucketed cached openers, supersedes
+# Story 5.5's [filler] block (which is retired). The Talker LLM emits
+# `<opener bucket="X"/>` at the start of every reply; the splitter
+# triggers playback of a cached take from the matching bucket. A
+# timer fallback fires from `timer_fallback_bucket` if no tag arrives
+# within `timer_fallback_ms`.
+#
+# Function buckets (not mood buckets) because the Talker knows the
+# question AND its own answer (incl. tool-call shape) — function
+# selection is strictly more accurate than mood selection. Mood
+# drives the greeting (which fires BEFORE the LLM sees user input);
+# openers fire AFTER, so the LLM knows more (see DR-001).
 #
 # IMPORTANT: edits to ANY phrase below require `just regenerate-audio`
 # before next startup. The Stage 3 audio_assets probe verifies every
-# phrase in this block has a matching cached WAV under assets/audio/
-# fillers/<mood>/NN.wav and will refuse to start otherwise — operator
-# sees a clean "run `just regenerate-audio`" instruction.
+# phrase in this block has a matching cached WAV under
+# assets/audio/openers/<bucket>/NN.wav and will refuse to start
+# otherwise — operator sees a clean "run `just regenerate-audio`"
+# instruction.
 #
-# Threshold + suppression keep fillers from feeling tic-y:
-# - `min_pause_ms = 400`: fillers SKIP entirely on fast turns
-#   (Talker+Cartesia first frame < 400 ms → no audible artifact).
-# - `max_consecutive_repeat = 0`: the immediately-previous filler is
-#   excluded from the next pick. Raise to 1-2 for more variety on
-#   rapid-fire sessions.
-#
-# Each entry should be 1-3 syllables — short enough that even a fast
-# real response (which arrives shortly after the filler starts) doesn't
-# leave the filler abandoned mid-syllable. Keep playful / casual; this
-# is what Ooppi mutters while thinking.
-[filler]
-# 2026-05-12 tuning: bumped from 400 to 600 ms after the first soak —
-# 400 ms felt too instant; the filler stepped on the last consonant of
-# the user's speech and made conversation feel jumpy. 600 ms gives a
-# natural beat before Ooppi acknowledges thinking.
-min_pause_ms = 600
+# Each entry should be ≤ 1.5 s when rendered — long enough to feel
+# like a natural beat, short enough that even a fast real response
+# (which arrives shortly after the opener starts) doesn't leave the
+# opener abandoned mid-syllable.
+[openers]
+# Timer-fallback floor (NFR33: opener onset ≤ 700 ms p95). Capped at
+# 2000 ms by the OpenersConfig validator. If no `<opener .../>` tag
+# arrives within this many ms of VAD end-of-speech, the runtime plays
+# from `timer_fallback_bucket` instead.
+timer_fallback_ms = 700
+# Generic-safe default for the fallback. "acknowledge" is the
+# shortest bucket; an over-firing fallback there is the least
+# disruptive across question shapes.
+timer_fallback_bucket = "acknowledge"
+# Ring-buffer suppression: 0 = exclude only the immediately-previous
+# opener. Raise to 1-2 for more variety in rapid-fire sessions.
 max_consecutive_repeat = 0
 
-[filler.phrases_by_mood]
-# 2026-05-12 tuning: "umm" replaced (Tessa's render felt unnatural) by
-# "well", "so...", "mhm" — three classic conversational fillers that
-# cover different beats (deliberation / setting-up-response / soft-
-# acknowledgement). New entries appended at the tail so existing
-# canonical paths (01-06) stay stable; new ones land at 07-09.
-calm = ["hmm", "uh", "let me think", "one moment", "okay", "right", "well", "so...", "mhm"]
-happy = ["oh!", "ooh", "hmm yeah", "okay!", "let me see"]
-playful = ["oo!", "hmm hmm", "huh", "lemme see", "wait wait"]
-curious = ["hmm interesting", "ooh", "lemme think", "uhh", "okay so"]
-thoughtful = ["hmm", "let me think", "right", "okay", "mm-hmm"]
-sleepy = ["mmh", "uh", "lemme see", "hmm", "mm okay"]
-grumpy = ["hmm", "uh", "right", "okay", "let me see"]
-excited = ["oh!", "ooh!", "okay okay", "wait wait", "uhh"]
+[openers.phrases_by_bucket]
+# Generic "I'm processing" — default for medium-length replies.
+thinking = ["hmm", "let me think", "right, so", "okay, so", "alright"]
+# Quick affirmation before a short reply. Also serves as the
+# `timer_fallback_bucket`.
+acknowledge = ["yeah", "right", "mm-hmm", "okay", "sure"]
+# READ-shaped tool calls (belief-state / short fetches).
+look_up = ["let me check", "hold on", "one moment", "lemme see"]
+# WRITE / multi-step orchestrator dispatches.
+delegate = ["let me look that up for you", "alright, working on it", "give me a second", "let me check on that"]
+# Mirroring user emotion / brief meta-comments.
+react = ["oh", "ooh", "ha", "really", "huh"]
 
 # Sections populated by subsequent stories:
 # [lifecycle]      -- Story 4.4 (idle_to_sleeping_seconds)

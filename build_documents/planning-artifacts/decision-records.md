@@ -782,6 +782,39 @@ since every text-based path is floored by STT.
   placeholder (`sequential_loop.py:287`); add real STT, TTFT, and end-to-end
   timing so the projected numbers above can be confirmed post-implementation.
 
+**Implementation landed by:** Story 6.2
+(`build_documents/implementation-artifacts/6-2-cached-opener-system-and-cartesia-overlap.md`)
+on 2026-05-28. Concrete changes:
+
+- `audio/openers.py` (new) — function-bucketed `pick_opener` +
+  `trigger_opener_fallback` (timer + race-window-protected fallback).
+- `audio/filler.py` (deleted) — mood-bucketed filler subsystem
+  retired; Story 5.5's cached-audio infrastructure reused for openers.
+- `audio/cached.py` — `CachedAudioSurface` dropped `"filler"`, added
+  `"opener"`; `CachedAudioEntry` gained a `bucket` field with a
+  surface/mood/bucket consistency validator; manifest schema bumped
+  1 → 2.
+- `splitter/state_machine.py` + `splitter/segmenter.py` — recognise
+  `<opener bucket="..."/>` self-closing tag; strip from Cartesia
+  text; sync `opener_callback` invocation.
+- `sequential_loop.py` — **deleted the `audio_started.set() + await
+  filler_task` block** at the old `:701` site. The Cartesia synth
+  call now fires the moment the splitter has the first non-tag text;
+  PyAudio's device-level serialisation handles audible ordering on
+  the speaker. Splitter callback claims `opener_already_playing`
+  before spawning playback; the timer-fallback task respects the
+  same event as its race-window check.
+- `prompts/talker_system.md` — taught the `<opener bucket="..."/>`
+  tag with one worked example per bucket + the self-gating rule.
+- `setup.toml` — `[filler]` block removed; `[openers]` +
+  `[openers.phrases_by_bucket]` added.
+
+The integration test
+(`tests/integration/test_opener_overlap_timing.py`) verifies the
+overlap-deletion contract via a controlled timing assertion: a
+regression that reintroduced the serialising await would fail the
+test loud.
+
 ### Open question (keystone) — Cartesia TTFB
 
 Cartesia TTFB (~1.07 s median, ~1.64 s p75) is the dominant remaining cost and

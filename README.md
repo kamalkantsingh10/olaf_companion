@@ -18,7 +18,7 @@ just check              # lint + type-check + unit tests (must pass before commi
 just test               # full test suite (including the integration test)
 just list-devices       # print PyAudio devices for setup.toml regex tuning
 just play-test-tone     # 1-second 440Hz beep through the configured speaker
-just regenerate-audio   # Story 5.5: pre-render cached audio assets (~3 min, hits Cartesia)
+just regenerate-audio   # Story 5.5/6.2: pre-render cached audio (greetings, goodbyes, clarifications, openers; ~3 min, hits Cartesia)
 just ttfb-spike         # Story 6.1: 500-sample Cartesia WS TTFB spike (~25 min, hits Cartesia). Writes report to build_documents/implementation-artifacts/6-1-ttfb-spike-report.md
 ```
 
@@ -179,24 +179,36 @@ The match uses Python's `re.search` semantics, so partial matches work.
 If no device matches the regex at startup, the pipeline exits within ~1s
 and prints the available device names — no need to dig through stack traces.
 
-## Audio assets — cached deterministic-text playback (Story 5.5)
+## Audio assets — cached deterministic-text playback (Stories 5.5 / 6.2)
 
-Wake greetings, goodbyes, low-confidence clarifications, and "thinking"
-fillers are **pre-rendered cached WAVs** under `assets/audio/` rather
-than synthesized at runtime. Two wins: zero per-turn Cartesia cost for
-these surfaces, and the thinking filler can fire within ~50 ms of
-end-of-speech (much faster than Cartesia's ~700-1500 ms TTFB) to mask
-the gap while STT + Talker + Cartesia produce the real reply.
+Wake greetings, goodbyes, low-confidence clarifications, and
+function-bucketed **openers** are **pre-rendered cached WAVs** under
+`assets/audio/` rather than synthesized at runtime. Three wins: zero
+per-turn Cartesia cost for these surfaces, opener can fire within
+~50 ms of end-of-speech (much faster than Cartesia's TTFB), and
+real-answer Cartesia synthesis is no longer serialised behind opener
+playback (Story 6.2 deleted the v1 ~1 s "await filler before
+synthesise" tax — PyAudio's device-level serialisation handles the
+audible ordering on the speaker).
 
-The cache is keyed by `phrase + voice_id + tts_model + mood`. **Any
-edit to those forces a regeneration** — the Stage 3 startup probe
-verifies every phrase in `setup.toml` has a matching WAV and refuses to
-start otherwise. Operator workflow:
+Story 6.2 (2026-05-28) retired Story 5.5's mood-bucketed `[filler]`
+surface in favour of function-bucketed `[openers]` — the Talker LLM
+emits `<opener bucket="thinking|acknowledge|look_up|delegate|react"/>`
+at the start of its reply, and the splitter triggers playback of a
+take from the matching bucket. A timer fallback fires
+``timer_fallback_bucket`` (default `acknowledge`) if no tag arrives.
+**Manifest schema bumped 1 → 2**; existing manifests are rejected at
+startup with a clean "run `just regenerate-audio`" message.
+
+The cache is keyed by `phrase + voice_id + tts_model + (mood OR
+bucket)`. **Any edit to those forces a regeneration** — the Stage 3
+startup probe verifies every phrase in `setup.toml` has a matching
+WAV and refuses to start otherwise. Operator workflow:
 
 ```bash
 # After editing any phrase list ([greeting.greetings_by_mood],
-# [goodbye] phrases, [stt] clarification_prompts, [filler.phrases_by_mood])
-# or changing [tts] voice_id / [tts] model:
+# [goodbye] phrases, [stt] clarification_prompts,
+# [openers.phrases_by_bucket]) or changing [tts] voice_id / model:
 just regenerate-audio              # idempotent — skips unchanged phrases
 
 # Other modes:

@@ -50,6 +50,7 @@ from voice_agent_pipeline.audio.cached import (
     CachedAudioManifest,
     compute_phrase_hash,
 )
+from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
 from voice_agent_pipeline.errors import CartesiaError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
@@ -71,61 +72,70 @@ _SAMPLE_WIDTH_BYTES = 2
 _ASSETS_ROOT = Path("assets/audio")
 _MANIFEST_PATH = _ASSETS_ROOT / "manifest.json"
 
-# Per-surface subdirectory names. Plural because the surface refers to a
-# collection (greetings, goodbyes, ...).
+# Per-surface subdirectory names. Plural because the surface refers
+# to a collection (greetings, goodbyes, ...). Story 6.2 dropped
+# ``filler`` and added ``opener`` (manifest schema bumped 1 -> 2).
 _SURFACE_SUBDIRS: dict[str, str] = {
     "greeting": "greetings",
     "goodbye": "goodbyes",
     "clarification": "clarifications",
-    "filler": "fillers",
+    "opener": "openers",
 }
 
 
 def _plan_phrases(
     config: SetupConfig,
-) -> list[tuple[str, str, Mood | None]]:
-    """Enumerate every (surface, phrase, mood) tuple in setup.toml.
+) -> list[tuple[str, str, Mood | None, OpenerBucket | None]]:
+    """Enumerate every (surface, phrase, mood, bucket) tuple in setup.toml.
 
     Returns a stable order: greetings first (by mood), then goodbyes,
-    clarifications, fillers. Within each mood bucket, the order
-    matches the TOML list order. The regenerator uses this order
-    to assign NN sequence numbers in filenames, so the same TOML
-    yields the same filenames across runs.
+    clarifications, openers (by bucket). Story 6.2 replaced the
+    filler-by-mood enumeration with opener-by-bucket. Within each
+    bucket, the order matches the TOML list order. The regenerator
+    uses this order to assign NN sequence numbers in filenames, so
+    the same TOML yields the same filenames across runs.
     """
-    plan: list[tuple[str, str, Mood | None]] = []
+    plan: list[tuple[str, str, Mood | None, OpenerBucket | None]] = []
     # Greetings — mood-bucketed. Sort by mood key for determinism
     # across runs (Python dict iteration order is insertion-order
     # but the TOML loader may surprise us across pydantic versions).
     for mood in sorted(config.greeting.greetings_by_mood.keys()):
         for phrase in config.greeting.greetings_by_mood[mood]:
-            plan.append(("greeting", phrase, mood))
+            plan.append(("greeting", phrase, mood, None))
     # Flat lists — goodbye + clarification.
     for phrase in config.goodbye.phrases:
-        plan.append(("goodbye", phrase, None))
+        plan.append(("goodbye", phrase, None, None))
     for phrase in config.stt.clarification_prompts:
-        plan.append(("clarification", phrase, None))
-    # Fillers — mood-bucketed, same pattern as greetings.
-    for mood in sorted(config.filler.phrases_by_mood.keys()):
-        for phrase in config.filler.phrases_by_mood[mood]:
-            plan.append(("filler", phrase, mood))
+        plan.append(("clarification", phrase, None, None))
+    # Story 6.2: openers — function-bucketed, same per-bucket
+    # enumeration pattern as greetings (just keyed on bucket
+    # instead of mood). Sort buckets for stable ordering.
+    for bucket in sorted(config.openers.phrases_by_bucket.keys()):
+        for phrase in config.openers.phrases_by_bucket[bucket]:
+            plan.append(("opener", phrase, None, bucket))
     return plan
 
 
 def _path_for(
     surface: str,
     mood: Mood | None,
+    bucket: OpenerBucket | None,
     sequence_in_bucket: int,
 ) -> Path:
-    """Build the canonical on-disk path for a (surface, mood, N) triple.
+    """Build the canonical on-disk path for a (surface, mood, bucket, N) tuple.
 
-    Format: ``assets/audio/<surface-plural>/[<mood>/]NN.wav`` —
-    zero-padded 2-digit sequence number within the mood bucket (or
+    Format: ``assets/audio/<surface-plural>/[<mood-or-bucket>/]NN.wav``
+    — zero-padded 2-digit sequence number within the bucket (or
     within the flat surface for goodbye/clarification).
     """
     subdir = _SURFACE_SUBDIRS[surface]
-    if mood is None:
+    # Exactly one of mood / bucket is non-None for the surfaces with
+    # sub-buckets (the manifest's surface-mood-bucket invariant
+    # validator enforces this — see `audio/cached.py`).
+    sub = mood or bucket
+    if sub is None:
         return _ASSETS_ROOT / subdir / f"{sequence_in_bucket:02d}.wav"
-    return _ASSETS_ROOT / subdir / mood / f"{sequence_in_bucket:02d}.wav"
+    return _ASSETS_ROOT / subdir / sub / f"{sequence_in_bucket:02d}.wav"
 
 
 async def _render_phrase_to_wav(
@@ -216,18 +226,27 @@ async def regenerate(
         dry_run=dry_run,
     )
 
-    # Build the new manifest entries from the plan. Per-surface/mood
+    # Build the new manifest entries from the plan. Per-surface/sub
     # sequence counters give stable NN.wav filenames across runs.
-    counters: dict[tuple[str, Mood | None], int] = {}
+    # Story 6.2: the key is (surface, mood-or-bucket); exactly one of
+    # mood / bucket is non-None per the surface invariant.
+    counters: dict[tuple[str, str | None], int] = {}
     new_entries: list[CachedAudioEntry] = []
     to_render: list[tuple[CachedAudioEntry, str]] = []  # (entry, phrase)
 
-    for surface, phrase, mood in plan:
-        key = (surface, mood)
+    for surface, phrase, mood, bucket in plan:
+        sub = mood or bucket  # exactly one is non-None per the invariant
+        key = (surface, sub)
         counters[key] = counters.get(key, 0) + 1
         seq = counters[key]
-        path = _path_for(surface, mood, seq)
-        phrase_hash = compute_phrase_hash(phrase, voice_id, tts_model, mood)
+        path = _path_for(surface, mood, bucket, seq)
+        phrase_hash = compute_phrase_hash(
+            phrase,
+            voice_id,
+            tts_model,
+            mood=mood,
+            bucket=bucket,
+        )
 
         # Cache hit logic, two paths:
         #
@@ -265,6 +284,7 @@ async def regenerate(
             entry = CachedAudioEntry(
                 surface=surface,  # type: ignore[arg-type]
                 mood=mood,
+                bucket=bucket,
                 phrase_hash=phrase_hash,
                 phrase=phrase,
                 path=str(path),
@@ -284,6 +304,7 @@ async def regenerate(
             entry = CachedAudioEntry(
                 surface=surface,  # type: ignore[arg-type]
                 mood=mood,
+                bucket=bucket,
                 phrase_hash=phrase_hash,
                 phrase=phrase,
                 path=str(path),
@@ -302,6 +323,7 @@ async def regenerate(
         entry = CachedAudioEntry(
             surface=surface,  # type: ignore[arg-type]
             mood=mood,
+            bucket=bucket,
             phrase_hash=phrase_hash,
             phrase=phrase,
             path=str(path),
@@ -388,9 +410,15 @@ async def regenerate(
             )
 
     # Write the new manifest. Atomic write via tmp file + rename so a
-    # crash mid-write doesn't leave a half-written manifest.
+    # crash mid-write doesn't leave a half-written manifest. The
+    # schema_version is hand-mirrored from
+    # ``audio/cached.py:_MANIFEST_SCHEMA_VERSION`` — any drift is
+    # caught at the next pipeline startup by ``load_manifest``'s
+    # version check, which raises StartupValidationError with the
+    # canonical "run `just regenerate-audio`" hint.
+    manifest_schema_version = 2  # MIRROR of cached._MANIFEST_SCHEMA_VERSION
     manifest = CachedAudioManifest(
-        schema_version=1,
+        schema_version=manifest_schema_version,
         generated_at=datetime.now(tz=UTC),
         voice_id=voice_id,
         tts_model=tts_model,

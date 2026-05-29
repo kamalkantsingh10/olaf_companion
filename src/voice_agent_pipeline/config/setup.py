@@ -50,6 +50,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.config.version import assert_schema_version
 from voice_agent_pipeline.errors import ConfigError
 from voice_agent_pipeline.schemas.mood_event import Mood
@@ -668,79 +669,98 @@ class GreetingConfig(BaseModel):
         return self
 
 
-class FillerConfig(BaseModel):
-    """Per-mood thinking-filler bucket lists (Story 5.5).
+class OpenersConfig(BaseModel):
+    """Per-function-bucket cached opener config (Story 6.2; supersedes Story 5.5 filler design).
 
-    The thinking filler is a short cached audio clip (~300-700 ms) that
-    plays on VAD end-of-speech IF the real Talker+Cartesia chain hasn't
-    produced its first audio frame within :attr:`min_pause_ms`. Targets
-    brief Problem #1 ("dead air on complex turns") by masking the gap
-    with a human-like "hmm" / "ah" / "let me think" while the real
-    response is being generated.
+    Story 6.2 replaces Story 5.5's mood-keyed `FillerConfig` with a
+    function-bucketed opener subsystem (see DR-001 "Decision (frozen)").
+    The opener is a short cached audio clip (~300-1000 ms) that plays
+    at the start of every Talker turn:
 
-    Design mirrors :class:`GreetingConfig`:
+    - **LLM-tag-selected path** (preferred): the Talker emits an
+      ``<opener bucket="X"/>`` tag at the start of its reply; the
+      splitter recognises the tag and triggers playback of a take from
+      the matching bucket.
+    - **Timer-fallback path** (safety): if no tag arrives within
+      :attr:`timer_fallback_ms` of VAD end-of-speech, the runtime
+      plays a take from :attr:`timer_fallback_bucket` (default
+      ``"acknowledge"`` — operator-curated generic-safe choice).
 
-    - Static random pick from per-mood bucket; no LLM, no TTS at runtime
-      (Cartesia is hit once via ``just regenerate-audio`` to produce the
-      cached WAVs under ``assets/audio/fillers/<mood>/NN.wav``).
-    - :class:`model_validator` requires every :data:`Mood` Literal to
-      have ≥1 entry — missing buckets raise :class:`ConfigError` at
-      startup, not at first fire.
-
-    The threshold + suppression design prevent fillers feeling tic-y:
-
-    - :attr:`min_pause_ms` (default 400 ms) skips the filler entirely
-      when the real response arrives quickly. On a fast turn no audible
-      artifact appears.
-    - :attr:`max_consecutive_repeat` is a small ring-buffer cap on how
-      many of the last-played fillers to exclude from the next pick.
-      Default 0 → don't pick the same one twice in a row. The picker
-      resets the exclusion buffer if the bucket is exhausted.
+    Function buckets (not mood buckets) because the Talker LLM knows
+    the question AND its own answer (incl. tool-call shape); a
+    function bucket is strictly more accurate than a mood bucket.
+    Mood drives the greeting (which fires BEFORE the LLM sees user
+    input); openers fire AFTER, so the LLM knows more.
 
     Source-of-truth design (matches greetings/clarifications/goodbyes):
-    the actual filler strings live in ``setup.toml`` under
-    ``[filler.phrases_by_mood]``, NOT as a Python constant.
+    the actual opener strings live in ``setup.toml`` under
+    ``[openers.phrases_by_bucket]``, NOT as a Python constant. The
+    `_DEFAULT_OPENERS` module-level constant supplies a minimal
+    starter set so a fresh setup.toml works out of the box.
+
+    Cartesia overlap (deletes the v1 serialization tax): unlike Story
+    5.5's filler, the real-answer path does NOT await opener playback
+    before opening its output stream. PyAudio's device-level
+    serialization handles the audio ordering on the speaker; the
+    network call is unblocked. See Story 6.2 AC #7 + DR-001.
 
     Attributes:
-        min_pause_ms: Time in milliseconds after VAD end-of-speech to
-            wait before firing a filler. If the real Talker+Cartesia
-            first audio frame arrives before this expires, the filler
-            is suppressed. Default 400 ms — empirically the threshold
-            below which a pause is imperceptible and a filler would
-            feel intrusive.
-        max_consecutive_repeat: How many most-recently-played fillers
+        timer_fallback_ms: Time in milliseconds after VAD
+            end-of-speech to wait for an LLM opener tag before the
+            fallback fires. Capped at 2000 ms so a misconfig can't
+            break NFR33 (opener onset ≤ 700 ms p95). Default 700 ms.
+        timer_fallback_bucket: Which bucket to pick from when the
+            timer fires. Default ``"acknowledge"`` — generic-safe.
+        max_consecutive_repeat: How many most-recently-played openers
             to exclude from the next pick. Default 0 → exclude only
-            the immediately-previous one. Raise to 1 or 2 for more
+            the immediately-previous one. Raise to 1-2 for more
             variety in short rapid-fire sessions.
-        phrases_by_mood: Mapping of mood → list of filler strings.
-            Defaults to an empty dict so a missing TOML block fails
-            the model_validator with a clear error rather than silently
-            using hidden Python defaults.
+        phrases_by_bucket: Mapping of :data:`OpenerBucket` → list of
+            opener strings. Defaults to :data:`_DEFAULT_OPENERS`; a
+            missing TOML block uses the defaults rather than failing
+            (since the defaults are operator-tunable starters, not
+            hidden behavior). Validator enforces every bucket has ≥ 1
+            entry.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    min_pause_ms: int = Field(default=400, gt=0)
+    timer_fallback_ms: int = Field(default=700, gt=0, le=2000)
+    timer_fallback_bucket: OpenerBucket = "acknowledge"
     max_consecutive_repeat: int = Field(default=0, ge=0)
-    # Annotated empty-dict default — same pattern as GreetingConfig so
-    # pyright resolves the type as ``dict[Mood, list[str]]``.
-    phrases_by_mood: dict[Mood, list[str]] = Field(
-        default_factory=lambda: dict[Mood, list[str]](),
+    # `phrases_by_bucket` defaults to a sensible starter set so a
+    # fresh setup.toml works out of the box. Operators expand each
+    # bucket over time; the validator enforces ≥ 1 phrase per bucket.
+    phrases_by_bucket: dict[OpenerBucket, list[str]] = Field(
+        default_factory=lambda: dict[OpenerBucket, list[str]](_DEFAULT_OPENERS),
     )
 
     @model_validator(mode="after")
-    def _validate_all_moods_have_entries(self) -> "FillerConfig":
-        """Every :data:`Mood` Literal value must have ≥1 filler."""
-        all_moods = set(get_args(Mood))
-        present = {m for m, entries in self.phrases_by_mood.items() if entries}
-        missing = all_moods - present
+    def _validate_all_buckets_have_entries(self) -> "OpenersConfig":
+        """Every :data:`OpenerBucket` Literal value must have ≥ 1 phrase."""
+        all_buckets = set(get_args(OpenerBucket))
+        present = {b for b, entries in self.phrases_by_bucket.items() if entries}
+        missing = all_buckets - present
         if missing:
             raise ValueError(
-                f"filler.phrases_by_mood missing or empty entries for mood(s): "
-                f"{sorted(missing)}. Populate them under [filler.phrases_by_mood] "
-                f"in setup.toml.",
+                f"openers.phrases_by_bucket missing or empty entries for "
+                f"bucket(s): {sorted(missing)}. Populate them under "
+                f"[openers.phrases_by_bucket] in setup.toml.",
             )
         return self
+
+
+# Minimal operator-curated starter opener set. Two phrases per bucket
+# is the floor the AC specifies; operators expand over time. Lives at
+# module scope so :class:`OpenersConfig` can default to it without a
+# closure / lambda capture surprise.
+_DEFAULT_OPENERS: dict[OpenerBucket, list[str]] = {
+    "thinking": ["hmm", "let me think"],
+    "acknowledge": ["yeah", "right"],
+    "look_up": ["let me check", "hold on"],
+    "delegate": ["let me look that up for you", "alright working on it"],
+    "react": ["oh", "ooh"],
+}
 
 
 class ToolsConfig(BaseModel):
@@ -849,12 +869,14 @@ class SetupConfig(BaseSettings):
     # sleeps. The actual strings live in setup.toml; an empty list
     # fails the model_validator at startup.
     goodbye: GoodbyeConfig = Field(default_factory=GoodbyeConfig)
-    # Story 5.5 (2026-05-12): mood-bucketed thinking fillers played
-    # while STT+Talker+TTS run. Required at startup — the
-    # model_validator catches missing/empty mood buckets. The actual
-    # filler strings live in setup.toml under [filler.phrases_by_mood],
-    # NOT in Python defaults (same source-of-truth pattern as greeting).
-    filler: FillerConfig = Field(default_factory=FillerConfig)
+    # Story 6.2: function-bucketed cached openers (supersedes Story 5.5
+    # [filler] block). The Talker emits <opener bucket="..."/> at the
+    # start of its reply; the splitter triggers playback. A timer
+    # fallback fires from `timer_fallback_bucket` if no tag arrives in
+    # `timer_fallback_ms`. Strings live in setup.toml under
+    # [openers.phrases_by_bucket]; defaults to a starter set so a fresh
+    # config works out of the box.
+    openers: OpenersConfig = Field(default_factory=OpenersConfig)
     # Story 4.1: orchestrator daemon endpoint. Optional with defaults
     # (localhost:8001). Story 4.1 wires the BeliefStateClient against
     # this URL; Story 4.2 adds the orchestrator slow-path SSE consumer
