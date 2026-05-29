@@ -1,6 +1,6 @@
 # Story 6.4: Instrumentation + soak + embodiment-brief amendment review (Epic 6 wrap)
 
-Status: ready-for-dev
+Status: review (code/tooling/docs landed; live soak RUN pending — see Dev Agent Record)
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -162,52 +162,52 @@ so that DR-001's projected timeline (median ~3.0 s → ~1.7–2.0 s end-of-speec
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Replace the `end_to_transcript_ms=0` placeholder + rename to `stt_ms`** (AC: #1)
-  - [ ] Edit `sequential_loop.py:287`: replace the hardcoded `end_to_transcript_ms=0` with `stt_ms=int((stt_done_ns - vad_end_ns) // 1_000_000)`
-  - [ ] Plumb `vad_end_ns` from VAD `utterance.captured` event (or the closest existing wall-clock anchor) — likely already accessible in the surrounding code
-  - [ ] Update any test that asserts on the field name or value (search `tests/` for `end_to_transcript_ms`)
+- [x] **Task 1: Replace the `end_to_transcript_ms=0` placeholder + rename to `stt_ms`** (AC: #1)
+  - [x] Edit `sequential_loop.py:287`: replace the hardcoded `end_to_transcript_ms=0` with `stt_ms=int((stt_done_ns - vad_end_ns) // 1_000_000)`
+  - [x] Plumb `vad_end_ns` from VAD `utterance.captured` event (or the closest existing wall-clock anchor) — likely already accessible in the surrounding code
+  - [x] Update any test that asserts on the field name or value (search `tests/` for `end_to_transcript_ms`)
 
-- [ ] **Task 2: Add `_TurnTimings` dataclass + wire per-turn accumulation** (AC: #3, #5, #6)
-  - [ ] Add the `_TurnTimings` dataclass (private to `sequential_loop.py`) per AC #3
-  - [ ] Construct on VAD `utterance.started`; pass through the turn's async flow
-  - [ ] Wire each "set on event X" anchor in `sequential_loop.py` — STT done, Talker first token, opener first frame, opener last frame, real-answer first frame, turn end
-  - [ ] Wire `emphasis_count` increment at Story 6.3's `publish_vocalization` call site
-  - [ ] Wire `routing` from the TurnRouter decision point
-  - [ ] Wire `had_tool_call` from the Talker stream-end event's tool_calls list
+- [x] **Task 2: Add `_TurnTimings` dataclass + wire per-turn accumulation** (AC: #3, #5, #6)
+  - [x] Add the `_TurnTimings` dataclass (private to `sequential_loop.py`) per AC #3
+  - [x] Construct on VAD `utterance.started`; pass through the turn's async flow
+  - [x] Wire each "set on event X" anchor in `sequential_loop.py` — STT done, Talker first token, opener first frame, opener last frame, real-answer first frame, turn end
+  - [x] Wire `emphasis_count` increment at Story 6.3's `publish_vocalization` call site
+  - [x] Wire `routing` from the TurnRouter decision point
+  - [x] Wire `had_tool_call` from the Talker stream-end event's tool_calls list
 
-- [ ] **Task 3: Emit `turn.complete` at turn boundary** (AC: #2, #4)
-  - [ ] At the natural turn-end point (after `fsm.on_last_audio_frame()` returns the FSM to `listening`), compute the derived fields per AC #4 and emit `log.info("turn.complete", ...)`
-  - [ ] Handle the no-real-audio case (turn-end without a real-answer frame — e.g., tool-only reply): leave `real_first_frame_ns=None`; derived `end_to_first_real_audio_ms=None`; same for `dead_air_after_opener_ms`
-  - [ ] Document the schema inline in `architecture.md` §Logging Conventions
+- [x] **Task 3: Emit `turn.complete` at turn boundary** (AC: #2, #4)
+  - [x] At the natural turn-end point (after `fsm.on_last_audio_frame()` returns the FSM to `listening`), compute the derived fields per AC #4 and emit `log.info("turn.complete", ...)`
+  - [x] Handle the no-real-audio case (turn-end without a real-answer frame — e.g., tool-only reply): leave `real_first_frame_ns=None`; derived `end_to_first_real_audio_ms=None`; same for `dead_air_after_opener_ms`
+  - [x] Document the schema inline in `architecture.md` §Logging Conventions
 
-- [ ] **Task 4: Contract test for `turn.complete` schema** (AC: #2)
-  - [ ] Create `tests/contract/test_turn_complete_log_schema.py`
-  - [ ] Use structlog's testing fixtures to capture emitted events
-  - [ ] Assert: every required field present; nullable fields handle `None` correctly; field types are int/str/bool/Literal as documented
+- [x] **Task 4: Contract test for `turn.complete` schema** (AC: #2)
+  - [x] Create `tests/contract/test_turn_complete_log_schema.py`
+  - [x] Use structlog's testing fixtures to capture emitted events
+  - [x] Assert: every required field present; nullable fields handle `None` correctly; field types are int/str/bool/Literal as documented
 
-- [ ] **Task 5: v2 soak script** (AC: #7)
-  - [ ] Create `scripts/soak_v2.py` (or `src/voice_agent_pipeline/tools/soak_v2.py`)
-  - [ ] CLI: `--minutes N` (default: read until EOF; intended for log-replay or short live runs) + `--out PATH` (default `build_documents/implementation-artifacts/6-4-soak-report.md`)
-  - [ ] Tail the log; parse `turn.complete` events; aggregate p25/50/75/90 + distribution counts
-  - [ ] Write the report in Markdown with the metrics + target-comparison table
-  - [ ] Run a 30-minute live soak; commit the report in this story's commit
+- [x] **Task 5: v2 soak script** (AC: #7)
+  - [x] Create `scripts/soak_v2.py` (or `src/voice_agent_pipeline/tools/soak_v2.py`)
+  - [x] CLI: `--minutes N` (default: read until EOF; intended for log-replay or short live runs) + `--out PATH` (default `build_documents/implementation-artifacts/6-4-soak-report.md`)
+  - [x] Tail the log; parse `turn.complete` events; aggregate p25/50/75/90 + distribution counts
+  - [x] Write the report in Markdown with the metrics + target-comparison table
+  - [ ] Run a 30-minute live soak; commit the report (PENDING — hands-on; Kamal to run a live session 2026-05-29, then `just soak-v2-report`)
 
-- [ ] **Task 6: Embodiment-brief amendment review** (AC: #8)
-  - [ ] Re-read `build_documents/planning-artifacts/olaf-embodiment-brief.md` Appendix A.7, A.8, B.2, B.3, §"What Makes This Different" #5, §"v2 head-motion realizer"
-  - [ ] Compare each amendment against the as-built shape (Stories 6.1, 6.2, 6.3 commits)
-  - [ ] If drift surfaces (e.g., `audio_frame_id` format differs, or `bucket: OpenerBucket | None` field surfaces differently in `CachedAudioEntry`): amend the brief in this commit
-  - [ ] If no drift: document verification in Dev Agent Record → Completion Notes
+- [x] **Task 6: Embodiment-brief amendment review** (AC: #8)
+  - [x] Re-read `build_documents/planning-artifacts/olaf-embodiment-brief.md` Appendix A.7, A.8, B.2, B.3, §"What Makes This Different" #5, §"v2 head-motion realizer"
+  - [x] Compare each amendment against the as-built shape (Stories 6.1, 6.2, 6.3 commits)
+  - [x] If drift surfaces (e.g., `audio_frame_id` format differs, or `bucket: OpenerBucket | None` field surfaces differently in `CachedAudioEntry`): amend the brief in this commit
+  - [x] If no drift: document verification in Dev Agent Record → Completion Notes
 
-- [ ] **Task 7: DR back-references + docs + commit** (AC: #9, #10, #11, #12)
-  - [ ] Append "Implementation landed by:" annotations to DR-001 / DR-002 / DR-004 sections per AC #9
-  - [ ] Update `architecture.md` v2-item-23 footnote if drift; update §Logging Conventions
-  - [ ] Verify `voice-agent-pipeline.md` (distillate) v2 references; amend if drift
-  - [ ] Verify `prd.md` NFR35 text matches as-built; amend if drift
-  - [ ] Update `epics.md` Epic 6 §Status: "Implementation complete (Stories 6.1–6.4 landed); awaiting cross-project sign-off with `olaf-embodiment`"
-  - [ ] Update `sprint-status.yaml`: 6-1, 6-2, 6-3, 6-4 → `review`
-  - [ ] `just check` green
-  - [ ] Single commit per `feedback_commit_policy.md`; push per `feedback_push_after_commit.md`
-  - [ ] **Coordination point**: signal to `olaf-embodiment` that the pipeline-side cluster is shipped; cross-project sign-off (AC #10) happens out-of-band
+- [x] **Task 7: DR back-references + docs + commit** (AC: #9, #10, #11, #12)
+  - [x] Append "Implementation landed by:" annotations to DR-001 / DR-002 / DR-004 sections per AC #9
+  - [x] Update `architecture.md` v2-item-23 footnote if drift; update §Logging Conventions
+  - [x] Verify `voice-agent-pipeline.md` (distillate) v2 references; amend if drift
+  - [x] Verify `prd.md` NFR35 text matches as-built; amend if drift
+  - [x] Update `epics.md` Epic 6 §Status: "Implementation complete (Stories 6.1–6.4 landed); awaiting cross-project sign-off with `olaf-embodiment`"
+  - [x] Update `sprint-status.yaml`: 6-1, 6-2, 6-3, 6-4 → `review`
+  - [x] `just check` green
+  - [x] Single commit per `feedback_commit_policy.md`; push per `feedback_push_after_commit.md`
+  - [x] **Coordination point**: signal to `olaf-embodiment` that the pipeline-side cluster is shipped; cross-project sign-off (AC #10) happens out-of-band
 
 ## Dev Notes
 
@@ -294,10 +294,107 @@ so that DR-001's projected timeline (median ~3.0 s → ~1.7–2.0 s end-of-speec
 
 ### Agent Model Used
 
-(populated by dev agent)
+claude-opus-4-8 (1M context) — bmad-dev-story workflow.
 
 ### Debug Log References
 
+- pyright `reportUnknownVariableType` on `dataclass` fields with bare
+  `field(default_factory=dict)` / `list` → used typed factories
+  (`default_factory=dict[str, dict[str, int]]`, etc.), same pattern as
+  Story 6.3's `Segment.emphasis_word_indices`.
+- pyright on `json.loads(...)` returning `Any` in `parse_log` → narrowed via
+  `isinstance(loaded, dict)` then `cast("dict[str, object]", loaded)`.
+- `Task[OpenerPlayback | None]` vs `Task[None]`: `trigger_opener_fallback` now
+  returns `OpenerPlayback | None`, so `_stream_and_speak`'s parameter type
+  widened to match (covariance makes the test noop-`Task[None]` still assign).
+
 ### Completion Notes List
 
+- **`turn.complete` rollup (AC #2–#4).** New once-per-turn INFO event emitted
+  at the turn boundary (after `fsm.on_last_audio_frame()`), in BOTH the normal
+  and clarification branches. A mutable `_TurnTimings` dataclass (private to
+  `sequential_loop.py`) accumulates `*_ns` anchors through the turn's async
+  flow; `_emit_turn_complete` derives the integer-ms fields, guarding each with
+  an `if` so a missing beat yields `None` (never `0`). Schema documented in
+  architecture.md §Logging Conventions; contract-tested across all four turn
+  shapes (full / self-gated / clarification / tool-only).
+- **`stt_ms` (AC #1).** The long-standing hardcoded `end_to_transcript_ms=0`
+  on `stt.transcript` is replaced with the real `vad_end → transcript`
+  measurement and renamed `stt_ms`. (The unrelated `TranscriptFrame.
+  end_to_transcript_ms` pipecat-path field is a different symbol and was left
+  untouched.)
+- **TTFB / TTFT / real-first-frame (AC #4, #5).** `ttfb_ms` is measured in
+  `_speak_segment` as synth-request-sent → first chunk received for the FIRST
+  spoken segment (subsequent segments are amortised). `real_first_frame_ns`
+  stamps the same first chunk. `talker_first_token_ns` stamps the first
+  non-empty `TalkerTextDelta`. All guarded so tool-only / clarification turns
+  leave the derived fields `None`.
+- **Opener accounting — split-path, decoupled (AC #4).** The splitter-driven
+  (`llm_tag`) opener records its timing inline in `_play_opener_from_tag`; the
+  timer fallback (in `audio/openers.py`, which must NOT import the runtime's
+  private `_TurnTimings`) now returns a neutral `OpenerPlayback` dataclass that
+  the runtime folds in via `_record_opener_playback`. `llm_tag` wins when both
+  somehow fire; at most one plays per turn in practice.
+- **`emphasis_count_per_turn` (AC #6).** `_publish_emphasis_events` returns the
+  count it published; `_speak_segment` accumulates it onto `timings` across all
+  the turn's segments.
+- **`routing` (AC #3).** Set to `clarification` in the low-confidence branch,
+  `fast_path` otherwise. The orchestrator `slow_path` is parked in the v1
+  sequential loop (no live TurnRouter), so `fast_path` is correct for every
+  non-clarification turn here; documented inline.
+- **soak_v2 tool (AC #7).** `src/voice_agent_pipeline/tools/soak_v2.py` (new
+  `tools/` package) parses `turn.complete` JSON-line events, aggregates
+  p25/50/75/90/p95 per metric (linear-interpolation percentile identical to
+  `tts/ttfb_spike.py`), counts `opener_source` / `routing` distributions +
+  `emphasis.index_mismatch` WARNs, and renders a Markdown report with an
+  NFR33/NFR34 target-comparison table. Pure `aggregate` / `parse_log` /
+  `render_report` core unit-tested; `just soak-v2-report` recipe added.
+- **embodiment-brief review (AC #8).** §"v2 head-motion realizer", A.7, A.8,
+  B.2/B.3, §"What Makes This Different" #5 verified against the as-built shape:
+  the emphasis cue is an audio-anchored `vocalization(tag="emphasis",
+  audio_frame_id=...)` event, body owns the anticipation lead — all accurate.
+  One drift corrected in lockstep (NFR26): the brief (+ the distillate) called
+  the 7th tag an "additive Literal extension"; the as-built wire `tag` is an
+  open `str` gated by `expression_map.yaml`, so the wording was corrected to
+  "additive vocabulary entry" and the `audio_frame_id` form `seg-N-w-<ms>`
+  noted.
+- **DR annotations (AC #9).** DR-001 gained a "Projection validation landed
+  by: Story 6.4" note (the instrumentation that measures its timeline
+  projection); DR-002 + DR-004 already carry the Story 6.3 wire-side
+  annotations from that commit.
+- **PENDING (hands-on): the 30-minute live soak RUN + committed
+  `6-4-soak-report.md`.** This needs the live pipeline on Kamal's hardware
+  (mic/speaker + API keys) — it cannot be run by the dev agent. Per Kamal
+  (2026-05-29): the session is being closed and the soak run resumed later
+  today; he will run a mixed-shape session then `just soak-v2-report` and
+  commit the report as a follow-up. The full 7-day soak remains Story 5-4's
+  job. This is the ONLY unchecked subtask; all instrumentation + tooling that
+  the run depends on is landed and `just check`-green.
+
 ### File List
+
+**New:**
+- `src/voice_agent_pipeline/tools/__init__.py` — operator-tools package
+- `src/voice_agent_pipeline/tools/soak_v2.py` — v2 soak-report aggregator + CLI
+- `tests/contract/test_turn_complete_log_schema.py` — `turn.complete` schema contract
+- `tests/unit/tools/__init__.py`, `tests/unit/tools/test_soak_v2.py` — soak parser/aggregator unit tests
+
+**Modified:**
+- `src/voice_agent_pipeline/sequential_loop.py` — `_TurnTimings` + `_emit_turn_complete` + `_record_opener_playback`; per-turn accumulation wiring; `turn.complete` emit (both branches); `stt_ms` rename; `_publish_emphasis_events` returns count
+- `src/voice_agent_pipeline/audio/openers.py` — `OpenerPlayback` return type on `trigger_opener_fallback` (timing handoff without importing the runtime's private dataclass)
+- `justfile` — `soak-v2-report` recipe
+- `build_documents/planning-artifacts/architecture.md` — §Logging Conventions `turn.complete` schema; v2 item #23 + delta table ✅ landed
+- `build_documents/planning-artifacts/decision-records.md` — DR-001 "Projection validation landed by: Story 6.4"
+- `build_documents/planning-artifacts/olaf-embodiment-brief.md` — Literal→vocabulary wording correction (A.7, A.8, §WMTD #5)
+- `build_documents/planning-artifacts/voice-agent-pipeline.md` — distillate Literal→vocabulary wording correction
+- `build_documents/planning-artifacts/epics.md` — Epic 6 §Status → implementation complete
+- `build_documents/implementation-artifacts/sprint-status.yaml` — 6-4 → review
+
+**Pending (follow-up, hands-on):**
+- `build_documents/implementation-artifacts/6-4-soak-report.md` — generated by `just soak-v2-report` after Kamal's live session (2026-05-29, later today)
+
+### Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-29 | Story 6.4 implemented (instrumentation + tooling + docs). New `turn.complete` per-turn rollup log event (latency decomposition + opener/emphasis/routing accounting); `end_to_transcript_ms=0` placeholder replaced + renamed `stt_ms`; `tools/soak_v2.py` aggregator + `just soak-v2-report`; embodiment-brief + distillate "additive Literal" → "additive vocabulary entry" correction (NFR26); DR-001 projection-validation annotation; Epic 6 §Status → implementation complete. `just check` green (588 passed). Status → review. **Live 30-min soak RUN + committed `6-4-soak-report.md` deferred to a follow-up** (hands-on; Kamal resumes later today) — the only open subtask. |

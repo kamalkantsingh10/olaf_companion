@@ -1,5 +1,14 @@
 # generated: 2026-05-05
 # last_updated: 2026-05-29
+# 2026-05-29: Story 6-4 -> review (dev-story / Amelia). Epic 6 wrap:
+#             per-turn `turn.complete` rollup log (stt_ms/ttft_ms/
+#             ttfb_ms/end_to_first_real_audio_ms/opener_*/
+#             emphasis_count_per_turn/routing/had_tool_call); replaced
+#             the end_to_transcript_ms=0 placeholder (renamed stt_ms);
+#             tools/soak_v2.py aggregator + justfile recipe;
+#             embodiment-brief amendment review (open-str-not-Literal
+#             wording corrected). Full 7-day soak RUN deferred to 5-4.
+#             All Epic-6 stories (6-1..6-4) now at review.
 # 2026-05-29: Story 6-3 -> review (dev-story / Amelia). Emphasis as
 #             the 7th vocalization tag: Talker `*word*` marks ->
 #             splitter char-by-char parse (EmphasisStart/End sentinels)
@@ -90,7 +99,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-29  # Story 6-3 -> review (dev-story / Amelia)
+last_updated: 2026-05-29  # Story 6-4 -> review (dev-story / Amelia)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -213,7 +222,7 @@ development_status:
   6-1-cartesia-websocket-and-ttfb-spike: review
   6-2-cached-opener-system-and-cartesia-overlap: review
   6-3-emphasis-vocalization-wiring: review
-  6-4-instrumentation-soak-embodiment-brief: ready-for-dev
+  6-4-instrumentation-soak-embodiment-brief: review
   epic-6-retrospective: optional
 
   # ───────────────── v1.5 Backlog (Post-v1) ─────────────────

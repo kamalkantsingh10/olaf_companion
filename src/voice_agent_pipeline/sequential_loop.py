@@ -41,8 +41,9 @@ import random
 import struct
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 import pvporcupine  # pyright: ignore[reportMissingTypeStubs]
@@ -57,7 +58,11 @@ from voice_agent_pipeline.audio._silence import suppress_native_stderr
 from voice_agent_pipeline.audio.cached import CachedAudioManifest, play_cached
 from voice_agent_pipeline.audio.devices import resolve_audio_devices
 from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
-from voice_agent_pipeline.audio.openers import pick_opener, trigger_opener_fallback
+from voice_agent_pipeline.audio.openers import (
+    OpenerPlayback,
+    pick_opener,
+    trigger_opener_fallback,
+)
 from voice_agent_pipeline.config.expression_map import load_from_path
 from voice_agent_pipeline.config.setup import SetupConfig
 from voice_agent_pipeline.mood.controller import MoodController
@@ -247,8 +252,14 @@ async def run_sequential_loop(
                 if audio is None:
                     # No speech detected within the window. Log + retry.
                     # An idle-auto-sleep timeout could land here in v1.5.
+                    # NOT a turn — no `turn.complete` for an empty window.
                     log.info("sequential_loop.no_speech_retry")
                     continue
+
+                # Story 6.4: VAD end-of-speech is the anchor for every
+                # `vad_end → X` latency delta. One `_TurnTimings` per turn,
+                # emitted as `turn.complete` at turn-end.
+                timings = _TurnTimings(vad_end_ns=time.time_ns())
 
                 # FSM transitions: waking → listening → working[thinking]
                 # on the first iteration; listening → working[thinking]
@@ -294,6 +305,11 @@ async def run_sequential_loop(
                 )
 
                 stt_result = await stt.transcribe(audio)
+                # Story 6.4: stamp STT-done + replace the long-standing
+                # hardcoded `end_to_transcript_ms=0` placeholder with the
+                # real measurement, renamed `stt_ms` (vad_end → transcript).
+                timings.stt_done_ns = time.time_ns()
+                stt_ms = (timings.stt_done_ns - timings.vad_end_ns) // 1_000_000
                 # Privacy: heard text logged at INFO under ``heard``
                 # (Story 2.5 deviation). The redaction processor
                 # strips ``transcript`` / ``user_text`` field names
@@ -302,7 +318,7 @@ async def run_sequential_loop(
                 log.info(
                     "stt.transcript",
                     confidence=stt_result.confidence,
-                    end_to_transcript_ms=0,
+                    stt_ms=stt_ms,
                     heard=stt_result.text,
                 )
 
@@ -313,6 +329,7 @@ async def run_sequential_loop(
                 # history (the bot said "say again?", the user's
                 # next turn should make sense in that context).
                 if stt_result.confidence < config.stt.low_confidence_threshold:
+                    timings.routing = "clarification"
                     clarification_text = random.choice(  # noqa: S311
                         config.stt.clarification_prompts,
                     )
@@ -326,7 +343,11 @@ async def run_sequential_loop(
                     # it to finish so the speaker is free before we
                     # play the clarification.
                     opener_selected.set()
-                    await opener_fallback_task
+                    clar_fallback_playback = await opener_fallback_task
+                    # Story 6.4: a fallback opener may have raced in before
+                    # the cancel landed — record its timing if so.
+                    if clar_fallback_playback is not None:
+                        _record_opener_playback(timings, clar_fallback_playback)
                     await fsm.on_first_audio_frame()
                     # Clarifications are deterministic text; play from
                     # cached WAV instead of hitting Cartesia. No mood
@@ -342,6 +363,11 @@ async def run_sequential_loop(
                         Path(clar_entry.path),
                     )
                     await fsm.on_last_audio_frame()
+                    # Story 6.4: clarification is a complete turn — emit its
+                    # rollup. No real-answer audio (so end_to_first_real_audio_ms
+                    # is None); had_tool_call stays False.
+                    timings.turn_end_ns = time.time_ns()
+                    _emit_turn_complete(timings)
                     conversation_history.append(
                         {"role": "user", "content": stt_result.text},
                     )
@@ -378,7 +404,12 @@ async def run_sequential_loop(
                     segmenter=segmenter,
                     emotion_cache=emotion_cache,
                     history=conversation_history,
+                    timings=timings,
                 )
+                # Story 6.4: a tool-call-only reply still counts the tool
+                # call (and leaves real_first_frame_ns None → the rollup's
+                # end_to_first_real_audio_ms is None).
+                timings.had_tool_call = bool(tool_calls)
 
                 # Append this turn to the history BEFORE dispatching
                 # tools / firing on_last_audio_frame. Order: user
@@ -435,6 +466,14 @@ async def run_sequential_loop(
                 # sleep chain → going_to_sleep → sleeping if a
                 # ``go_to_sleep`` tool call set ``sleep_pending``).
                 await fsm.on_last_audio_frame()
+
+                # Story 6.4: turn boundary reached — emit the per-turn
+                # rollup. Routing stays the default "fast_path": the
+                # sequential loop runs the Talker directly (the
+                # orchestrator slow-path is parked in v1), so every
+                # non-clarification turn is fast-path.
+                timings.turn_end_ns = time.time_ns()
+                _emit_turn_complete(timings)
 
                 if fsm.current_state == "sleeping":
                     # Deferred-sleep fired. Break inner loop, go back
@@ -611,6 +650,100 @@ def _is_speakable(text: str) -> bool:
     return any(ch.isalnum() for ch in text)
 
 
+@dataclass
+class _TurnTimings:
+    """Per-turn latency accumulator for the ``turn.complete`` rollup (Story 6.4).
+
+    Internal-only (private to this module), mutable — values land at
+    different points in the turn's async flow, then the derived
+    integer-millisecond fields are computed once at turn-end. All ``_ns``
+    values are :func:`time.time_ns` readings on the single runtime clock
+    (the ``tts.first_frame.ttfb_ms`` methodology — DR-001 comparability).
+
+    One instance per turn: constructed at VAD end-of-speech, discarded
+    after :func:`_emit_turn_complete`. ``None``-valued ``_ns`` anchors mean
+    "that beat didn't happen this turn" (e.g. a tool-only reply has no
+    ``real_first_frame_ns``); the derivation guards each with an ``if`` so
+    the emitted field is ``None`` rather than a bogus delta.
+    """
+
+    vad_end_ns: int
+    stt_done_ns: int | None = None
+    talker_first_token_ns: int | None = None
+    opener_first_frame_ns: int | None = None
+    opener_last_frame_ns: int | None = None
+    real_first_frame_ns: int | None = None
+    turn_end_ns: int | None = None
+
+    # Annotations gathered from the turn's events.
+    ttfb_ms: int | None = None
+    opener_source: Literal["llm_tag", "timer_fallback"] | None = None
+    opener_bucket: OpenerBucket | None = None
+    opener_duration_ms: int | None = None
+    emphasis_count: int = 0
+    routing: Literal["fast_path", "slow_path", "clarification"] = "fast_path"
+    had_tool_call: bool = False
+
+
+def _emit_turn_complete(timings: _TurnTimings) -> None:
+    """Emit the once-per-turn ``turn.complete`` rollup log event (Story 6.4).
+
+    Collapses the per-action log events (``stt.transcript``,
+    ``tts.first_frame``, ``activity.transition``, ...) into a single
+    per-turn record so the DR-003 dashboard + the v2 soak don't have to
+    reconstruct turn shape by grouping. Additive — the per-action events
+    still fire. Schema documented in architecture.md §Logging Conventions;
+    contract-tested in ``tests/contract/test_turn_complete_log_schema.py``.
+
+    Nullable derived fields use ``None`` (never ``0``) when their source
+    anchor is unset, so a missing beat is distinguishable from a genuine
+    zero-millisecond delta.
+    """
+    t = timings
+
+    def _delta_ms(end_ns: int | None, start_ns: int | None) -> int | None:
+        if end_ns is None or start_ns is None:
+            return None
+        return (end_ns - start_ns) // 1_000_000
+
+    log.info(
+        "turn.complete",
+        # Latency decomposition (NFR35).
+        stt_ms=_delta_ms(t.stt_done_ns, t.vad_end_ns),
+        ttft_ms=_delta_ms(t.talker_first_token_ns, t.stt_done_ns),
+        ttfb_ms=t.ttfb_ms,
+        end_to_first_real_audio_ms=_delta_ms(t.real_first_frame_ns, t.vad_end_ns),
+        # Opener accounting (NFR33 / NFR34).
+        opener_source=t.opener_source,
+        opener_bucket=t.opener_bucket,
+        opener_duration_ms=t.opener_duration_ms,
+        opener_onset_ms=_delta_ms(t.opener_first_frame_ns, t.vad_end_ns),
+        dead_air_after_opener_ms=_delta_ms(t.real_first_frame_ns, t.opener_last_frame_ns),
+        # Emphasis accounting (DR-004 / Story 6.3).
+        emphasis_count_per_turn=t.emphasis_count,
+        # Turn shape.
+        routing=t.routing,
+        had_tool_call=t.had_tool_call,
+    )
+
+
+def _record_opener_playback(timings: _TurnTimings | None, playback: OpenerPlayback) -> None:
+    """Fold a fallback :class:`OpenerPlayback` into the turn's timings.
+
+    Only writes if no opener has been recorded yet — the splitter-driven
+    (``llm_tag``) path records inline and wins; the timer fallback is the
+    second-choice source. At most one opener plays per turn (the events
+    coordinate), so in practice there's no contention.
+    """
+    if timings is None or timings.opener_source is not None:
+        return
+    timings.opener_source = "timer_fallback"
+    timings.opener_bucket = playback.bucket
+    timings.opener_duration_ms = playback.duration_ms
+    timings.opener_first_frame_ns = playback.first_frame_ns
+    timings.opener_last_frame_ns = playback.last_frame_ns
+
+
 async def _publish_segment_events(
     publisher: EventPublisher,
     cache: LastPublishedCache,
@@ -647,7 +780,7 @@ async def _publish_emphasis_events(
     segment: Segment,
     turn_id: UUID,
     seg_index: int,
-) -> None:
+) -> int:
     """Publish one ``emphasis`` vocalization per marked word (Story 6.3).
 
     Called AFTER a segment's ``synthesize`` generator drains — that's when
@@ -678,9 +811,13 @@ async def _publish_emphasis_events(
       misaligned word must not crash a turn (CLAUDE.md rule 4 covers
       external faults; this is a defensive intra-turn skip, not a swallow of
       ExternalServiceError).
+
+    Returns:
+        The number of ``emphasis`` events actually published (Story 6.4
+        folds this into ``turn.complete.emphasis_count_per_turn``).
     """
     if not segment.emphasis_word_indices:
-        return
+        return 0
     timing = tts.last_segment_timing()
     if timing is None:
         log.debug(
@@ -688,8 +825,9 @@ async def _publish_emphasis_events(
             seg_index=seg_index,
             marked=len(segment.emphasis_word_indices),
         )
-        return
+        return 0
     word_count = len(timing.words)
+    published = 0
     for index in segment.emphasis_word_indices:
         if index >= word_count:
             log.warning(
@@ -711,6 +849,8 @@ async def _publish_emphasis_events(
                 correlation_id=turn_id,
             )
         )
+        published += 1
+    return published
 
 
 async def _stream_and_speak(
@@ -724,12 +864,13 @@ async def _stream_and_speak(
     manifest: CachedAudioManifest,
     opener_selected: asyncio.Event,
     opener_already_playing: asyncio.Event,
-    opener_fallback_task: asyncio.Task[None],
+    opener_fallback_task: asyncio.Task[OpenerPlayback | None],
     recent_openers: deque[str],
     publisher: EventPublisher,
     segmenter: Segmenter,
     emotion_cache: LastPublishedCache,
     history: list[dict[str, str]] | None = None,
+    timings: _TurnTimings | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Stream Talker tokens; publish embodiment events + speak each segment.
 
@@ -808,7 +949,17 @@ async def _stream_and_speak(
             duration_ms=pick.duration_ms,
         )
         recent_openers.append(pick.phrase_hash)
+        # Story 6.4: this is the `llm_tag` opener source — it wins over the
+        # timer fallback. Bracket playback with single-clock readings so
+        # turn.complete can derive opener_onset_ms + dead_air_after_opener_ms.
+        if timings is not None:
+            timings.opener_source = "llm_tag"
+            timings.opener_bucket = bucket
+            timings.opener_duration_ms = pick.duration_ms
+            timings.opener_first_frame_ns = time.time_ns()
         await play_cached(pa, cast(int, indices.output_index), Path(pick.path))
+        if timings is not None:
+            timings.opener_last_frame_ns = time.time_ns()
 
     def _on_opener_selected(bucket: OpenerBucket) -> None:
         """Sync callback the segmenter invokes on every OpenerTagEvent.
@@ -876,7 +1027,20 @@ async def _stream_and_speak(
                     output_device_index=indices.output_index,
                 )
         log.info("tts.sentence_speak", text=text.strip())
+        # Story 6.4: measure TTFB (synth-request-sent → first audio frame
+        # received) and stamp the real-answer first-frame anchor. Both land
+        # on the FIRST chunk of the FIRST spoken segment of the turn
+        # (guarded by ``real_first_frame_ns is None``); subsequent segments'
+        # TTFBs are amortised by streaming and not carried.
+        synth_request_ns = time.time_ns()
+        first_chunk = True
         async for chunk in tts.synthesize(text):
+            if first_chunk:
+                first_chunk = False
+                if timings is not None and timings.real_first_frame_ns is None:
+                    now_ns = time.time_ns()
+                    timings.real_first_frame_ns = now_ns
+                    timings.ttfb_ms = (now_ns - synth_request_ns) // 1_000_000
             await asyncio.to_thread(out_stream.write, chunk)
 
         # Story 6.3 — emphasis join. The synthesize generator has drained,
@@ -885,7 +1049,13 @@ async def _stream_and_speak(
         # anchored to its audio offset. Done after the write loop because
         # the timing is only reliably available post-drain; the body
         # anchors its motion to the carrier word's ``audio_frame_id``.
-        await _publish_emphasis_events(publisher, tts, segment, turn_id, spoken_segment_index)
+        published = await _publish_emphasis_events(
+            publisher, tts, segment, turn_id, spoken_segment_index
+        )
+        if timings is not None:
+            # Story 6.4: emphasis_count is per-turn — accumulate across all
+            # of the turn's segments.
+            timings.emphasis_count += published
         spoken_segment_index += 1
 
     try:
@@ -895,6 +1065,12 @@ async def _stream_and_speak(
             history=history,
         ):
             if isinstance(event, TalkerTextDelta):
+                # Story 6.4: TTFT (best-effort) — stamp the first non-empty
+                # text delta. Providers that buffer produce a TTFT ≈
+                # time-to-completion (accurate, if not useful); providers
+                # with no token streaming would leave this None.
+                if timings is not None and timings.talker_first_token_ns is None and event.text:
+                    timings.talker_first_token_ns = time.time_ns()
                 # Accumulate the RAW reply (tags included) for history —
                 # the LLM sees its own tag format on subsequent turns.
                 full_text_parts.append(event.text)
@@ -927,7 +1103,13 @@ async def _stream_and_speak(
         # Always drain the opener fallback + any splitter-driven
         # opener playback tasks before returning, so cleanup is
         # deterministic and we don't leak Task warnings.
-        await opener_fallback_task
+        fallback_playback = await opener_fallback_task
+        # Story 6.4: if the timer fallback played (rather than the
+        # splitter-driven path), fold its timing into the turn rollup.
+        # `_record_opener_playback` no-ops when an llm_tag opener already
+        # recorded — the splitter path wins.
+        if fallback_playback is not None:
+            _record_opener_playback(timings, fallback_playback)
         for play_task in opener_play_tasks:
             await play_task
 

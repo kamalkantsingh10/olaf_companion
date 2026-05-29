@@ -395,7 +395,7 @@ vocalizations:
   clears_throat: { tts_supported: false }
   nod:      { tts_supported: false }   # gesture cue (head-nod), never audio
   shake:    { tts_supported: false }   # gesture cue (head-shake), never audio
-  # v2 — Epic 6 / Story 6.3 / DR-004 (additive Literal extension; schema_version stays at 3):
+  # v2 — Epic 6 / Story 6.3 / DR-004 (additive YAML vocabulary entry; wire `tag` stays an open `str`, NOT a Literal; schema_version stays at 3):
   emphasis: { tts_supported: false }   # prosodic-stress head-beat at audio anchor; sourced from LLM emphasis marks × Cartesia word timestamps. Consumer renders.
 
 fallback_families:

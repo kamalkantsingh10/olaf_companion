@@ -550,10 +550,9 @@ moves in a way that **reads as natural rather than metronomic** — most words
 nothing, emphasized words a clear nod, body owning the realizer (DR-002's
 layered model).
 
-**Status:** v2 work. **Not in the current sprint.** Frozen design records:
+**Status:** **Implementation complete — Stories 6.1–6.4 all landed (2026-05-28 → 2026-05-29); awaiting the full 7-day soak run (Story 5-4) + cross-project sign-off with `olaf-embodiment`.** The pipeline-side wire change (`emphasis` vocalization) and instrumentation (`turn.complete`) are merged; the body project adds its 7th `embodiment_map.yaml` entry + emphasis realizer out-of-band before the coordinated release tag. Frozen design records:
 DR-001 (openers), DR-002 (layered head-motion model), DR-004
-(emphasis-as-vocalization wire shape). v1 ships Story 5.5's filler unchanged
-until Epic 6 lands; on landing, Story 5.5's *filler design* is superseded —
+(emphasis-as-vocalization wire shape). On landing, Story 5.5's *filler design* was superseded —
 the cached-audio infrastructure (`audio/cached.py`, `assets/audio/` layout,
 manifest discipline, Stage 3 probe, `just regenerate-audio`) is **reused**,
 not replaced.

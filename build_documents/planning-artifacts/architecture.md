@@ -548,7 +548,7 @@ downstream embodiment project consumes the wire as-is or not at all.
 20. **Cartesia SSE → WebSocket migration + `timestamps` capture + TTFB spike** (Epic 6 / Story 6.1) — `tts/cartesia.py` swaps to WebSocket; `SegmentTiming(words: list[Word])` captured per segment (currently dropped at `cartesia.py:129`); TTFB measured against the dev host. **Shared enabler** — Story 6.2 needs the TTFB number to finalise its design; Story 6.3 needs `timestamps` for the emphasis join. Resolves DR-001's keystone open question.
 21. **Cached opener system + Cartesia overlap** (Story 6.2; supersedes Story 5.5's filler design) ✅ landed — function buckets (`thinking`, `acknowledge`, `look_up`, `delegate`, `react`), ≥2 takes per phrase, `assets/audio/openers/<bucket>/NN.wav`, manifest mirroring Story 5.5 (schema bumped 1 → 2); `prompts/talker_system.md` teaches opener-function tag emission; `audio/openers.py:pick_opener` (no-mood-fallback selection) + `trigger_opener_fallback` (timer + race-window-protected); splitter recognises the tag as `OpenerTagEvent` → segmenter's `opener_callback` → `audio/cached.py:play_cached(...)`; `[openers] timer_fallback_ms` (default 700 ms) preserves the v1 onset floor; `OpenerBucket` lives in the leaf module `audio/opener_bucket.py` to break a circular import; self-gating when Talker emits no tag. **Cartesia overlap**: deleted the `audio_started.set() + await filler_task`-before-synth ordering at the old `sequential_loop.py:701`; audio device gates *playback*, network gates *synthesis*. Eliminates DR-001's serialization tax (~1 s, ~75% of turns). NFR33 / NFR34.
 22. **Emphasis as 7th vocalization tag** (Story 6.3) — ✅ landed. `prompts/talker_system.md` teaches the `*word*` emphasis-mark syntax constrained to ~1–2 per sentence; the splitter state machine parses it char-by-char (two new states `MAYBE_EMPHASIS_OPEN` / `IN_EMPHASIS_RUN`, sentinels `EmphasisStartEvent` / `EmphasisEndEvent`), the segmenter records marked-word indices on each `Segment` (markers stripped before TTS), and the runtime joins those indices × Story-6.1 `SegmentTiming` to emit one `vocalization(tag="emphasis", audio_frame_id="seg-N-w-<start_ms>")` per emphasis. `expression_map.yaml` `vocalizations:` grew 6 → 7 (`emphasis: { tts_supported: false }`); the wire model's `tag` stays an open `str` (YAML is the vocabulary gate — **not** tightened to a Literal, per the Story 6.3 Dev Notes). `schema_version=3` unchanged (additive — CLAUDE.md rule 6 + DR-004).
-23. **Instrumentation + soak + embodiment-brief amendment** (Story 6.4 — the wrap) — per-turn `stt_ms`, `ttft_ms` (best-effort), `ttfb_ms`, `end_to_first_real_audio_ms`, `opener_*` fields on `turn.complete` (replaces the hardcoded `end_to_transcript_ms=0` at `sequential_loop.py:287`); v2 soak measures NFR33 / NFR34 / NFR5 anticipatory window for `emphasis` events / emphasis density per sentence (target 1–2); FR62 single-host constraint verified; `olaf-embodiment-brief.md` 2026-05-28 amendments reviewed for drift and corrected in lockstep (NFR26 spec-as-contract). Cross-project sign-off with `olaf-embodiment`.
+23. **Instrumentation + soak + embodiment-brief amendment** (Story 6.4 — the wrap) — ✅ landed (instrumentation + tooling; full 7-day soak run deferred to Story 5-4). Per-turn `stt_ms`, `ttft_ms` (best-effort), `ttfb_ms`, `end_to_first_real_audio_ms`, `opener_*`, `emphasis_count_per_turn`, `routing`, `had_tool_call` on a new `turn.complete` rollup event (the hardcoded `end_to_transcript_ms=0` placeholder on `stt.transcript` is replaced + renamed `stt_ms`); `tools/soak_v2.py` aggregates `turn.complete` into percentiles + an NFR33/NFR34 target-comparison report (`6-4-soak-report.md`). `olaf-embodiment-brief.md` amendments reviewed for drift and the open-`str`-not-`Literal` wording corrected in lockstep (NFR26 spec-as-contract). Cross-project sign-off with `olaf-embodiment` happens out-of-band.
 
 **v2 cross-component dependencies:**
 
@@ -708,6 +708,32 @@ log.warning("tool.dispatch_invalid_input", tool="set_mood", error="value not in 
   - `CRITICAL` — process-fatal errors immediately before crash
 - Never log raw audio bytes, credentials, or (at INFO+) transcripts. The redaction processor enforces this; don't rely on the processor — write code that doesn't pass these in.
 - Log keys in `snake_case`; values that are durations are `_ms` or `_ns` suffixed.
+
+**`turn.complete` — the per-turn rollup (Story 6.4, NFR35).** One INFO event per turn, emitted at the natural turn boundary (after the last audio frame plays and the FSM returns to `listening`). Additive — the per-action events (`stt.transcript`, `tts.first_frame`, `activity.transition`) still fire; this collapses the turn-shape reconstruction the DR-003 dashboard + the v2 soak would otherwise do. All durations are integer milliseconds; nullable fields use `None` (never `0`) when their beat didn't happen this turn.
+
+```python
+log.info(
+    "turn.complete",
+    # Latency decomposition (NFR35)
+    stt_ms=int,                          # vad_end → transcript
+    ttft_ms=int | None,                  # transcript → first non-tag Talker token (best-effort)
+    ttfb_ms=int | None,                  # synth-request-sent → first audio frame (first spoken segment)
+    end_to_first_real_audio_ms=int | None,  # vad_end → first frame of the REAL answer (None for tool-only/clarification)
+    # Opener accounting (NFR33 / NFR34)
+    opener_source=Literal["llm_tag", "timer_fallback"] | None,  # None = self-gated, no opener
+    opener_bucket=OpenerBucket | None,
+    opener_duration_ms=int | None,
+    opener_onset_ms=int | None,          # vad_end → first opener audio frame
+    dead_air_after_opener_ms=int | None, # opener last frame → real-answer first frame
+    # Emphasis accounting (DR-004 / Story 6.3)
+    emphasis_count_per_turn=int,         # count of vocalization(tag="emphasis") events this turn
+    # Turn shape
+    routing=Literal["fast_path", "slow_path", "clarification"],
+    had_tool_call=bool,
+)
+```
+
+`stt.transcript` carries `stt_ms` too (Story 6.4 renamed the long-standing `end_to_transcript_ms=0` placeholder to the real measurement). `tools/soak_v2.py` aggregates these into percentiles + an NFR33/NFR34 target-comparison report.
 
 ### Async Patterns
 

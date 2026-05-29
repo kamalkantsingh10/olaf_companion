@@ -49,7 +49,9 @@ Why a dedicated module rather than inside sequential_loop:
 
 import asyncio
 import random
+import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -68,9 +70,30 @@ from voice_agent_pipeline.audio.devices import AudioDeviceIndices
 # keep working. See ``audio/opener_bucket.py`` for the rationale.
 from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 
-__all__ = ["OpenerBucket", "pick_opener", "trigger_opener_fallback"]
+__all__ = ["OpenerBucket", "OpenerPlayback", "pick_opener", "trigger_opener_fallback"]
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class OpenerPlayback:
+    """Timing record for a fallback opener that actually played (Story 6.4).
+
+    :func:`trigger_opener_fallback` returns this when the timer fires and a
+    cached opener is played, so the runtime can fold the timing into its
+    per-turn ``turn.complete`` rollup without ``audio/openers`` needing to
+    import the runtime's private ``_TurnTimings`` (which would be a layering
+    inversion). Returns ``None`` instead when the fallback does NOT play
+    (splitter-driven opener won, or the race-window check bailed).
+
+    All ``_ns`` values are :func:`time.time_ns` readings on the single
+    runtime clock (same methodology as ``tts.first_frame.ttfb_ms``).
+    """
+
+    bucket: OpenerBucket
+    duration_ms: int
+    first_frame_ns: int
+    last_frame_ns: int
 
 
 def pick_opener(
@@ -136,7 +159,7 @@ async def trigger_opener_fallback(
     opener_selected: asyncio.Event,
     opener_already_playing: asyncio.Event,
     recent: deque[str],
-) -> None:
+) -> OpenerPlayback | None:
     """Wait up to ``timer_fallback_ms`` for an LLM-tag-selected opener.
 
     Coroutine spawned as a background task on VAD end-of-speech.
@@ -175,6 +198,13 @@ async def trigger_opener_fallback(
             the race-window check right before the timer fires.
         recent: Mutable ring buffer of recently-played opener hashes.
             Updated in-place if a fallback opener is played.
+
+    Returns:
+        An :class:`OpenerPlayback` timing record when the timer fired and
+        a fallback opener was played; ``None`` when it didn't play (the
+        splitter-driven opener won, the race-window check bailed, or the
+        bucket was empty). The runtime uses the non-``None`` case to
+        populate the ``opener_*`` fields of ``turn.complete`` (Story 6.4).
     """
     try:
         # Cheap "LLM tag arrived first" path: wait_for with a timeout.
@@ -184,7 +214,7 @@ async def trigger_opener_fallback(
             opener_selected.wait(),
             timeout=timer_fallback_ms / 1000,
         )
-        return
+        return None
     except TimeoutError:
         # Threshold expired without an LLM tag — proceed to the
         # fallback path. Fall through.
@@ -195,7 +225,7 @@ async def trigger_opener_fallback(
     # set ``opener_already_playing``. If so, abandon the fallback so we
     # don't double-fire.
     if opener_already_playing.is_set():
-        return
+        return None
 
     pick = pick_opener(manifest, timer_fallback_bucket, recent)
     if pick is None:
@@ -203,7 +233,7 @@ async def trigger_opener_fallback(
         # :class:`OpenersConfig` validator should prevent this in
         # production; defensive log + silent return otherwise.
         log.warning("opener.no_pick", bucket=timer_fallback_bucket)
-        return
+        return None
 
     log.info(
         "opener.timer_fallback_picked",
@@ -217,4 +247,13 @@ async def trigger_opener_fallback(
     # arrives at the exact moment the timer fires.
     opener_already_playing.set()
     recent.append(pick.phrase_hash)
+    # Story 6.4: bracket the playback with single-clock readings so the
+    # runtime can derive opener_onset_ms + dead_air_after_opener_ms.
+    first_frame_ns = time.time_ns()
     await play_cached(pa, cast(int, indices.output_index), Path(pick.path))
+    return OpenerPlayback(
+        bucket=timer_fallback_bucket,
+        duration_ms=pick.duration_ms,
+        first_frame_ns=first_frame_ns,
+        last_frame_ns=time.time_ns(),
+    )

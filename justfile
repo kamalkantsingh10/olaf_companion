@@ -65,6 +65,15 @@ regenerate-audio *FLAGS:
 ttfb-spike:
     uv run python -m voice_agent_pipeline.tts.ttfb_spike
 
+# Story 6.4: v2 soak report. Aggregates `turn.complete` rollup events from
+# the JSON-line structured log into latency percentiles + opener/routing
+# distributions + an NFR33/NFR34 target-comparison table. Writes Markdown to
+# `build_documents/implementation-artifacts/6-4-soak-report.md`. Read-only on
+# the log — run it after (or during) a live session. Flags pass through, e.g.
+# `just soak-v2-report --minutes 30` or `--log ./logs/voice-agent.log`.
+soak-v2-report *FLAGS:
+    uv run python -m voice_agent_pipeline.tools.soak_v2 {{FLAGS}}
+
 # Self-contained ROS 2 / DDS publish smoke test. Stands up the production
 # Ros2EventPublisher on the configured `[publisher].dds_domain_id` and an
 # in-process witness subscriber using the body's exact contract QoS, then

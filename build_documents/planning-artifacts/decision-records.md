@@ -843,6 +843,18 @@ overlap-deletion contract via a controlled timing assertion: a
 regression that reintroduced the serialising await would fail the
 test loud.
 
+**Projection validation landed by:** Story 6.4
+(`6-4-instrumentation-soak-embodiment-brief.md`) on 2026-05-29 added the
+instrumentation that measures whether this DR's projected timeline
+(median ~3.0 s → ~1.7–2.0 s end-of-speech → real-answer) holds: the
+per-turn `turn.complete` rollup log (`stt_ms`, `ttft_ms`, `ttfb_ms`,
+`end_to_first_real_audio_ms`, `opener_source` / `opener_onset_ms` /
+`dead_air_after_opener_ms`, `emphasis_count_per_turn`, `routing`,
+`had_tool_call`) + the `tools/soak_v2.py` aggregator that rolls those
+into the percentiles + NFR33/NFR34 target-comparison in
+`6-4-soak-report.md`. The full 7-day soak that produces the
+sign-off numbers runs in Story 5-4; 6.4 lands the measurement plumbing.
+
 ### Open question (keystone) — Cartesia TTFB
 
 Cartesia TTFB (~1.07 s median, ~1.64 s p75) is the dominant remaining cost and
