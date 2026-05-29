@@ -65,7 +65,10 @@ from voice_agent_pipeline.mood.state import MoodState
 from voice_agent_pipeline.publisher import build_publisher
 from voice_agent_pipeline.publisher.interface import EventPublisher
 from voice_agent_pipeline.schemas.speech_emotion_event import SpeechEmotionEvent
-from voice_agent_pipeline.schemas.vocalization_event import VocalizationEvent
+from voice_agent_pipeline.schemas.vocalization_event import (
+    VocalizationEvent,
+    VocalizationPayload,
+)
 from voice_agent_pipeline.splitter.mapping import LastPublishedCache
 from voice_agent_pipeline.splitter.segmenter import Segment, Segmenter
 from voice_agent_pipeline.stt import build_stt_backend
@@ -638,6 +641,78 @@ async def _publish_segment_events(
         )
 
 
+async def _publish_emphasis_events(
+    publisher: EventPublisher,
+    tts: CartesiaClient,
+    segment: Segment,
+    turn_id: UUID,
+    seg_index: int,
+) -> None:
+    """Publish one ``emphasis`` vocalization per marked word (Story 6.3).
+
+    Called AFTER a segment's ``synthesize`` generator drains — that's when
+    :meth:`CartesiaClient.last_segment_timing` is populated with the
+    per-word ``timestamps`` Cartesia reported for THIS segment (Story 6.1's
+    WebSocket capture). For each word index the splitter recorded in
+    ``segment.emphasis_word_indices``, we look up the carrier word's
+    ``start_ms`` and publish a ``vocalization(tag="emphasis", ...)`` whose
+    ``audio_frame_id`` is the word's audio anchor. The body owns the
+    render-side anticipation lead (NFR5) relative to that anchor — the
+    pipeline ships the anchor, not the motion (DR-002 / DR-004
+    producer/consumer split).
+
+    ``audio_frame_id`` shape: ``seg-{seg_index}-w-{start_ms}`` — a
+    per-segment-unique, monotonic-within-turn identifier carrying the
+    word's millisecond offset within the segment's audio. (Pre-Story-6.3
+    vocalization events carried ``audio_frame_id=None`` on the half-duplex
+    path; emphasis is the first event that populates it.)
+
+    Defensive (AC #5):
+
+    - ``timing is None`` (e.g. ``[tts] transport = "sse"`` — the SSE path
+      drops timestamps) → log ``emphasis.no_timing`` DEBUG and skip the
+      whole segment's emphasis publish. No crash.
+    - ``index >= len(timing.words)`` (splitter / Cartesia disagreed on word
+      count — should not happen) → log ``emphasis.index_mismatch`` WARN with
+      both counts and skip just that one index. **Never raises** — a single
+      misaligned word must not crash a turn (CLAUDE.md rule 4 covers
+      external faults; this is a defensive intra-turn skip, not a swallow of
+      ExternalServiceError).
+    """
+    if not segment.emphasis_word_indices:
+        return
+    timing = tts.last_segment_timing()
+    if timing is None:
+        log.debug(
+            "emphasis.no_timing",
+            seg_index=seg_index,
+            marked=len(segment.emphasis_word_indices),
+        )
+        return
+    word_count = len(timing.words)
+    for index in segment.emphasis_word_indices:
+        if index >= word_count:
+            log.warning(
+                "emphasis.index_mismatch",
+                seg_index=seg_index,
+                requested_index=index,
+                word_count=word_count,
+            )
+            continue
+        word = timing.words[index]
+        frame_id = f"seg-{seg_index}-w-{word.start_ms}"
+        await publisher.publish_vocalization(
+            VocalizationEvent(
+                payload=VocalizationPayload(
+                    tag="emphasis",
+                    audio_frame_id=frame_id,
+                    tts_supported=False,
+                ),
+                correlation_id=turn_id,
+            )
+        )
+
+
 async def _stream_and_speak(
     pa: pyaudio.PyAudio,
     indices: Any,
@@ -712,6 +787,11 @@ async def _stream_and_speak(
     full_text_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     fsm_speaking_fired = False
+    # Story 6.3: monotonic per-turn index over SPOKEN segments — the stable
+    # half of each emphasis event's ``audio_frame_id``. Only segments that
+    # actually reach Cartesia advance it, so the id maps 1:1 to a synthesized
+    # segment's word-timing table.
+    spoken_segment_index = 0
 
     async def _play_opener_from_tag(bucket: OpenerBucket) -> None:
         """Splitter-driven opener playback. Picks + plays one take."""
@@ -756,7 +836,7 @@ async def _stream_and_speak(
 
     async def _speak_segment(segment: Segment) -> None:
         """Publish a segment's events, then synthesize its text via Cartesia."""
-        nonlocal fsm_speaking_fired, out_stream
+        nonlocal fsm_speaking_fired, out_stream, spoken_segment_index
         # Publish embodiment events FIRST — they lead the audio by the
         # TTS synthesis latency (consumer side of NFR5). Fires even for
         # a text-less, vocalization-only segment (e.g. a bare ``[nod]``)
@@ -798,6 +878,15 @@ async def _stream_and_speak(
         log.info("tts.sentence_speak", text=text.strip())
         async for chunk in tts.synthesize(text):
             await asyncio.to_thread(out_stream.write, chunk)
+
+        # Story 6.3 — emphasis join. The synthesize generator has drained,
+        # so ``tts.last_segment_timing()`` now holds THIS segment's per-word
+        # timestamps. Publish one ``emphasis`` event per marked word,
+        # anchored to its audio offset. Done after the write loop because
+        # the timing is only reliably available post-drain; the body
+        # anchors its motion to the carrier word's ``audio_frame_id``.
+        await _publish_emphasis_events(publisher, tts, segment, turn_id, spoken_segment_index)
+        spoken_segment_index += 1
 
     try:
         async for event in talker.complete_with_tools_streaming(

@@ -358,3 +358,64 @@ def test_opener_and_emotion_tags_both_work() -> None:
     assert len(segments) == 1
     assert segments[0].speech_emotion_payload is not None
     assert segments[0].speech_emotion_payload.emotion == "excited"
+
+
+# ---------------------------------------------------------------------------
+# Story 6.3 — emphasis word-index recording
+# ---------------------------------------------------------------------------
+
+
+def test_emphasis_single_word_index() -> None:
+    """`I *really* like that.` → text strips markers; index 1 recorded.
+
+    Word indices count the final TTS-ready text by whitespace split:
+    ["I"(0), "really"(1), "like"(2), "that."(3)] → "really" is index 1.
+    """
+    seg = Segmenter(_make_mapping())
+    segments = _drain(seg, "I *really* like that.")
+    assert len(segments) == 1
+    assert segments[0].text == "I really like that."
+    assert segments[0].emphasis_word_indices == [1]
+
+
+def test_emphasis_multi_word_indices() -> None:
+    """`*see you* later.` → both marked words recorded ([0, 1])."""
+    seg = Segmenter(_make_mapping())
+    segments = _drain(seg, "*see you* later.")
+    assert len(segments) == 1
+    assert segments[0].text == "see you later."
+    assert segments[0].emphasis_word_indices == [0, 1]
+
+
+def test_emphasis_index_aligns_after_emotion_tag() -> None:
+    """An `<emotion .../>` tag before the text doesn't shift word indices.
+
+    The tag is stripped and never enters the segment text, so the word
+    count starts at the first real word: ["I'm"(0), "so"(1), "glad."(2)].
+    """
+    seg = Segmenter(_make_mapping())
+    segments = _drain(seg, '<emotion value="happy"/> I\'m *so* glad.')
+    assert len(segments) == 1
+    assert segments[0].text == " I'm so glad."
+    assert segments[0].emphasis_word_indices == [1]
+
+
+def test_no_emphasis_yields_empty_indices() -> None:
+    """Plain text with no marks → empty emphasis_word_indices."""
+    seg = Segmenter(_make_mapping())
+    segments = _drain(seg, "plain text no marks")
+    assert len(segments) == 1
+    assert segments[0].emphasis_word_indices == []
+
+
+def test_emphasis_indices_reset_across_segments() -> None:
+    """Each segment carries only its own marks — indices reset on boundary."""
+    seg = Segmenter(_make_mapping())
+    segments = _drain(seg, "Take *this*. Then *that* one.")
+    assert len(segments) == 2
+    # Segment 1: "Take this." → ["Take"(0), "this."(1)] → marked index 1.
+    assert segments[0].text == "Take this."
+    assert segments[0].emphasis_word_indices == [1]
+    # Segment 2: " Then that one." → [" "skipped by split: "Then"(0),
+    # "that"(1), "one."(2)] → marked index 1 (NOT carried over from seg 1).
+    assert segments[1].emphasis_word_indices == [1]

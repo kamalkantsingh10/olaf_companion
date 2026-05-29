@@ -79,11 +79,21 @@ emotions:
 # measured. Subscribers see the event regardless — only the audio
 # rendering is gated.
 #
-# Gesture cues (nod / shake): pure embodiment hooks. Always
-# `tts_supported: false` — they are visual gestures, not sounds; the
-# string "nod" or "shake" must never reach Cartesia. The Talker prompt
-# (`prompts/talker_system.md`) teaches the LLM when to emit them; the
-# embodiment project binds them to head-nod / head-shake actions.
+# Gesture cues (nod / shake / emphasis): pure embodiment hooks. Always
+# `tts_supported: false` — they are visual gestures (or, for emphasis, an
+# audio-anchored stress cue), not sounds; the cue string must never reach
+# Cartesia. The Talker prompt (`prompts/talker_system.md`) teaches the LLM
+# when to emit them; the embodiment project binds them to head-nod /
+# head-shake / head-emphasis actions.
+#
+# emphasis (Story 6.3): the 7th vocalization tag. Unlike nod / shake — which
+# the Talker emits as explicit `[nod]` / `[shake]` literals — emphasis is
+# marked inline with `*word*` syntax (parsed by the splitter state machine,
+# not the `[tag]` path) and published as `vocalization(tag="emphasis",
+# audio_frame_id=...)` anchored to the carrier word's Cartesia timestamp.
+# The prosodic stress itself lives in Cartesia's rendering of the carrier
+# word; there is no separate audio asset, hence `tts_supported: false`. The
+# body realises emphasis as a layered head-motion cue per DR-002 / DR-004.
 vocalizations:
   laughter: { tts_supported: true }
   sigh: { tts_supported: false }
@@ -91,6 +101,7 @@ vocalizations:
   clears_throat: { tts_supported: false }
   nod: { tts_supported: false }
   shake: { tts_supported: false }
+  emphasis: { tts_supported: false }
 
 # ---------------------------------------------------------------------------
 # fallback_families — 7 axes covering Cartesia's broader catalog
@@ -152,5 +163,5 @@ unknown:
   maps_to: neutral
 
 # 7 fallback families covering ~57 Cartesia tags + 12 first-class
-# canonical names + 6 vocalizations (4 audio bursts + 2 gesture cues)
-# + 1 unknown sentinel.
+# canonical names + 7 vocalizations (4 audio bursts + 3 gesture cues:
+# nod / shake / emphasis) + 1 unknown sentinel.

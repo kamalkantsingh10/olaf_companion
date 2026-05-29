@@ -103,13 +103,40 @@ class OpenerTagEvent:
 
 
 @dataclass(frozen=True)
+class EmphasisStartEvent:
+    """Sentinel (Story 6.3): the following ``TextEvent`` is inside an emphasis run.
+
+    Emitted when the parser confirms an opening ``*`` emphasis mark. The
+    marker char itself is stripped — only this sentinel signals the run.
+    The text between the markers arrives as ordinary ``TextEvent``(s); the
+    segmenter brackets those words as emphasis-marked using this sentinel
+    and its closing :class:`EmphasisEndEvent`.
+    """
+
+
+@dataclass(frozen=True)
+class EmphasisEndEvent:
+    """Sentinel (Story 6.3): the prior emphasis run ended (closing ``*`` seen)."""
+
+
+@dataclass(frozen=True)
 class EndOfStreamEvent:
     """Sentinel emitted by :meth:`StateMachine.flush`. No payload."""
 
 
 #: Tagged-union of all parse events. Story 3.7's segmenter pattern-matches
-#: on this type.
-ParseEvent = TextEvent | EmotionTagEvent | VocalizationTagEvent | OpenerTagEvent | EndOfStreamEvent
+#: on this type. Story 6.3 added the two emphasis sentinels — additive
+#: union extension; existing consumers keep working as long as they branch
+#: with a default / ``isinstance`` ladder (they do).
+ParseEvent = (
+    TextEvent
+    | EmotionTagEvent
+    | VocalizationTagEvent
+    | OpenerTagEvent
+    | EmphasisStartEvent
+    | EmphasisEndEvent
+    | EndOfStreamEvent
+)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +151,8 @@ _State = Literal[
     "IN_EMOTION_TAG",  # confirmed `<emotion ...`, reading until `>`
     "IN_OPENER_TAG",  # confirmed `<opener ...`, reading until `>`  (Story 6.2)
     "MAYBE_VOCALIZATION_TAG",  # saw `[`, accumulating identifier chars
+    "MAYBE_EMPHASIS_OPEN",  # saw `*` in TEXT, one-char lookahead to confirm  (Story 6.3)
+    "IN_EMPHASIS_RUN",  # confirmed opening `*`, accumulating until closing `*`  (Story 6.3)
 ]
 
 
@@ -179,6 +208,23 @@ class StateMachine:
                 partial=self._tag_buf,
                 reason="end-of-stream mid-tag",
             )
+        if self._state == "IN_EMPHASIS_RUN":
+            # Story 6.3: an emphasis run opened (``*word``) but never
+            # closed before end-of-stream. Fail-fast — same posture as a
+            # mid-tag flush; an unclosed run is a prompt-format defect we
+            # want loud, not a silent strip of the trailing text.
+            raise SplitterError(
+                state=self._state,
+                partial=self._tag_buf,
+                reason="emphasis run not closed",
+            )
+        if self._state == "MAYBE_EMPHASIS_OPEN":
+            # Story 6.3: a lone trailing ``*`` at end-of-stream never got
+            # its lookahead char. It's literal text, not a mark — emit it
+            # so we don't drop content. (Distinct from IN_EMPHASIS_RUN,
+            # which is a confirmed-but-unclosed run and DOES raise.)
+            self._text_buf += "*"
+            self._state = "TEXT"
         if self._text_buf:
             yield TextEvent(self._text_buf)
             self._text_buf = ""
@@ -197,6 +243,10 @@ class StateMachine:
             yield from self._step_in_opener(ch)
         elif self._state == "MAYBE_VOCALIZATION_TAG":
             yield from self._step_maybe_vocalization(ch)
+        elif self._state == "MAYBE_EMPHASIS_OPEN":
+            yield from self._step_maybe_emphasis_open(ch)
+        elif self._state == "IN_EMPHASIS_RUN":
+            yield from self._step_in_emphasis_run(ch)
 
     def _step_text(self, ch: str) -> Iterator[ParseEvent]:
         if ch == "<":
@@ -214,8 +264,65 @@ class StateMachine:
                 self._text_buf = ""
             self._tag_buf = "["
             self._state = "MAYBE_VOCALIZATION_TAG"
+        elif ch == "*":
+            # Story 6.3: possible opening emphasis mark. Flush the text
+            # run that ended here, then enter one-char lookahead — we
+            # only confirm the mark once we see the next char (letter /
+            # digit → mark; anything else → literal ``*``).
+            if self._text_buf:
+                yield TextEvent(self._text_buf)
+                self._text_buf = ""
+            self._state = "MAYBE_EMPHASIS_OPEN"
         else:
             self._text_buf += ch
+
+    def _step_maybe_emphasis_open(self, ch: str) -> Iterator[ParseEvent]:
+        """Decide whether the buffered ``*`` opens an emphasis run (Story 6.3).
+
+        Heuristic (AC #3): a ``*`` opens an emphasis run iff the next char
+        is a letter or digit (``*r``, ``*a``, ``*1``). A ``*`` followed by
+        whitespace, punctuation, another ``*``, ``<`` / ``[``, or
+        end-of-stream is literal text (handles the ``2 * 3`` math case and
+        stray markdown-style ``**``).
+
+        On confirm: emit :class:`EmphasisStartEvent` and start accumulating
+        the run body in ``_tag_buf`` (re-used as the run buffer — the tag
+        and emphasis states are mutually exclusive). The first run char is
+        ``ch`` itself.
+
+        On reject: emit the literal ``*`` as text, return to ``TEXT``, and
+        **re-process** ``ch`` there so a following ``<`` / ``[`` / ``*``
+        still triggers its own state transition.
+        """
+        if ch.isalnum():
+            self._tag_buf = ch
+            self._state = "IN_EMPHASIS_RUN"
+            yield EmphasisStartEvent()
+        else:
+            # Literal lone ``*``. Emit it, then re-dispatch ``ch`` through
+            # the TEXT handler (it may itself open a tag / new mark).
+            yield TextEvent("*")
+            self._state = "TEXT"
+            yield from self._step_text(ch)
+
+    def _step_in_emphasis_run(self, ch: str) -> Iterator[ParseEvent]:
+        """Accumulate emphasis-run body until the closing ``*`` (Story 6.3).
+
+        The closing ``*`` ends the run: emit the accumulated body as a
+        single bare :class:`TextEvent` (so the segmenter folds the marked
+        words into the segment text exactly like surrounding text), then
+        :class:`EmphasisEndEvent`. The ``*`` markers are never emitted —
+        they're stripped syntax. An empty run (``**``) emits only the
+        sentinel pair (no zero-length TextEvent).
+        """
+        if ch == "*":
+            if self._tag_buf:
+                yield TextEvent(self._tag_buf)
+            self._tag_buf = ""
+            self._state = "TEXT"
+            yield EmphasisEndEvent()
+        else:
+            self._tag_buf += ch
 
     def _step_maybe_tag(self, ch: str) -> Iterator[ParseEvent]:
         """Disambiguate ``<...`` into emotion / opener / not-a-tag (Story 6.2).

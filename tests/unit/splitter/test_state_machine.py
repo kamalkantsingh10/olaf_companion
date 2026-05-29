@@ -11,6 +11,8 @@ import pytest
 from voice_agent_pipeline.errors import SplitterError
 from voice_agent_pipeline.splitter.state_machine import (
     EmotionTagEvent,
+    EmphasisEndEvent,
+    EmphasisStartEvent,
     EndOfStreamEvent,
     OpenerTagEvent,
     StateMachine,
@@ -352,3 +354,94 @@ def test_unknown_angle_bracket_tag_falls_back_to_text() -> None:
     text_events = [e for e in events if isinstance(e, TextEvent)]
     full_text = "".join(e.text for e in text_events)
     assert "<" in full_text  # accumulated chars survive as text
+
+
+# ---------------------------------------------------------------------------
+# Story 6.3 — emphasis mark parsing (`*word*`)
+# ---------------------------------------------------------------------------
+
+
+def test_emphasis_single_word_brackets_text_with_sentinels() -> None:
+    """`*really*` → EmphasisStart, bare TextEvent, EmphasisEnd. No `*` in text."""
+    machine = StateMachine()
+    events = _drain(machine, "I think *really* hard")
+    assert events == [
+        TextEvent("I think "),
+        EmphasisStartEvent(),
+        TextEvent("really"),
+        EmphasisEndEvent(),
+        TextEvent(" hard"),
+        EndOfStreamEvent(),
+    ]
+    # Belt-and-suspenders: the `*` markers are stripped from every TextEvent.
+    assert all("*" not in e.text for e in events if isinstance(e, TextEvent))
+
+
+def test_emphasis_multi_word_run() -> None:
+    """`*see you*` is a single run spanning two words; emitted as one TextEvent."""
+    machine = StateMachine()
+    events = _drain(machine, "*see you* later")
+    assert events == [
+        EmphasisStartEvent(),
+        TextEvent("see you"),
+        EmphasisEndEvent(),
+        TextEvent(" later"),
+        EndOfStreamEvent(),
+    ]
+
+
+def test_emphasis_open_split_across_token_boundary() -> None:
+    """A `*` at end of one chunk holds in MAYBE_EMPHASIS_OPEN until the next char.
+
+    Cross-stream split safety — the parser cannot decide mark-vs-literal
+    until it sees the char after `*`, which arrives in the next chunk.
+    """
+    machine = StateMachine()
+    events = _drain(machine, "go *", "now* please")
+    assert events == [
+        TextEvent("go "),
+        EmphasisStartEvent(),
+        TextEvent("now"),
+        EmphasisEndEvent(),
+        TextEvent(" please"),
+        EndOfStreamEvent(),
+    ]
+
+
+def test_asterisk_in_math_context_is_literal_text() -> None:
+    """`2 * 3 = 6` — `*` surrounded by spaces is literal; no emphasis events."""
+    machine = StateMachine()
+    events = _drain(machine, "2 * 3 = 6")
+    assert not any(isinstance(e, (EmphasisStartEvent, EmphasisEndEvent)) for e in events)
+    text = "".join(e.text for e in events if isinstance(e, TextEvent))
+    assert text == "2 * 3 = 6"
+
+
+def test_trailing_lone_asterisk_flushes_as_literal_text() -> None:
+    """A dangling `*` at end-of-stream is literal text, not an unclosed run."""
+    machine = StateMachine()
+    events = _drain(machine, "done *")
+    text = "".join(e.text for e in events if isinstance(e, TextEvent))
+    assert text == "done *"
+    assert not any(isinstance(e, (EmphasisStartEvent, EmphasisEndEvent)) for e in events)
+
+
+def test_emphasis_mid_run_flush_raises() -> None:
+    """An opened-but-unclosed run at end-of-stream is a fail-fast SplitterError."""
+    machine = StateMachine()
+    with pytest.raises(SplitterError, match="emphasis run not closed"):
+        list(machine.consume("I am *really"))
+        list(machine.flush())
+
+
+def test_emphasis_run_split_at_every_byte_position() -> None:
+    """`a *bc* d` survives a split at every byte position."""
+    full = "a *bc* d"
+    for split_at in range(1, len(full)):
+        machine = StateMachine()
+        events = _drain(machine, full[:split_at], full[split_at:])
+        text = "".join(e.text for e in events if isinstance(e, TextEvent))
+        assert text == "a bc d", f"split at {split_at} dropped/garbled text"
+        starts = [e for e in events if isinstance(e, EmphasisStartEvent)]
+        ends = [e for e in events if isinstance(e, EmphasisEndEvent)]
+        assert len(starts) == 1 and len(ends) == 1, f"split at {split_at} miscounted runs"

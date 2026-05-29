@@ -31,7 +31,7 @@ What this module does NOT do:
 from collections.abc import Callable, Iterator
 
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.config.expression_map import ExpressionMapConfig
@@ -43,6 +43,8 @@ from voice_agent_pipeline.splitter.mapping import (
 )
 from voice_agent_pipeline.splitter.state_machine import (
     EmotionTagEvent,
+    EmphasisEndEvent,
+    EmphasisStartEvent,
     EndOfStreamEvent,
     OpenerTagEvent,
     StateMachine,
@@ -80,6 +82,14 @@ class Segment(BaseModel):
             the segmenter's).
         vocalization_payloads: Every vocalization seen during this
             segment, in order. May be empty.
+        emphasis_word_indices: Story 6.3 — 0-based word indices in
+            :attr:`text` that the LLM marked for emphasis (``*word*``).
+            Indices count words in the **final TTS-ready text** (after
+            all tags + emphasis markers have been stripped), by the same
+            whitespace split Cartesia uses, so the runtime can join each
+            index against Cartesia's per-word ``timestamps`` to anchor an
+            ``emphasis`` vocalization event. Empty list = no emphasis in
+            this segment.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -87,6 +97,7 @@ class Segment(BaseModel):
     text: str
     speech_emotion_payload: SpeechEmotionPayload | None
     vocalization_payloads: list[VocalizationPayload]
+    emphasis_word_indices: list[int] = Field(default_factory=list[int])
 
 
 class Segmenter:
@@ -138,6 +149,15 @@ class Segmenter:
         # emotion attached yet — prevents re-attaching on subsequent
         # buffer-flushes within the same segment.
         self._emotion_attached: bool = False
+        # Story 6.3 — emphasis tracking. ``_emphasis_indices`` collects the
+        # marked-word offsets for the IN-PROGRESS segment; it's snapshotted
+        # into each emitted Segment and cleared at segment boundaries.
+        # ``_emphasis_open_offset`` holds the word offset at which the
+        # current (still-open) emphasis run started, or None when no run is
+        # open. The offset is the count of whitespace-split words in
+        # ``_buffer`` at EmphasisStart — i.e. the index the next word takes.
+        self._emphasis_indices: list[int] = []
+        self._emphasis_open_offset: int | None = None
 
     def consume(self, token: str) -> Iterator[Segment]:
         """Process a token chunk; yield zero or more Segments."""
@@ -161,6 +181,8 @@ class Segmenter:
         self._current_emotion = None
         self._pending_vocalizations = []
         self._emotion_attached = False
+        self._emphasis_indices = []
+        self._emphasis_open_offset = None
 
     # ------------------------------------------------------------------
     # Internal event handler
@@ -175,6 +197,10 @@ class Segmenter:
             yield from self._handle_vocalization(event.name)
         elif isinstance(event, OpenerTagEvent):
             self._handle_opener(event.bucket)
+        elif isinstance(event, EmphasisStartEvent):
+            self._handle_emphasis_start()
+        elif isinstance(event, EmphasisEndEvent):
+            self._handle_emphasis_end()
         elif isinstance(event, EndOfStreamEvent):
             yield from self._flush_buffer()
         # No `else` — ParseEvent is a closed union; pyright catches
@@ -245,6 +271,42 @@ class Segmenter:
             # sync too.
             self.opener_callback(bucket)
 
+    def _handle_emphasis_start(self) -> None:
+        """Story 6.3: record the word offset at which an emphasis run opens.
+
+        The offset is the count of whitespace-split words already in the
+        buffer — equivalently the index the next (first emphasized) word
+        will occupy in the final segment text. The marked words are
+        appended by the bracketed :class:`TextEvent`(s) before
+        :meth:`_handle_emphasis_end` resolves the range.
+
+        Idempotent-ish: the state machine never nests runs, so an already-
+        open offset would be a parser bug; we overwrite defensively.
+        """
+        self._emphasis_open_offset = len(self._buffer.split())
+
+    def _handle_emphasis_end(self) -> None:
+        """Story 6.3: close the run, recording each marked word's index.
+
+        On the closing ``*`` the buffer now contains the run's words. The
+        marked indices are ``[start, end)`` where ``start`` was captured at
+        :meth:`_handle_emphasis_start` and ``end`` is the current word
+        count. Single-word runs (``*really*``) record one index; multi-word
+        runs (``*see you*``) record two.
+
+        Defensive: if no run is open (``_emphasis_open_offset is None`` —
+        possible only if a sentence terminator inside the run already
+        emitted the segment and reset state, which the prompt forbids), skip
+        silently rather than record a stale/negative index.
+        """
+        if self._emphasis_open_offset is None:
+            log.debug("emphasis.end_without_open")
+            return
+        start = self._emphasis_open_offset
+        end = len(self._buffer.split())
+        self._emphasis_indices.extend(range(start, end))
+        self._emphasis_open_offset = None
+
     def _handle_vocalization(self, name: str) -> Iterator[Segment]:
         """Resolve the vocalization, attach to current segment, decide TTS text.
 
@@ -289,6 +351,7 @@ class Segmenter:
             text=self._buffer,
             speech_emotion_payload=emotion,
             vocalization_payloads=list(self._pending_vocalizations),
+            emphasis_word_indices=list(self._emphasis_indices),
         )
 
     def _reset_segment_state(self) -> None:
@@ -300,6 +363,13 @@ class Segmenter:
         payload on every subsequent segment within the same emotion's
         span (the segmenter reports the change once; subsequent
         segments carry ``None`` and the cache handles dedup).
+
+        Story 6.3 — emphasis indices are per-segment, so they clear here.
+        An open emphasis run that straddles a segment boundary (forbidden
+        by the prompt — emphasising across a sentence terminator) loses its
+        start offset; :meth:`_handle_emphasis_end` skips it defensively.
         """
         self._buffer = ""
         self._pending_vocalizations = []
+        self._emphasis_indices = []
+        self._emphasis_open_offset = None

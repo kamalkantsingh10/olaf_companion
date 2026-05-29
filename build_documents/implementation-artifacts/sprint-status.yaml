@@ -1,5 +1,14 @@
 # generated: 2026-05-05
 # last_updated: 2026-05-29
+# 2026-05-29: Story 6-3 -> review (dev-story / Amelia). Emphasis as
+#             the 7th vocalization tag: Talker `*word*` marks ->
+#             splitter char-by-char parse (EmphasisStart/End sentinels)
+#             -> Segment.emphasis_word_indices -> runtime join x
+#             Story-6.1 SegmentTiming -> vocalization(tag="emphasis",
+#             audio_frame_id="seg-N-w-<ms>"). expression_map.yaml
+#             vocab 6->7; tag stays open str (NOT a Literal — YAML is
+#             the gate); schema_version=3 unchanged. Closes DR-002 +
+#             DR-004 wire side.
 # 2026-05-29: Story 6-2 -> review (dev-story / Amelia). Cached
 #             function-bucketed opener system (5 buckets) + LLM
 #             <opener bucket=".."/> tag + timer fallback; retired
@@ -81,7 +90,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-29  # Story 6-2 -> review (dev-story / Amelia)
+last_updated: 2026-05-29  # Story 6-3 -> review (dev-story / Amelia)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -203,7 +212,7 @@ development_status:
   epic-6: in-progress
   6-1-cartesia-websocket-and-ttfb-spike: review
   6-2-cached-opener-system-and-cartesia-overlap: review
-  6-3-emphasis-vocalization-wiring: ready-for-dev
+  6-3-emphasis-vocalization-wiring: review
   6-4-instrumentation-soak-embodiment-brief: ready-for-dev
   epic-6-retrospective: optional
 

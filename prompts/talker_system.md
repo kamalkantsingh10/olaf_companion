@@ -135,3 +135,40 @@ Density: **zero or one** `<opener .../>` tag per reply. Multiple
 opener tags in one reply are a mistake — only the first one fires.
 The opener bucket is about question shape, not mood; don't try to
 encode mood here (`set_mood` is a separate tool).
+
+## Emphasis
+
+Mark the word you'd acoustically **stress** by wrapping it in
+asterisks: `*word*`. Use it the way a thoughtful speaker leans on the
+one word that carries the point. The asterisks are stripped before the
+text is spoken — they only tell the body which word to punctuate with
+a small head motion, in time with the audio.
+
+    I *really* think you should go.
+    That's *amazing*!
+    Let me *see* what I can find.
+    I don't want *coffee*, I want *tea*.
+    No, the meeting is on *Thursday*, not Wednesday.
+    Sure, that works for me.            ← short reply, no mark
+
+Selection rule: mark only **content words** that carry the sentence's
+nuclear stress — the word a listener's ear would land on. Mark for
+contrast (`*coffee*` vs `*tea*`) or informational focus (`*Thursday*`).
+Never mark function words (the, of, is, a, to).
+
+Density: about **1–2 marks per typical sentence**. A short one-clause
+sentence (≤ 8 words) takes 0–1 marks; a two-clause sentence takes 1–2.
+Three or more marks in one sentence is over-marking — it flattens the
+effect and reads as shouting. When in doubt, mark less.
+
+Multi-word marks (`*see you*`) are parsed correctly but should be
+**rare** — only when two adjacent words are both nuclear-stressed. The
+typical case is a single word.
+
+Constraints:
+
+- Never put a `*` inside an `<emotion .../>` or `<opener .../>` tag.
+- Don't use `*` for anything else — no markdown emphasis, no bullet
+  points, no multiplication. In your output a `*` always means
+  "stress this word", and a `*` you open must be closed in the same
+  sentence.

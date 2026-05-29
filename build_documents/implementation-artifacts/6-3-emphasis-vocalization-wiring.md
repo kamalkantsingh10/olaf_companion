@@ -1,6 +1,6 @@
 # Story 6.3: Emphasis as the 7th vocalization tag (Talker marks + splitter join + wire)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -105,57 +105,57 @@ so that the body has the audio-anchored emphasis cue DR-002 needs for the layere
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: YAML vocabulary update** (AC: #1)
-  - [ ] Edit `expression_map.yaml` — add `emphasis: { tts_supported: false }` after `shake`
-  - [ ] Update the YAML's comment block (lines ~82-86) to mention the `nod` / `shake` / `emphasis` gesture-cue trio
-  - [ ] Verify `config/expression_map.py`'s loader accepts the new entry — extend any completeness check (if present) to require `emphasis`
-  - [ ] No manifest schema bump (`audio/cached.py:_MANIFEST_SCHEMA_VERSION` stays at the value Story 6.2 set)
+- [x] **Task 1: YAML vocabulary update** (AC: #1)
+  - [x] Edit `expression_map.yaml` — add `emphasis: { tts_supported: false }` after `shake`
+  - [x] Update the YAML's comment block (lines ~82-86) to mention the `nod` / `shake` / `emphasis` gesture-cue trio
+  - [x] Verify `config/expression_map.py`'s loader accepts the new entry — extend any completeness check (if present) to require `emphasis`
+  - [x] No manifest schema bump (`audio/cached.py:_MANIFEST_SCHEMA_VERSION` stays at the value Story 6.2 set)
 
-- [ ] **Task 2: Talker prompt — `*word*` emphasis syntax** (AC: #2)
-  - [ ] Open `prompts/talker_system.md`
-  - [ ] Add the emphasis section per AC #2 — place it near the existing `<emotion value="..."/>` teaching (consistent placement aids LLM learning)
-  - [ ] Include 5–8 worked examples (single mark, multi-word, no mark for short replies, contrastive stress, no-`*`-in-tags constraint)
-  - [ ] Cross-test by manually invoking the Talker with 5–10 varied user inputs; expect ~1–2 marks per typical sentence with density at the conservative end of the band
+- [x] **Task 2: Talker prompt — `*word*` emphasis syntax** (AC: #2)
+  - [x] Open `prompts/talker_system.md`
+  - [x] Add the emphasis section per AC #2 — place it near the existing `<emotion value="..."/>` teaching (consistent placement aids LLM learning)
+  - [x] Include 5–8 worked examples (single mark, multi-word, no mark for short replies, contrastive stress, no-`*`-in-tags constraint)
+  - [x] Cross-test by manually invoking the Talker with 5–10 varied user inputs; expect ~1–2 marks per typical sentence with density at the conservative end of the band
 
-- [ ] **Task 3: Splitter state machine — parse `*word*`** (AC: #3)
-  - [ ] Add `MAYBE_EMPHASIS_OPEN` and `IN_EMPHASIS_RUN` states to the `_State` Literal
-  - [ ] Add `EmphasisStartEvent` and `EmphasisEndEvent` dataclasses to the ParseEvent union
-  - [ ] Implement the `*` confirmation heuristic (next non-`*` char is letter or digit → confirm; else fall back to literal text)
-  - [ ] Handle cross-stream split (`*` at end of one chunk, letter at start of next)
-  - [ ] Raise `SplitterError` on mid-run flush
-  - [ ] Unit tests per AC #7
+- [x] **Task 3: Splitter state machine — parse `*word*`** (AC: #3)
+  - [x] Add `MAYBE_EMPHASIS_OPEN` and `IN_EMPHASIS_RUN` states to the `_State` Literal
+  - [x] Add `EmphasisStartEvent` and `EmphasisEndEvent` dataclasses to the ParseEvent union
+  - [x] Implement the `*` confirmation heuristic (next non-`*` char is letter or digit → confirm; else fall back to literal text)
+  - [x] Handle cross-stream split (`*` at end of one chunk, letter at start of next)
+  - [x] Raise `SplitterError` on mid-run flush
+  - [x] Unit tests per AC #7
 
-- [ ] **Task 4: Splitter segmenter — record marked-word indices** (AC: #4)
-  - [ ] Add `emphasis_word_indices: list[int]` field to the `Segment` pydantic model (with `Field(default_factory=list)`)
-  - [ ] Track emphasis state in the `Segmenter` (a counter or a flag + range-recording approach)
-  - [ ] On `EmphasisStartEvent`: record the current word offset
-  - [ ] On `EmphasisEndEvent`: extend `Segment.emphasis_word_indices` with `range(start, end)`
-  - [ ] Reset emphasis state at segment boundaries (each `Segment` carries only its own emphasis indices)
-  - [ ] Unit tests per AC #7
+- [x] **Task 4: Splitter segmenter — record marked-word indices** (AC: #4)
+  - [x] Add `emphasis_word_indices: list[int]` field to the `Segment` pydantic model (with `Field(default_factory=list)`)
+  - [x] Track emphasis state in the `Segmenter` (a counter or a flag + range-recording approach)
+  - [x] On `EmphasisStartEvent`: record the current word offset
+  - [x] On `EmphasisEndEvent`: extend `Segment.emphasis_word_indices` with `range(start, end)`
+  - [x] Reset emphasis state at segment boundaries (each `Segment` carries only its own emphasis indices)
+  - [x] Unit tests per AC #7
 
-- [ ] **Task 5: Runtime — emphasis event publication** (AC: #5, #6)
-  - [ ] In `sequential_loop.py` (or the post-Epic-6 successor): after each segment's `_speak_segment(...)` finishes, retrieve the `SegmentTiming` from the Cartesia client (`tts.last_segment_timing()` — Story 6.1's API)
-  - [ ] For each index in `segment.emphasis_word_indices`:
+- [x] **Task 5: Runtime — emphasis event publication** (AC: #5, #6)
+  - [x] In `sequential_loop.py` (or the post-Epic-6 successor): after each segment's `_speak_segment(...)` finishes, retrieve the `SegmentTiming` from the Cartesia client (`tts.last_segment_timing()` — Story 6.1's API)
+  - [x] For each index in `segment.emphasis_word_indices`:
     - Look up `timing.words[index].start_ms`
     - Compute the `audio_frame_id` using the existing Story 3.7 audio-frame-metadata semantics (read the existing `vocalization` event publish call site to mirror its convention)
     - Call `event_publisher.publish_vocalization(VocalizationPayload(tag="emphasis", audio_frame_id=<frame_id>, tts_supported=False))`
-  - [ ] Defensive: if `timing` is `None` (e.g., SSE fallback transport — Story 6.1's `[tts] transport = "sse"` knob), skip the emphasis publish for that segment and log `emphasis.no_timing` DEBUG
-  - [ ] Defensive: if `index >= len(timing.words)`, log `emphasis.index_mismatch` WARN and skip that emphasis event (do not raise)
+  - [x] Defensive: if `timing` is `None` (e.g., SSE fallback transport — Story 6.1's `[tts] transport = "sse"` knob), skip the emphasis publish for that segment and log `emphasis.no_timing` DEBUG
+  - [x] Defensive: if `index >= len(timing.words)`, log `emphasis.index_mismatch` WARN and skip that emphasis event (do not raise)
 
-- [ ] **Task 6: Tests** (AC: #7)
-  - [ ] State-machine tests: single mark, multi-word run, math-context `*`, cross-stream split, mid-run flush raises
-  - [ ] Segmenter tests: word-index correctness across the four fixtures in AC #7
-  - [ ] Runtime test: the join logic in isolation (mocked Cartesia client + event publisher)
-  - [ ] Contract test: YAML loader accepts `emphasis` as a valid vocalization tag
-  - [ ] Integration test: full pipeline → exactly N publish_vocalization calls for N marks; correct audio_frame_id for each
-  - [ ] Run the full `tests/unit/splitter/` suite — make sure the existing emotion / vocalization parsing still passes (regression check)
+- [x] **Task 6: Tests** (AC: #7)
+  - [x] State-machine tests: single mark, multi-word run, math-context `*`, cross-stream split, mid-run flush raises
+  - [x] Segmenter tests: word-index correctness across the four fixtures in AC #7
+  - [x] Runtime test: the join logic in isolation (mocked Cartesia client + event publisher)
+  - [x] Contract test: YAML loader accepts `emphasis` as a valid vocalization tag
+  - [x] Integration test: full pipeline → exactly N publish_vocalization calls for N marks; correct audio_frame_id for each
+  - [x] Run the full `tests/unit/splitter/` suite — make sure the existing emotion / vocalization parsing still passes (regression check)
 
-- [ ] **Task 7: Docs + commit** (AC: #8, #9)
-  - [ ] `build_documents/planning-artifacts/architecture.md` — verify v2-item-22 footnote accuracy
-  - [ ] `build_documents/planning-artifacts/decision-records.md` — append "Implementation landed by:" lines under DR-002 and DR-004
-  - [ ] `build_documents/planning-artifacts/olaf-embodiment-brief.md` — verify the v2 head-motion realizer section and Appendix A.7 row still match the as-built shape (Story 6.4 owns the formal review)
-  - [ ] `just check` green: ruff (lint + format), pyright (0 errors), `pytest tests/unit -q` (no regressions)
-  - [ ] Single commit per `feedback_commit_policy.md`; push to origin per `feedback_push_after_commit.md`
+- [x] **Task 7: Docs + commit** (AC: #8, #9)
+  - [x] `build_documents/planning-artifacts/architecture.md` — verify v2-item-22 footnote accuracy
+  - [x] `build_documents/planning-artifacts/decision-records.md` — append "Implementation landed by:" lines under DR-002 and DR-004
+  - [x] `build_documents/planning-artifacts/olaf-embodiment-brief.md` — verify the v2 head-motion realizer section and Appendix A.7 row still match the as-built shape (Story 6.4 owns the formal review)
+  - [x] `just check` green: ruff (lint + format), pyright (0 errors), `pytest tests/unit -q` (no regressions)
+  - [x] Single commit per `feedback_commit_policy.md`; push to origin per `feedback_push_after_commit.md`
 
 ## Dev Notes
 
@@ -245,10 +245,94 @@ so that the body has the audio-anchored emphasis cue DR-002 needs for the layere
 
 ### Agent Model Used
 
-(populated by dev agent)
+claude-opus-4-8 (1M context) — bmad-dev-story workflow.
 
 ### Debug Log References
 
+- **pyright `reportUnknownVariableType`** on `Segment.emphasis_word_indices:
+  list[int] = Field(default_factory=list)` — `list` as a bare factory infers
+  `list[Unknown]`. Fixed with the typed factory `Field(default_factory=list[int])`.
+- The pre-existing `_handle_vocalization` generator-placeholder (`return` then
+  `yield  # pragma: no cover`) shows as "structurally unreachable" in the IDE's
+  pyright but passes `just check` (same as before this story) — left untouched.
+
 ### Completion Notes List
 
+- **Parser shape (AC #3).** Two new state-machine states —
+  `MAYBE_EMPHASIS_OPEN` (one-char lookahead after a `*` in TEXT) and
+  `IN_EMPHASIS_RUN` (accumulating the run body) — plus two sentinel events,
+  `EmphasisStartEvent` / `EmphasisEndEvent`. Confirmation heuristic: a `*`
+  opens a run iff the next char `isalnum()`; otherwise it's literal text
+  (handles `2 * 3`, stray `**`, trailing lone `*`). The run body is emitted as
+  a single bare `TextEvent` between the sentinels (markers stripped), so the
+  segmenter folds the marked words into segment text exactly like surrounding
+  text. Cross-stream split safety: the `*`-then-letter boundary survives a
+  `consume()` split because the state persists. Mid-run `flush()` raises
+  `SplitterError("emphasis run not closed")` (fail-fast); a trailing lone `*`
+  at flush is treated as literal text (does NOT raise).
+- **Index recording (AC #4).** `Segment.emphasis_word_indices: list[int]`. The
+  segmenter records the word offset (`len(buffer.split())`) at
+  `EmphasisStartEvent` and extends with `range(start, end)` at
+  `EmphasisEndEvent` — robust to leading/trailing whitespace and to an
+  `<emotion .../>` / `<opener .../>` tag stripped before the run (the tag never
+  enters the buffer, so indices align with Cartesia's whitespace split of the
+  same TTS-ready text). Per-segment; reset at every boundary.
+- **Runtime join (AC #5).** `_publish_emphasis_events` in `sequential_loop.py`
+  runs AFTER each segment's `synthesize` generator drains (the only point
+  `last_segment_timing()` is reliably populated). For each marked index it
+  looks up `timing.words[index].start_ms` and publishes
+  `vocalization(tag="emphasis", audio_frame_id="seg-<N>-w-<start_ms>",
+  tts_supported=False)`. Defensive branches: `timing is None` (SSE transport)
+  → `emphasis.no_timing` DEBUG + skip segment; `index >= len(words)` →
+  `emphasis.index_mismatch` WARN + skip that index (never raises). `seg_index`
+  is a monotonic per-turn counter over SPOKEN segments only.
+- **Wire stayed at `schema_version=3` (AC #1, DR-004).** Emphasis is an
+  additive `expression_map.yaml` vocabulary entry (`emphasis:
+  { tts_supported: false }`); `VocalizationPayload.tag` stays an open `str` —
+  **deliberately NOT** tightened to the `VocalizationTag = Literal[...]` that
+  DR-004's frozen design sketched (open-set is the topic's principle, and
+  tightening would break pre-Epic-6 consumers). This drift from the frozen DR
+  is recorded as an "Implementation landed by:" annotation under both DR-004
+  and DR-002 per NFR26, and amended in architecture.md §v2-item-22 + the v2
+  delta table.
+- **NFR5 anticipatory window (AC #6) — partial.** The emphasis publish fires
+  post-synth-drain (per AC #5's concrete instruction), so the pipeline does
+  not itself guarantee a 30–80 ms wall-clock lead the way `speech_emotion`'s
+  publish-before-synth does. The producer/consumer split (DR-002) resolves
+  this: the `audio_frame_id` carries the carrier word's `start_ms` anchor, and
+  the body schedules its head-beat with its own anticipation lead relative to
+  that anchor. Formal NFR5 measurement for `emphasis` is deferred to Story
+  6.4's soak (consistent with this story's Risks section + the brief's "Story
+  6.4 owns the formal review").
+- **embodiment-brief verification (AC #8).** Appendix A.7 already types `tag`
+  as open `str` and documents `emphasis` as the 7th gesture-cue with the
+  `audio_frame_id` NFR5 anchor — matches the as-built. The brief's "additive
+  Literal extension" phrasing is a minor wording nit (the as-built keeps `str`)
+  that Story 6.4 reconciles in its formal amendment review; not edited here.
+- **`just check` green** at landing: 575 passed; ruff + ruff-format + pyright
+  clean. 71 emphasis-specific test cases (state machine, segmenter, runtime
+  join, contract, integration).
+
 ### File List
+
+**New:**
+- `tests/unit/audio/test_emphasis_publish.py` — `_publish_emphasis_events` join in isolation
+- `tests/integration/test_emphasis_event.py` — full `_stream_and_speak` path with scripted Cartesia timing
+
+**Modified:**
+- `expression_map.yaml` — `emphasis: { tts_supported: false }` (vocab 6 → 7) + comment block
+- `src/voice_agent_pipeline/splitter/state_machine.py` — `MAYBE_EMPHASIS_OPEN` / `IN_EMPHASIS_RUN` states, `EmphasisStartEvent` / `EmphasisEndEvent`, parse + flush handling
+- `src/voice_agent_pipeline/splitter/segmenter.py` — `Segment.emphasis_word_indices` field + emphasis state tracking
+- `src/voice_agent_pipeline/sequential_loop.py` — `_publish_emphasis_events` + per-turn spoken-segment counter + post-synth join
+- `prompts/talker_system.md` — `## Emphasis` section + worked examples
+- `build_documents/planning-artifacts/architecture.md` — §v2 item #22 + v2 delta table marked ✅ landed; `tag`-stays-`str` correction
+- `build_documents/planning-artifacts/decision-records.md` — "Implementation landed by:" annotations under DR-004 + DR-002
+- `build_documents/implementation-artifacts/sprint-status.yaml` — 6-3 → review
+- `tests/unit/splitter/test_state_machine.py`, `tests/unit/splitter/test_segmenter.py` — emphasis cases
+- `tests/contract/test_vocalization_event_schema.py` — emphasis round-trip + production-map vocabulary checks
+
+### Change Log
+
+| Date | Change |
+|---|---|
+| 2026-05-29 | Story 6.3 implemented. Emphasis as the 7th vocalization tag: Talker `*word*` marks → splitter char-by-char parse (`EmphasisStart`/`EmphasisEnd` sentinels) → `Segment.emphasis_word_indices` → runtime join × Story-6.1 `SegmentTiming` → `vocalization(tag="emphasis", audio_frame_id="seg-N-w-<start_ms>")`. `expression_map.yaml` vocab 6 → 7; wire `tag` stays open `str` (NOT tightened to a Literal — recorded as a deviation from DR-004's frozen sketch per NFR26); `schema_version=3` unchanged. Closes DR-002 + DR-004 wire side. Status → review. |

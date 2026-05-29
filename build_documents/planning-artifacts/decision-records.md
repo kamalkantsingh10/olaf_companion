@@ -167,6 +167,23 @@ VocalizationTag = Literal[
   topology change), `2 → 3` (sprint-change-proposal-2026-05-10 boundary repair).
   This DR is additive (forward-compat per CLAUDE.md rule 6), no `3 → 4`.
 
+**Implementation landed by:** Story 6.3
+(`6-3-emphasis-vocalization-wiring`) on 2026-05-29. As-built deltas from the
+frozen design above, recorded per NFR26 (the DR is immutable; this annotation
+is the sanctioned channel): (1) the wire model's `VocalizationPayload.tag`
+stays an **open `str`**, NOT tightened to the `VocalizationTag = Literal[...]`
+shown in §"Decision (frozen)" — `expression_map.yaml` is the vocabulary gate,
+and tightening to a Literal would be a breaking change for any pre-Epic-6
+consumer (open-set is the topic's principle). (2) Emphasis syntax resolved to
+`*word*` (Open question #1). (3) The splitter join lives in the runtime
+(`sequential_loop.py:_publish_emphasis_events`), not `segmenter.py` — the
+segmenter records `Segment.emphasis_word_indices`; the runtime joins them ×
+`SegmentTiming` after each segment's synth drains, since per-word timing is
+only reliably available post-drain. `audio_frame_id` shape:
+`seg-<N>-w-<start_ms>`. NFR5 anticipatory-window verification for `emphasis`
+deferred to Story 6.4 soak (the body anchors its lead to the `audio_frame_id`
+offset; the pipeline ships the anchor, not the motion).
+
 ### Open questions
 
 - **Emphasis-mark syntax** (final form — `*word*` vs `<em>word</em>` vs custom).
@@ -510,6 +527,17 @@ workload.
   `olaf-embodiment-brief.md`.
 - Keep heavy neural talking-head models out of scope (wrong shape for a few-DOF
   physical head).
+
+**Implementation landed by:** the pipeline (producer) half landed across
+Story 6.1 (`tts/cartesia.py` WS migration + `SegmentTiming` capture) and
+Story 6.3 (`6-3-emphasis-vocalization-wiring`, 2026-05-29 — the Talker
+emphasis-mark teaching, the splitter parse + per-segment marked-word index
+recording, and the runtime timestamp join emitting
+`vocalization(tag="emphasis", audio_frame_id="seg-N-w-<start_ms>")`). The wire
+shape is DR-004's resolution (a 7th vocalization tag, no new topic / payload
+field / `schema_version` bump). The body-side layered head realizer
+(olaf-embodiment) remains the consumer half — out of this repo's scope per the
+producer/consumer split.
 
 ### Open questions
 
