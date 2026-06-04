@@ -234,7 +234,14 @@ model = "gemini-2.5-flash"
 # per-segment from the streaming SSML splitter. model = "sonic-3" is
 # Cartesia's flagship low-latency voice model (~200-400 ms TTFB target).
 [tts]
-# Cartesia voice (swapped 2026-05-31 to bb50f853). Browse
+# Story 6.5 (2026-06-04): flipped to Gemini TTS. provider="gemini" routes
+# all synthesis through GeminiClient (Live API, gemini-3.1-flash-live-preview,
+# verbatim system_instruction) + GEMINI_API_KEY + the [tts.gemini] block
+# below. The TTFB gate PASSED (cold p50 836 ms). Flip back to "cartesia" to
+# use the Cartesia fields (voice_id/model/speed/transport) — both providers
+# stay wired. Changing provider/voice requires `just regenerate-audio`.
+provider = "gemini"
+# Cartesia voice (consumed only when provider = "cartesia"). Browse
 # https://play.cartesia.ai/voices to swap again.
 # Story 5.5 note: changing voice_id requires `just regenerate-audio`
 # to re-render the cached greetings / goodbyes / clarifications /
@@ -258,6 +265,12 @@ speed = 1.0
 # soak. The field (and the SSE branch) will be removed in a follow-up
 # once the WS path is settled.
 # transport = "websocket"
+
+# Story 6.5: Gemini TTS sub-block (consumed only when provider = "gemini").
+# Defaults already select "Fenrir" + the Ooppi persona style_prompt, so this
+# block is optional; declared for visibility and easy voice override.
+[tts.gemini]
+voice_name = "Fenrir"
 
 # Story 3.5: four-topic event publisher. `adapter = "ros2"` for
 # production; `adapter = "log"` for local dev without a ROS 2 stack

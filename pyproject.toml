@@ -20,6 +20,7 @@ dependencies = [
     "structlog>=25.5.0",
     "websockets>=16.0",
     "pyyaml>=6.0.2",
+    "google-genai>=2.7.0",
 ]
 
 [build-system]

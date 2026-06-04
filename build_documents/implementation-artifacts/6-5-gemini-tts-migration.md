@@ -46,39 +46,52 @@ These were decided with the user before authoring. Do **not** relitigate them mi
 
 > Test-first throughout (red → green → refactor). Mock **only** at Protocol/SDK boundaries (CLAUDE.md rule 7) — mock the `genai` Live session, never internal functions or pydantic models. Run `just check` before the commit (rule 1).
 
-- [ ] **Task 1 — Config: provider knob + Gemini sub-block (AC1, AC9, AC11)**
-  - [ ] Add `provider: Literal["cartesia", "gemini"]` to `TtsConfig` (`config/setup.py:~359-420`).
-  - [ ] Add `_GeminiTtsSection(BaseModel, extra="forbid")`: `voice_name: str` (e.g. `"Kore"`), `live_model: str = "gemini-2.5-flash-live-preview"`, `batch_model: str = "gemini-2.5-flash-preview-tts"`, optional `style_prompt: str = ""`. Mount as `gemini: _GeminiTtsSection = Field(default_factory=...)`.
-  - [ ] Add `effective_voice_id()` / `effective_model()` methods returning the active provider's identifiers (Cartesia `voice_id`/`model` vs Gemini `voice_name`/`batch_model`).
-  - [ ] Confirm `gemini_api_key` already exists on the top-level config (`config/setup.py:886`) — reuse it; the Live API uses the same Google AI Studio `GEMINI_API_KEY`.
-  - [ ] Tests: parse a `provider="gemini"` TOML; `extra="forbid"` rejects typos; `effective_*` returns the right pair per provider.
+- [x] **Task 1 — Config: provider knob + Gemini sub-block (AC1, AC9, AC11)** ✅ 2026-06-04
+  - [x] Add `provider: Literal["cartesia", "gemini"]` to `TtsConfig` (default `"cartesia"` for back-compat).
+  - [x] Add `_GeminiTtsSection(BaseModel, extra="forbid")`: `voice_name="Fenrir"`, `live_model`, `batch_model`, `style_prompt` (Ooppi persona). Mounted via `default_factory`.
+  - [x] Add `effective_voice_id()` / `effective_model()` methods returning the active provider's identifiers.
+  - [x] Confirmed `gemini_api_key` already exists on the top-level config (`config/setup.py:886`).
+  - [x] Tests (5 added, 1 dropped as redundant): provider defaults to cartesia; Gemini defaults to Fenrir+persona; voice_name override; `extra="forbid"` rejects typos; `effective_*` follow provider.
+  - **Scope note → Task 4:** `voice_id` kept field-required here to keep Task 1 atomic + `just check` green (relaxing it to `str | None` cascaded 9 pyright errors at Cartesia call sites in `cached.py`/`regenerate.py`/`cartesia.py`/`ttfb_spike.py`). Defer `voice_id`→optional **and** `cartesia_api_key`→optional **and** routing those call sites through `effective_*()` into **Task 4** (factory + per-provider enforcement) — they form one coherent change.
 
-- [ ] **Task 2 — Gemini Live TTFB spike + GATE (AC3)** ⛔ *blocks Tasks 3-9*
-  - [ ] Extend `tts/ttfb_spike.py` (or add a sibling) to drive the Gemini Live API over the same 500-sample stratified protocol; capture first-PCM-chunk arrival as TTFB.
-  - [ ] Write `6-5-gemini-ttfb-spike-report.md`: median/p25/p75/p90/**p95**, cold vs warm, PASS/FAIL vs the 400 ms NFR4 gate and the Cartesia baseline.
-  - [ ] **STOP if FAIL.** Surface the report to the user for a provider re-decision; do not start Task 3.
+- [x] **Task 2 — Gemini Live TTFB spike + GATE (AC3) — ✅ PASS (2026-06-04)**
+  - [x] Built `tts/gemini_ttfb_spike.py` (sibling to the Cartesia spike, no edit to it) driving the Live API cold (fresh session/turn) + warm (reused session) over the shared transcript pool; first-audio-chunk arrival = TTFB. Extracted shared helpers to `tts/ttfb_common.py`. `just gemini-ttfb-spike` recipe + 8 offline unit tests.
+  - [x] Report writer (`6-5-gemini-ttfb-spike-report.md`): cold/warm percentiles + PASS / CONDITIONAL / FAIL / INCONCLUSIVE verdicts.
+  - [x] **Investigation findings (load-bearing for Task 3):**
+    - Live model is **`gemini-3.1-flash-live-preview`** (the `*-live-preview` guess and `*-native-audio-*` were slower/wrong; verified via `models.list` `supportedGenerationMethods=bidiGenerateContent`).
+    - Live models are conversational by default; a **verbatim `system_instruction`** makes them narrate the input exactly (measured: spoken == sent). The persona/style MUST ride in `system_instruction`, **not** prepended to each turn — prepending blew TTFB to ~5 s.
+    - Gemini Live output is **24 kHz** (resample to 16 k in Task 3).
+  - [x] **Gate RE-BASELINED (with Kamal):** NFR4's literal "≤400 ms p95" is stricter than Cartesia's *real* production TTFB (~1067 ms p50, DR-001 SSE; the 230 ms was a warm-WS best case). Gate → **cold p50 ≤ 1100 ms** ("no perceived-latency regression"); spec reconciliation deferred to Task 8.
+  - [x] **VERDICT — PASS.** 50 cold samples on `gemini-3.1-flash-live-preview` + verbatim system_instruction: **cold p50 = 836 ms** (p25 761, p75 978, p90 1735, p95 1958), warm p50 742 ms. 836 ≤ 1100 and beats Cartesia production p50; openers mask the cold tail. Tasks 3–9 unblocked.
+  - **Cost decision (with Kamal):** runtime uses the **cold path (fresh session per turn)** — Live billing is per-token not per-connection, and reusing a session accumulates conversation-context input tokens (cost creep + verbatim-correctness risk). Cold = cheapest + stateless + already passes. No session pooling in v1.
 
-- [ ] **Task 3 — `GeminiClient` (Live API + resample + approx timing) (AC4, AC5, AC6, AC7, AC8)**
-  - [ ] `tts/gemini.py`: `GeminiClient.__init__(config: TtsConfig, api_key: SecretStr)` (same shape as `CartesiaClient.__init__`, `cartesia.py:204`); build `genai.Client(api_key=...)`.
-  - [ ] `synthesize(text)`: open Live session, send text (+ style prefix from AC7), `async for response in session.receive()` → yield resampled 16 kHz PCM chunks; accumulate total bytes + word list for the approximate `SegmentTiming`.
-  - [ ] 24k→16k resampler with cross-chunk partial-frame carry (AC5).
-  - [ ] `last_segment_timing() -> SegmentTiming | None`: return the even-distribution approximation (AC8); reset to `None` at each `synthesize()` entry (mirror `cartesia.py:347`).
-  - [ ] `GeminiTtsError(ExternalServiceError)` in `errors.py`; wrap Live-API/SDK exceptions; never catch downstream.
-  - [ ] Tests: mock the `genai` Live session to yield two 24 kHz chunks → assert resampled 16 kHz bytes, incremental yield (first chunk before stream end), approximate `SegmentTiming` word count == word count, and that a session error surfaces as `GeminiTtsError`.
+- [x] **Task 3 — `GeminiClient` (Live API + resample + approx timing) (AC4, AC5, AC6, AC7, AC8) — ✅ 2026-06-04**
+  - [x] `tts/gemini.py`: `GeminiClient(config, api_key)` (same shape as `CartesiaClient`); `genai.Client(api_key=...)`; Live config built once.
+  - [x] `synthesize(text)`: fresh Live session per call (cold), `send_client_content(turn_complete=True)`, `async for ... receive()` → yield resampled 16 kHz chunks. Persona in `system_instruction` (verbatim narration), raw transcript per turn (AC7).
+  - [x] 24k→16k resampler via `audioop.ratecv` with threaded state across chunks (AC5).
+  - [x] `last_segment_timing()` → even-distribution approximate `SegmentTiming` (AC8); reset to `None` at each `synthesize()` entry.
+  - [x] `GeminiTtsError(ExternalServiceError)` in `errors.py`; wraps `genai.errors.APIError`; never caught downstream (AC6).
+  - [x] Tests (`tests/unit/tts/test_gemini.py`, 12): resample 24→16k + incremental yield, approximate timing word-count, `None`-before-first-call, `GeminiTtsError` wrapping, + 8 response-helper tests. `just check` green (598 unit).
+  - **Refactors:** extracted `Word`/`SegmentTiming` → `tts/timing.py` (so `gemini.py` doesn't import from `cartesia.py`; cartesia.py imports from timing now). The canonical Live helpers (`first_audio_bytes`/`is_turn_complete`/`content_turn`/`build_live_config`/`VERBATIM_INSTRUCTION`) live in `gemini.py`; the spike imports them (single source of truth — the gate measured exactly the runtime code).
 
-- [ ] **Task 4 — TTS factory + wire the 3 sites (AC2)**
-  - [ ] `build_tts_client(config)` in `tts/__init__.py`; raise the standard missing-key startup error if `provider="gemini"` and `gemini_api_key is None` (mirror `turn/__init__.py:73-83`).
-  - [ ] Replace literals at `sequential_loop.py:177`, `pipeline.py:1185`, `regenerate.py:354`. (`pipeline.py` is dormant per project memory — update for consistency, don't deepen it.)
-  - [ ] Tests: factory returns the right class per provider; missing-key path raises the startup error.
+- [x] **Task 4 — TTS factory + provider-agnostic config + wire the sites (AC2) — ✅ 2026-06-04**
+  - [x] `build_tts_client(config)` in `tts/__init__.py`; raises `ConfigError(missing_env_var=...)` when the active provider's key is absent (mirrors `build_talker`).
+  - [x] Wired `sequential_loop.py:177`, `pipeline.py:1185`, `regenerate.py:354` to the factory. `tts:` annotations widened `CartesiaClient`→`TTSClient`.
+  - [x] Added `last_segment_timing` to the `TTSClient` Protocol (so the factory's `TTSClient` return type satisfies the emphasis join).
+  - [x] **Deferred relaxation landed here:** `voice_id`→optional + `cartesia_api_key`→optional + provider-aware validator; routed `cartesia.py`/`cached.py`/`regenerate.py`/`ttfb_spike.py` reads through `effective_voice_id()`/`effective_model()`.
+  - [x] Tests: 4 factory tests (cartesia/gemini × present/missing-key) + repurposed the cartesia-key-required test to "optional at load time". `just check` green (602).
+  - **Deferred to Task 6:** `__main__`'s startup TTS probe is still Cartesia-only; it becomes provider-aware alongside the `setup.toml` flip to Gemini (both need the live machine).
 
-- [ ] **Task 5 — Emphasis approximate-timing verification (AC8)**
-  - [ ] Confirm `_publish_emphasis_events` (`sequential_loop.py:812`) fires for `provider="gemini"` using the approximate `SegmentTiming` (no code change expected there; the approximation lives in `GeminiClient`).
-  - [ ] Test: a 2-marked-word segment under Gemini publishes 2 `vocalization(tag="emphasis")` events with plausible `audio_frame_id`s within the segment duration.
+- [x] **Task 5 — Emphasis approximate-timing verification (AC8) — ✅ 2026-06-04**
+  - [x] `_publish_emphasis_events` is now provider-agnostic (`tts: TTSClient`) and fires unchanged for Gemini's approximate `SegmentTiming`.
+  - [x] Test (`tests/integration/test_emphasis_event.py::test_gemini_emphasis_fires_with_approximate_timing`): a 4-word segment with `emphasis_word_indices=[0,2]` under a mocked-Live `GeminiClient` publishes exactly 2 `vocalization(tag="emphasis")` events with `seg-3-w-*` anchors. Passes alongside the Cartesia emphasis test.
 
-- [ ] **Task 6 — Offline render + cached re-render + probe (AC9)**
-  - [ ] Route `regenerate.py` through the factory; have it + `cached.py` hashing use `effective_voice_id()`/`effective_model()`.
-  - [ ] Run `just regenerate-audio` with `provider="gemini"`; commit the re-rendered `assets/audio/*.wav` + updated `manifest.json` (Gemini voice/model identity).
-  - [ ] Verify `__main__.py:201` Stage-3 probe passes on the fresh cache and still fails on a deliberate voice mismatch.
+- [x] **Task 6 — Flip + cached re-render + probe (AC9) — ✅ 2026-06-04**
+  - [x] `setup.toml` flipped to `provider = "gemini"` + `[tts.gemini] voice_name = "Fenrir"` (Cartesia fields retained). `regenerate.py`/`cached.py` route through `effective_*()`; `regenerate.py` now catches the provider-agnostic `ExternalServiceError` (was `CartesiaError`).
+  - [x] `just regenerate-audio --force` re-rendered all **156** cached phrases via Gemini Live in Fenrir (0 failures), pruned the 156 Cartesia entries. WAVs verified **16 kHz mono 16-bit** (resampled from 24k). Manifest identity = `Fenrir` / `gemini-3.1-flash-live-preview`.
+  - [x] Stage-3 `audio_assets` probe **PASS** on the fresh cache (identity matches config). `__main__` TTS credential probe made **provider-aware** (`validate_gemini_tts_credentials` = `models.list` membership check) so the pipeline can start on Gemini.
+  - **⚠️ Footgun noted:** plain `just regenerate-audio` (no `--force`) does NOT re-render on a voice/provider change — `regenerate.py`'s path-hit fallback reuses any file already at the canonical slot (a Story-5.5 hash-migration optimization) and just relabels the manifest, leaving the *old* audio with the *new* identity (Stage-3 would wrongly pass). **A voice/provider change requires `--force`.** Candidate hardening (future): auto-force when `manifest.voice_id`/`tts_model` differ from config.
+  - **Note for Kamal:** some short phrases render long in the Fenrir persona (e.g. a "tell me" ~3 s; a "hello" ~0.68 s) — the persona's expressive delivery varies. Worth a spot-listen; tune `style_prompt` if too theatrical.
 
 - [ ] **Task 7 — Integration + latency check (AC10)**
   - [ ] Update `tests/integration/test_opener_overlap_timing.py` / `test_emphasis_event.py` if they construct Cartesia directly.
@@ -165,8 +178,62 @@ The pipeline pins 16 kHz in **three** module-scope constants: `audio/transport.p
 
 ### Agent Model Used
 
+claude-opus-4-8[1m] (Amelia / dev-story)
+
 ### Debug Log References
+
+- `just check` green after Task 1: ruff + format + pyright + 586 unit tests pass.
+- Touched integration tests (pre-existing, unaffected) green: 6 passed.
 
 ### Completion Notes List
 
+- **Task 1 (config) complete, 2026-06-04.** Added the `provider` knob, `_GeminiTtsSection`
+  (voice `Fenrir` + Ooppi persona `style_prompt`, per operator decision), and
+  `effective_voice_id()`/`effective_model()`. Back-compat preserved: a `[tts]` block
+  without `provider` defaults to `cartesia` and behaves exactly as before.
+- **`voice_id` deferral:** kept required in Task 1 (see Task 1 scope note). The
+  `voice_id`→optional + `cartesia_api_key`→optional + `effective_*()` call-site routing
+  move to Task 4 as one unit.
+- **⛔ HALTED at Task 2 (TTFB spike gate).** Blockers: (1) no `GEMINI_API_KEY` in this
+  checkout (all `.env` keys are empty — this is the non-live machine); (2) a TTFB spike is
+  only representative when run from the production PC's network. Task 2 (spike), Task 6
+  (`just regenerate-audio`), and Task 7 (live-latency integration) are operator steps for
+  Kamal's machine. Per the gate's own design, Tasks 3–9 are NOT started until the spike
+  returns PASS. Task 1's code sits in the working tree uncommitted (per-story commit lands
+  at Task 9 / story completion).
+
+### Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-06-04 | Task 1 — TTS `provider` knob + Gemini sub-block (Fenrir/persona) + `effective_*()` helpers; 5 config tests. |
+| 2026-06-04 | Task 2 — built the Gemini Live TTFB spike + `ttfb_common` extraction + recipe + 8 unit tests. **Gate PASS**: cold p50 836 ms ≤ 1100 ms (re-baselined) on `gemini-3.1-flash-live-preview` + verbatim system_instruction. Findings: live model corrected, persona→system_instruction, 24 kHz output, cold-per-turn runtime (cost). Tasks 3–9 unblocked. |
+| 2026-06-04 | Task 3 — `GeminiClient` (Live API cold-per-turn, verbatim system_instruction, 24k→16k `audioop.ratecv`, approximate timing, `GeminiTtsError`). Extracted `tts/timing.py`; canonical Live helpers in `gemini.py` (spike imports them). 12 tests; `just check` green (598). |
+| 2026-06-04 | Task 4 — `build_tts_client` factory + `TTSClient.last_segment_timing` Protocol method; wired sequential_loop/pipeline/regenerate; `voice_id`/`cartesia_api_key`→optional + `effective_*()` routing across cartesia/cached/regenerate/ttfb_spike. 4 factory tests; green (602). |
+| 2026-06-04 | Task 5 — verified the provider-agnostic emphasis join fires for Gemini's approximate timing (integration test). green. |
+| 2026-06-04 | Task 6 — flipped `setup.toml` to Gemini/Fenrir; `--force` re-rendered 156 cached phrases (16 kHz, 0 failures); Stage-3 probe PASS; `__main__` TTS probe provider-aware (+ `gemini.validate_credentials`). Noted the path-hit `--force` footgun. |
+
 ### File List
+
+- `src/voice_agent_pipeline/config/setup.py` (modified) — `_GeminiTtsSection` (Fenrir/persona, `live_model=gemini-3.1-flash-live-preview`), `TtsConfig.provider`/`gemini`/`effective_voice_id()`/`effective_model()`.
+- `tests/unit/config/test_setup.py` (modified) — 5 Story 6.5 config tests.
+- `src/voice_agent_pipeline/tts/ttfb_common.py` (new) — shared spike helpers extracted from the Cartesia spike.
+- `src/voice_agent_pipeline/tts/ttfb_spike.py` (modified) — imports shared helpers from `ttfb_common` (Cartesia spike behaviour unchanged).
+- `src/voice_agent_pipeline/tts/gemini_ttfb_spike.py` (new) — Gemini Live-API TTFB gate harness; imports the canonical Live helpers from `gemini.py`.
+- `src/voice_agent_pipeline/tts/timing.py` (new) — provider-neutral `Word` / `SegmentTiming` (moved out of `cartesia.py`).
+- `src/voice_agent_pipeline/tts/cartesia.py` (modified) — imports `Word`/`SegmentTiming` from `timing.py`.
+- `src/voice_agent_pipeline/tts/gemini.py` (new) — `GeminiClient` + canonical Live helpers + verbatim instruction.
+- `src/voice_agent_pipeline/errors.py` (modified) — `GeminiTtsError(ExternalServiceError)`.
+- `tests/unit/tts/test_gemini.py` (new) — 12 tests (GeminiClient + Live helpers).
+- `src/voice_agent_pipeline/tts/__init__.py` (modified) — `build_tts_client` factory + re-exports.
+- `src/voice_agent_pipeline/tts/client.py` (modified) — `last_segment_timing` added to the `TTSClient` Protocol.
+- `src/voice_agent_pipeline/audio/cached.py` (modified) — manifest identity check via `effective_*()`.
+- `src/voice_agent_pipeline/sequential_loop.py` (modified) — `build_tts_client`; `tts: TTSClient`.
+- `src/voice_agent_pipeline/pipeline.py` (modified, dormant) — `build_tts_client`.
+- `tests/integration/test_emphasis_event.py` (modified) — Gemini approximate-timing emphasis test.
+- `src/voice_agent_pipeline/__main__.py` (modified) — provider-aware TTS startup probe.
+- `setup.toml` (modified) — `provider = "gemini"` + `[tts.gemini] voice_name = "Fenrir"`.
+- `assets/audio/*.wav` (156 modified) + `assets/audio/manifest.json` — re-rendered in Fenrir; manifest identity `Fenrir`/`gemini-3.1-flash-live-preview`.
+- `justfile` (modified) — `gemini-ttfb-spike` recipe.
+- `build_documents/implementation-artifacts/6-5-gemini-ttfb-spike-report.md` (new) — gate report (PASS).
+- `.env` (local, untracked) — corrected the Gemini key name to `GEMINI_API_KEY` and the value to a valid AI-Studio key (Kamal).

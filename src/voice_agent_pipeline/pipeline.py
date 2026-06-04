@@ -89,7 +89,7 @@ from voice_agent_pipeline.schemas.vocalization_event import (
 from voice_agent_pipeline.splitter.mapping import LastPublishedCache
 from voice_agent_pipeline.splitter.segmenter import Segment, Segmenter
 from voice_agent_pipeline.stt import STTBackend, build_stt_backend
-from voice_agent_pipeline.tts.cartesia import CartesiaClient
+from voice_agent_pipeline.tts import build_tts_client
 from voice_agent_pipeline.tts.client import TTSClient
 from voice_agent_pipeline.turn import build_talker, build_tool_registry
 from voice_agent_pipeline.turn.beliefs import HttpBeliefStateClient, async_http_client
@@ -1182,7 +1182,7 @@ async def run_pipeline(
         stt_backend = build_stt_backend(config)
         await stt_backend.load()
 
-    cartesia_client = CartesiaClient(config.tts, config.cartesia_api_key)
+    cartesia_client = build_tts_client(config)
 
     # Story 3.1: load the production expression map. Validates at
     # startup; ConfigError propagates to __main__'s top-level

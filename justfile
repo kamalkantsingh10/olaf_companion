@@ -65,6 +65,17 @@ regenerate-audio *FLAGS:
 ttfb-spike:
     uv run python -m voice_agent_pipeline.tts.ttfb_spike
 
+# Story 6.5 Task 2: Gemini Live-API TTFB GATE for the Cartesia->Gemini
+# migration. Measures cold (fresh session/turn) + warm (session reused)
+# TTFB over the shared transcript pool and writes a PASS/FAIL verdict vs
+# NFR4 (cold p95 <= 400 ms) to
+# `build_documents/implementation-artifacts/6-5-gemini-ttfb-spike-report.md`.
+# Needs GEMINI_API_KEY in .env. Defaults to 50+50 samples (~8-10 min, a
+# cheap first read on a preview model); bump the counts in the module for
+# the paper-grade 500-sample run once the gate trends PASS.
+gemini-ttfb-spike:
+    uv run python -m voice_agent_pipeline.tts.gemini_ttfb_spike
+
 # Story 6.4: v2 soak report. Aggregates `turn.complete` rollup events from
 # the JSON-line structured log into latency percentiles + opener/routing
 # distributions + an NFR33/NFR34 target-comparison table. Writes Markdown to

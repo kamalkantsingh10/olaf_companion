@@ -90,10 +90,8 @@ reason).
 """
 
 import asyncio
-import platform
 import random
 import socket
-import statistics
 import sys
 import time
 import uuid
@@ -108,6 +106,34 @@ from voice_agent_pipeline.config.setup import TtsConfig, load_setup_config
 from voice_agent_pipeline.errors import CartesiaError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
 from voice_agent_pipeline.tts.cartesia import CartesiaClient
+
+# Shared spike helpers (Story 6.5 extracted these to ttfb_common so the
+# Gemini spike can reuse them). Aliased to the original module-private
+# names so the body below is unchanged.
+from voice_agent_pipeline.tts.ttfb_common import (
+    MEDIUM_WORDS_MAX as _MEDIUM_WORDS_MAX,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    SHORT_WORDS_MAX as _SHORT_WORDS_MAX,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    TRANSCRIPT_POOL as _TRANSCRIPT_POOL,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    Sample as _Sample,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    bucket_for_word_count as _bucket_for_word_count,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    host_fingerprint as _host_fingerprint,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    stats_row as _stats_row,
+)
+from voice_agent_pipeline.tts.ttfb_common import (
+    summarise as _summarise,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -138,115 +164,6 @@ _REPORT_PATH = Path("build_documents/implementation-artifacts/6-1-ttfb-spike-rep
 # Above it, the cached-opener design stands and Story 6.2 proceeds as
 # drafted.
 _DR001_OPTION_D_THRESHOLD_SEC = 0.40
-
-# Transcript-length bucket boundaries (inclusive lower / exclusive
-# upper for short and medium; long is unbounded above).
-_SHORT_WORDS_MAX = 5  # short = [1, 5]
-_MEDIUM_WORDS_MAX = 15  # medium = [6, 15]; long = [16, inf)
-
-# Inline transcript pool - covers the realistic Talker reply
-# distribution (short / medium / long / question / statement /
-# multi-clause). 20 entries so each length bucket has 5-7 phrases
-# and individual transcripts don't repeat too often within the
-# 500-sample run.
-_TRANSCRIPT_POOL: list[str] = [
-    # Short (1-5 words).
-    "Hello there friend.",
-    "Are you well?",
-    "Yes, exactly.",
-    "Tell me more.",
-    "Hmm, let me think.",
-    "I'm not sure.",
-    "Sounds good.",
-    # Medium (6-15 words).
-    "I think the weather is quite nice today.",
-    "Have you read that book I mentioned yesterday afternoon?",
-    "The kitchen is on the left side of the hallway.",
-    "It rained heavily for most of the afternoon, then cleared up.",
-    "Could you please pass the salt and pepper across the table?",
-    "There's a small park about three blocks away from the apartment.",
-    "I was hoping we could grab dinner together later this evening.",
-    # Long (16+ words).
-    (
-        "When I look outside the window in the morning, the trees "
-        "seem to glow with a soft golden light that I find calming."
-    ),
-    (
-        "If you could pick any single place in the world to visit "
-        "next weekend, and money was no object at all, where would "
-        "you actually choose to go?"
-    ),
-    (
-        "The pipeline measures latency from end-of-speech to first "
-        "audio byte, and reports the ninety-fifth percentile across "
-        "every conversation turn."
-    ),
-    (
-        "There's a particular kind of silence that settles over a "
-        "library in the late afternoon, when the slanted sunlight "
-        "falls across the rows of old books and motes of dust drift "
-        "slowly through the warm air."
-    ),
-    (
-        "I find that the best way to remember a new word is to use "
-        "it in a sentence about something you actually care about, "
-        "because abstract examples slip away within an hour but "
-        "personal ones stick around for years."
-    ),
-    (
-        "Walking through the city early on a Sunday morning, before "
-        "the cafes open and before the buses start running, gives "
-        "you a strange and almost private view of streets that are "
-        "usually buzzing with crowds and traffic."
-    ),
-]
-
-
-def _bucket_for_word_count(n: int) -> str:
-    """Map a transcript word count to its length bucket name."""
-    if n <= _SHORT_WORDS_MAX:
-        return "short"
-    if n <= _MEDIUM_WORDS_MAX:
-        return "medium"
-    return "long"
-
-
-def _host_fingerprint() -> str:
-    """One-line string identifying the dev host this spike ran on.
-
-    Captured into the report's metadata so future re-runs are
-    comparable; a TTFB delta between two reports on different hosts
-    is expected, while a delta between two reports on the SAME host
-    indicates a real Cartesia-side or network change.
-    """
-    return f"{platform.system()} {platform.release()} / python {platform.python_version()}"
-
-
-class _Sample:
-    """One observation from the spike.
-
-    Used in lists across cold/warm/length-bucket views without the
-    overhead of a full pydantic model (the spike is a single-process
-    operator tool; ``_Sample`` lives only inside the run).
-    """
-
-    __slots__ = ("bucket", "mode", "transcript", "ttfb_ms", "word_count")
-
-    def __init__(
-        self,
-        *,
-        ttfb_ms: int,
-        transcript: str,
-        word_count: int,
-        bucket: str,
-        mode: str,
-    ) -> None:
-        self.ttfb_ms = ttfb_ms
-        self.transcript = transcript
-        self.word_count = word_count
-        self.bucket = bucket
-        self.mode = mode  # "cold" | "warm"
-
 
 # ---------------------------------------------------------------------------
 # Cold path - one WS per call (uses CartesiaClient as the runtime would)
@@ -361,7 +278,7 @@ async def _run_warm_phase(
                 model_id=tts_config.model,
                 output_format=output_format,  # type: ignore[arg-type]
                 transcript=transcript,
-                voice={"id": tts_config.voice_id, "mode": "id"},  # type: ignore[arg-type]
+                voice={"id": tts_config.effective_voice_id(), "mode": "id"},  # type: ignore[arg-type]
                 generation_config={  # type: ignore[arg-type]
                     "emotion": tts_config.default_emotion,
                     "speed": tts_config.speed,
@@ -436,62 +353,6 @@ async def _run_warm_phase(
 # ---------------------------------------------------------------------------
 # Statistics + report rendering
 # ---------------------------------------------------------------------------
-
-
-def _percentile(samples: list[int], q: float) -> int:
-    """Linear-interpolation percentile (q in [0, 100]) over an int list."""
-    if not samples:
-        return -1
-    if len(samples) == 1:
-        return samples[0]
-    sorted_s = sorted(samples)
-    k = (q / 100.0) * (len(sorted_s) - 1)
-    f = int(k)
-    c = min(f + 1, len(sorted_s) - 1)
-    if f == c:
-        return sorted_s[f]
-    return round(sorted_s[f] + (sorted_s[c] - sorted_s[f]) * (k - f))
-
-
-def _summarise(samples: list[int]) -> dict[str, int]:
-    """Compute the per-bucket statistic block (all values in ms)."""
-    if not samples:
-        return {
-            "n": 0,
-            "mean": -1,
-            "stdev": -1,
-            "min": -1,
-            "p25": -1,
-            "p50": -1,
-            "p75": -1,
-            "p90": -1,
-            "p95": -1,
-            "p99": -1,
-            "max": -1,
-        }
-    return {
-        "n": len(samples),
-        "mean": round(statistics.fmean(samples)),
-        "stdev": round(statistics.stdev(samples)) if len(samples) > 1 else 0,
-        "min": min(samples),
-        "p25": _percentile(samples, 25),
-        "p50": _percentile(samples, 50),
-        "p75": _percentile(samples, 75),
-        "p90": _percentile(samples, 90),
-        "p95": _percentile(samples, 95),
-        "p99": _percentile(samples, 99),
-        "max": max(samples),
-    }
-
-
-def _stats_row(label: str, stats: dict[str, int]) -> str:
-    """One Markdown table row for the percentile table."""
-    return (
-        f"| {label} | {stats['n']} | {stats['mean']} +/- {stats['stdev']} "
-        f"| {stats['p25']} | {stats['p50']} | {stats['p75']} "
-        f"| {stats['p90']} | {stats['p95']} | {stats['p99']} "
-        f"| {stats['min']} | {stats['max']} |"
-    )
 
 
 def _build_report(
@@ -686,6 +547,12 @@ async def run_spike() -> int:
         {**config.tts.model_dump(), "transport": "websocket"},
     )
 
+    # This is the Cartesia spike; it requires the Cartesia key (now optional
+    # on SetupConfig since Story 6.5 added the Gemini provider). Narrow here
+    # so the constructions below are type-safe.
+    if config.cartesia_api_key is None:
+        raise VoiceAgentError(reason="ttfb-spike requires CARTESIA_API_KEY in .env.")
+
     started_at = datetime.now(tz=UTC)
     host_str = _host_fingerprint()
     try:
@@ -697,7 +564,7 @@ async def run_spike() -> int:
         "ttfb_spike.start",
         cold_samples=_COLD_SAMPLE_COUNT,
         warm_samples=_WARM_SAMPLE_COUNT,
-        voice_id=tts_config.voice_id,
+        voice_id=tts_config.effective_voice_id(),
         model=tts_config.model,
         host=host_str,
     )
@@ -734,7 +601,7 @@ async def run_spike() -> int:
         warm_samples=warm_samples,
         cold_errors=cold_errors,
         warm_errors=warm_errors,
-        voice_id=tts_config.voice_id,
+        voice_id=tts_config.effective_voice_id(),
         model=tts_config.model,
         sdk_version=cartesia.__version__,
         host=host_str,

@@ -43,6 +43,9 @@ from voice_agent_pipeline.stt import validate_credentials as validate_stt_creden
 from voice_agent_pipeline.tts.cartesia import (
     validate_credentials as validate_cartesia_credentials,
 )
+from voice_agent_pipeline.tts.gemini import (
+    validate_credentials as validate_gemini_tts_credentials,
+)
 from voice_agent_pipeline.turn import validate_credentials as validate_talker_credentials
 
 # 2026-05-09: switched the runtime path from the Pipecat streaming
@@ -145,11 +148,15 @@ async def main() -> int:
                 await validate_talker_credentials(config)
             log.info("startup.validated.talker", provider=config.talker.provider)
 
-            # Story 2.3: probe Cartesia. Bad key / service outage
-            # surfaces here rather than on the first synthesis call.
-            async with reporter.stage("cartesia", "cartesia validated"):
-                await validate_cartesia_credentials(config)
-            log.info("startup.validated.cartesia")
+            # Story 2.3 / 6.5: probe the active TTS provider. Bad key /
+            # service outage surfaces here rather than on the first synthesis
+            # call. Provider-aware since Story 6.5 added Gemini.
+            async with reporter.stage("tts", "tts provider validated"):
+                if config.tts.provider == "gemini":
+                    await validate_gemini_tts_credentials(config)
+                else:
+                    await validate_cartesia_credentials(config)
+            log.info("startup.validated.tts", provider=config.tts.provider)
 
             # sprint-change-proposal-2026-05-12: probe the active STT
             # backend. For ``backend = "groq"`` (v1 default), hits Groq's

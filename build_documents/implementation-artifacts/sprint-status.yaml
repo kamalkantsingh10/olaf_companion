@@ -231,7 +231,7 @@ development_status:
   #             Cartesia baseline (gate p95 <= 400ms NFR4) before cutover.
   #             24k->16k resample in-client; word timestamps NOT required
   #             (emphasis fires at approximate timing). schema_version stays 3.
-  6-5-gemini-tts-migration: ready-for-dev
+  6-5-gemini-tts-migration: in-progress
   epic-6-retrospective: optional
 
   # ───────────────── v1.5 Backlog (Post-v1) ─────────────────

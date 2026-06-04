@@ -120,6 +120,16 @@ class CartesiaError(ExternalServiceError):
     """Cartesia TTS API failure (Story 2.3 + downstream)."""
 
 
+class GeminiTtsError(ExternalServiceError):
+    """Gemini Live-API TTS failure (Story 6.5).
+
+    Raised by :class:`voice_agent_pipeline.tts.gemini.GeminiClient` on any
+    ``google.genai`` API error (or a closed/aborted Live session) during
+    synthesis. Same fail-fast posture as :class:`CartesiaError` — never
+    caught in v1 code paths; the process crashes and systemd restarts it.
+    """
+
+
 class GroqAsrError(ExternalServiceError):
     """Groq STT API failure (sprint-change-proposal-2026-05-12, Cloud STT swap).
 

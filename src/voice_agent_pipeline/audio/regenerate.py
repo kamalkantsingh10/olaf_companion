@@ -52,10 +52,11 @@ from voice_agent_pipeline.audio.cached import (
 )
 from voice_agent_pipeline.audio.opener_bucket import OpenerBucket
 from voice_agent_pipeline.config.setup import SetupConfig, load_setup_config
-from voice_agent_pipeline.errors import CartesiaError, VoiceAgentError
+from voice_agent_pipeline.errors import ExternalServiceError, VoiceAgentError
 from voice_agent_pipeline.logging.setup import configure_logging
 from voice_agent_pipeline.schemas.mood_event import Mood
-from voice_agent_pipeline.tts.cartesia import CartesiaClient
+from voice_agent_pipeline.tts import build_tts_client
+from voice_agent_pipeline.tts.client import TTSClient
 
 log = structlog.get_logger(__name__)
 
@@ -139,7 +140,7 @@ def _path_for(
 
 
 async def _render_phrase_to_wav(
-    cartesia_client: CartesiaClient,
+    tts_client: TTSClient,
     phrase: str,
     out_path: Path,
 ) -> int:
@@ -152,7 +153,7 @@ async def _render_phrase_to_wav(
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pcm_chunks: list[bytes] = []
-    async for chunk in cartesia_client.synthesize(phrase):
+    async for chunk in tts_client.synthesize(phrase):
         pcm_chunks.append(chunk)
     pcm = b"".join(pcm_chunks)
 
@@ -214,8 +215,12 @@ async def regenerate(
     plan = _plan_phrases(config)
     existing = _load_existing_manifest()
 
-    voice_id = config.tts.voice_id
-    tts_model = config.tts.model
+    # Provider-aware identity (Story 6.5): Cartesia → voice_id/model,
+    # Gemini → voice_name/live_model. The manifest + phrase hashes record
+    # whichever provider actually rendered the WAVs, so the Stage-3 probe
+    # validates against the right identity.
+    voice_id = config.tts.effective_voice_id()
+    tts_model = config.tts.effective_model()
     log.info(
         "regenerate.start",
         total_phrases=len(plan),
@@ -351,17 +356,18 @@ async def regenerate(
     # serially. ~1-2 minutes for a fresh ~200-phrase regeneration.
     failure_count = 0
     if to_render:
-        cartesia_client = CartesiaClient(config.tts, config.cartesia_api_key)
+        tts_client = build_tts_client(config)
         for entry, phrase in to_render:
             try:
                 duration_ms = await _render_phrase_to_wav(
-                    cartesia_client,
+                    tts_client,
                     phrase,
                     Path(entry.path),
                 )
-            except CartesiaError as e:
-                # Operator tool — catching here gives a clean per-phrase
-                # error instead of crashing on the first failure.
+            except ExternalServiceError as e:
+                # Operator tool — catching the provider-agnostic base (Cartesia
+                # or Gemini TTS error) gives a clean per-phrase error instead
+                # of crashing on the first failure.
                 log.error(
                     "regenerate.render_failed",
                     phrase=phrase,

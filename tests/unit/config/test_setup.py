@@ -138,7 +138,9 @@ def test_load_happy_path(tmp_path: Path) -> None:
     assert config.talker.groq.model == "llama-3.1-8b-instant"
     assert config.talker.gemini.model == "gemini-2.5-flash"
     # Story 2.3: TtsConfig — voice_id required from TOML; emotion + model
-    # defaults from the architecture.
+    # defaults from the architecture. (Story 6.5 made cartesia_api_key
+    # Optional on SetupConfig, so narrow before unwrapping.)
+    assert config.cartesia_api_key is not None
     assert config.cartesia_api_key.get_secret_value() == "stub-cartesia"
     assert config.tts.voice_id == "stub-voice-uuid"
     assert config.tts.default_emotion == "neutral"
@@ -728,19 +730,21 @@ def test_tts_transport_rejects_unknown_value(tmp_path: Path) -> None:
     assert "transport" in str(exc_info.value).lower()
 
 
-def test_cartesia_api_key_required(tmp_path: Path) -> None:
-    """Story 2.3: missing ``CARTESIA_API_KEY`` raises ConfigError naming the field.
+def test_cartesia_api_key_optional_at_load_time(tmp_path: Path) -> None:
+    """Story 6.5: ``CARTESIA_API_KEY`` is optional at load time.
 
-    Cartesia is the only TTS provider in v1, so the key is required
-    from the start (unlike the optional Talker keys, where the factory
-    enforces "active provider's key must be present").
+    Since the Gemini TTS provider landed, the Cartesia key is optional on
+    SetupConfig (a Gemini config needs no Cartesia key) — same pattern as
+    the Talker provider keys. The ``build_tts_client`` factory is what
+    enforces "the active provider's key must be present" (tested in
+    tests/unit/tts/). Loading a config with no CARTESIA_API_KEY succeeds.
     """
-    # PICOVOICE + OPENAI present; CARTESIA missing.
+    # PICOVOICE + OPENAI present; CARTESIA missing. The default [tts]
+    # provider is "cartesia" but the key is no longer required at load.
     env_body = "PICOVOICE_ACCESS_KEY=stub\nOPENAI_API_KEY=stub-openai\n"
     toml_path, env_path = _write_files(tmp_path, env_body=env_body)
-    with pytest.raises(ConfigError) as exc_info:
-        load_setup_config(toml_path=toml_path, env_path=env_path)
-    assert "cartesia_api_key" in str(exc_info.value).lower()
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.cartesia_api_key is None
 
 
 def test_all_talker_keys_optional_at_load_time(tmp_path: Path) -> None:
@@ -1321,3 +1325,157 @@ def test_openers_timer_fallback_bucket_must_be_known(tmp_path: Path) -> None:
     toml_path, env_path = _write_files(tmp_path, toml_body=toml_with_bad_fallback)
     with pytest.raises(ConfigError):
         load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+# ───────────────────── Story 6.5: TTS provider knob ─────────────────────
+
+
+def test_tts_provider_defaults_to_cartesia(tmp_path: Path) -> None:
+    """A [tts] block without ``provider`` defaults to "cartesia" (back-compat).
+
+    Story 6.5 adds the provider selector; a setup.toml that predates it
+    (no ``provider`` key — like every existing config) must keep today's
+    Cartesia behavior, and ``effective_*`` must echo the Cartesia fields.
+    """
+    toml_path, env_path = _write_files(tmp_path)  # _VALID_TOML has no provider
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tts.provider == "cartesia"
+    assert config.tts.effective_voice_id() == "stub-voice-uuid"
+    assert config.tts.effective_model() == "sonic-3"
+
+
+def test_tts_provider_gemini_defaults_to_fenrir_persona(tmp_path: Path) -> None:
+    """provider="gemini" with no [tts.gemini] block picks up the Ooppi defaults.
+
+    The Gemini sub-block is default_factory, so omitting it yields the
+    chosen Ooppi voice ("Fenrir") + persona style_prompt + the Story 6.5
+    model defaults. ``voice_id`` is still field-required in Task 1, so a
+    placeholder is supplied (Task 4 relaxes this).
+    """
+    gemini_toml = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'provider = "gemini"\n'
+        'voice_id = "placeholder-cartesia-guid"\n' + _STT_AND_GREETING_BLOCKS
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=gemini_toml)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tts.provider == "gemini"
+    assert config.tts.voice_id == "placeholder-cartesia-guid"
+    assert config.tts.gemini.voice_name == "Fenrir"
+    assert config.tts.gemini.live_model == "gemini-3.1-flash-live-preview"
+    assert config.tts.gemini.style_prompt.startswith("A mischievous, deadpan")
+
+
+def test_tts_effective_identifiers_follow_gemini_provider(tmp_path: Path) -> None:
+    """Under provider="gemini", ``effective_*`` return the Gemini identifiers.
+
+    These feed the cached-asset manifest identity check (Story 6.5 AC9),
+    so they must track the provider that actually rendered the WAVs.
+    """
+    gemini_toml = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'provider = "gemini"\n'
+        'voice_id = "placeholder"\n'
+        "[tts.gemini]\n"
+        'voice_name = "Charon"\n'
+        'live_model = "gemini-2.5-flash-native-audio-latest"\n' + _STT_AND_GREETING_BLOCKS
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=gemini_toml)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert config.tts.effective_voice_id() == "Charon"
+    assert config.tts.effective_model() == "gemini-2.5-flash-native-audio-latest"
+
+
+def test_tts_gemini_section_forbids_unknown_key(tmp_path: Path) -> None:
+    """A typo'd key in [tts.gemini] fails fast (extra="forbid")."""
+    bad_toml = (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'provider = "gemini"\n'
+        'voice_id = "placeholder"\n'
+        "[tts.gemini]\n"
+        'voice_naem = "Kore"\n' + _STT_AND_GREETING_BLOCKS  # typo: voice_naem
+    )
+    toml_path, env_path = _write_files(tmp_path, toml_body=bad_toml)
+    with pytest.raises(ConfigError):
+        load_setup_config(toml_path=toml_path, env_path=env_path)
+
+
+# ───────────────── Story 6.5: build_tts_client factory ─────────────────
+
+
+def _gemini_toml(*, with_voice_id: bool = False) -> str:
+    """A minimal provider=gemini setup.toml body."""
+    voice = 'voice_id = "x"\n' if with_voice_id else ""
+    return (
+        "schema_version = 3\n"
+        "[audio]\n"
+        'input_device_name = "USB.*Mic.*"\n'
+        'output_device_name = "USB.*Speaker.*"\n'
+        "[wakeword]\n"
+        'model_path = "models/wakeword/hey_olaf.ppn"\n'
+        "[tts]\n"
+        'provider = "gemini"\n' + voice + _STT_AND_GREETING_BLOCKS
+    )
+
+
+def test_build_tts_client_returns_cartesia(tmp_path: Path) -> None:
+    """provider="cartesia" + CARTESIA_API_KEY present → CartesiaClient."""
+    from voice_agent_pipeline.tts import build_tts_client
+    from voice_agent_pipeline.tts.cartesia import CartesiaClient
+
+    toml_path, env_path = _write_files(tmp_path)  # default: cartesia + key + voice_id
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert isinstance(build_tts_client(config), CartesiaClient)
+
+
+def test_build_tts_client_returns_gemini(tmp_path: Path) -> None:
+    """provider="gemini" + GEMINI_API_KEY present → GeminiClient (no voice_id needed)."""
+    from voice_agent_pipeline.tts import build_tts_client
+    from voice_agent_pipeline.tts.gemini import GeminiClient
+
+    env_body = "PICOVOICE_ACCESS_KEY=stub\nGEMINI_API_KEY=stub-gemini\n"
+    toml_path, env_path = _write_files(tmp_path, toml_body=_gemini_toml(), env_body=env_body)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    assert isinstance(build_tts_client(config), GeminiClient)
+
+
+def test_build_tts_client_gemini_missing_key_raises(tmp_path: Path) -> None:
+    """provider="gemini" but no GEMINI_API_KEY → ConfigError naming the var."""
+    from voice_agent_pipeline.tts import build_tts_client
+
+    env_body = "PICOVOICE_ACCESS_KEY=stub\n"  # no GEMINI_API_KEY
+    toml_path, env_path = _write_files(tmp_path, toml_body=_gemini_toml(), env_body=env_body)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    with pytest.raises(ConfigError) as exc_info:
+        build_tts_client(config)
+    assert "gemini_api_key" in str(exc_info.value).lower()
+
+
+def test_build_tts_client_cartesia_missing_key_raises(tmp_path: Path) -> None:
+    """provider="cartesia" (default) but no CARTESIA_API_KEY → ConfigError."""
+    from voice_agent_pipeline.tts import build_tts_client
+
+    env_body = "PICOVOICE_ACCESS_KEY=stub\nOPENAI_API_KEY=stub-openai\n"  # no CARTESIA
+    toml_path, env_path = _write_files(tmp_path, env_body=env_body)
+    config = load_setup_config(toml_path=toml_path, env_path=env_path)
+    with pytest.raises(ConfigError) as exc_info:
+        build_tts_client(config)
+    assert "cartesia_api_key" in str(exc_info.value).lower()

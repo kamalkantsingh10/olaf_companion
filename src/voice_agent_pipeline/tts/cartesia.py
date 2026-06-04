@@ -63,10 +63,11 @@ import structlog
 import websockets.exceptions as websockets_exc
 from cartesia.types.generation_request import GenerationRequest
 from cartesia.types.websocket_response import TimestampsWordTimestamps
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import SecretStr
 
 from voice_agent_pipeline.config.setup import SetupConfig, TtsConfig
 from voice_agent_pipeline.errors import CartesiaError, StartupValidationError
+from voice_agent_pipeline.tts.timing import SegmentTiming, Word
 
 log = structlog.get_logger(__name__)
 
@@ -84,62 +85,6 @@ _OUTPUT_FORMAT: dict[str, object] = {
 # ---------------------------------------------------------------------------
 # Story 6.1 — per-segment word timing (consumed by Story 6.3's emphasis join)
 # ---------------------------------------------------------------------------
-
-
-class Word(BaseModel):
-    """One Cartesia-reported word inside a synthesized segment (Story 6.1).
-
-    Holds the word's text plus its [start_ms, end_ms] interval relative
-    to the start of the segment. The pipeline pins integer milliseconds
-    everywhere it talks about audio timing (matches ``tts.first_frame.
-    ttfb_ms`` shape + the ``audio_frame_id`` semantics future stories
-    use for splitter alignment), so the Cartesia-reported float seconds
-    are converted on capture.
-
-    Frozen + ``extra="forbid"`` per CLAUDE.md rule 3 (pydantic at
-    boundaries; no mutation after construction; typos in mock fixtures
-    fail loudly).
-
-    Attributes:
-        text: The word as Cartesia reports it. Whitespace + punctuation
-            handling matches the SDK's tokenisation; the consumer (Story
-            6.3) joins per-word entries against the LLM's emphasis index
-            using simple textual alignment.
-        start_ms: Start offset within the segment, integer milliseconds,
-            rounded from Cartesia's float-seconds value.
-        end_ms: End offset within the segment, integer milliseconds.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    text: str
-    start_ms: int
-    end_ms: int
-
-
-class SegmentTiming(BaseModel):
-    """Per-call accumulated word timing for one Cartesia synthesize() request.
-
-    A single :meth:`CartesiaClient.synthesize` call corresponds to one
-    synthesized segment; Cartesia typically emits a single
-    ``Timestamps`` event covering the whole segment, but the wire spec
-    allows incremental emission. The WS path accumulates every word
-    across every ``Timestamps`` event within the same request into a
-    single :class:`SegmentTiming`.
-
-    Frozen + ``extra="forbid"`` — once exposed via
-    :meth:`CartesiaClient.last_segment_timing` the model is read-only;
-    callers consume the parallel ``Word`` list and don't mutate it.
-
-    Attributes:
-        words: Ordered list of :class:`Word` entries — order matches
-            Cartesia's emission order, which matches the spoken order
-            of the transcript.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    words: list[Word]
 
 
 def _word_timestamps_to_words(payload: TimestampsWordTimestamps) -> list[Word]:
@@ -375,7 +320,7 @@ class CartesiaClient:
                     model_id=self._config.model,
                     output_format=_OUTPUT_FORMAT,  # type: ignore[arg-type]
                     transcript=text,
-                    voice={"id": self._config.voice_id, "mode": "id"},  # type: ignore[arg-type]
+                    voice={"id": self._config.effective_voice_id(), "mode": "id"},  # type: ignore[arg-type]
                     generation_config={  # type: ignore[arg-type]
                         "emotion": self._config.default_emotion,
                         "speed": self._config.speed,
@@ -416,7 +361,7 @@ class CartesiaClient:
                             log.info(
                                 "tts.first_frame",
                                 ttfb_ms=ttfb_ms,
-                                voice_id=self._config.voice_id,
+                                voice_id=self._config.effective_voice_id(),
                                 model=self._config.model,
                                 transport="websocket",
                             )
@@ -453,7 +398,7 @@ class CartesiaClient:
                             or f"status_code={getattr(event, 'status_code', '?')}"
                         )
                         raise CartesiaError(
-                            voice_id=self._config.voice_id,
+                            voice_id=self._config.effective_voice_id(),
                             model=self._config.model,
                             reason=reason,
                         )
@@ -463,7 +408,7 @@ class CartesiaClient:
             # v1 fail-fast: wrap and propagate. CLAUDE.md rule #4 —
             # never caught downstream. Process crashes; systemd restarts.
             raise CartesiaError(
-                voice_id=self._config.voice_id,
+                voice_id=self._config.effective_voice_id(),
                 model=self._config.model,
                 reason=str(e),
             ) from e
@@ -473,7 +418,7 @@ class CartesiaClient:
             # a Cartesia failure — the wrap-and-propagate posture
             # matches the APIError branch above.
             raise CartesiaError(
-                voice_id=self._config.voice_id,
+                voice_id=self._config.effective_voice_id(),
                 model=self._config.model,
                 reason=f"websocket closed: {e}",
             ) from e
@@ -523,7 +468,7 @@ class CartesiaClient:
             stream = await self._client.tts.generate_sse(
                 model_id=self._config.model,
                 transcript=text,
-                voice={"id": self._config.voice_id, "mode": "id"},
+                voice={"id": self._config.effective_voice_id(), "mode": "id"},
                 output_format=_OUTPUT_FORMAT,  # type: ignore[arg-type]
                 generation_config={  # type: ignore[arg-type]
                     "emotion": self._config.default_emotion,
@@ -554,7 +499,7 @@ class CartesiaClient:
                     log.info(
                         "tts.first_frame",
                         ttfb_ms=ttfb_ms,
-                        voice_id=self._config.voice_id,
+                        voice_id=self._config.effective_voice_id(),
                         model=self._config.model,
                         transport="sse",
                     )
@@ -564,7 +509,7 @@ class CartesiaClient:
             # v1 fail-fast: wrap and propagate. CLAUDE.md rule #4 —
             # never caught downstream. Process crashes; systemd restarts.
             raise CartesiaError(
-                voice_id=self._config.voice_id,
+                voice_id=self._config.effective_voice_id(),
                 model=self._config.model,
                 reason=str(e),
             ) from e
@@ -604,8 +549,15 @@ async def validate_credentials(config: SetupConfig) -> None:
             operator sees a clean ``startup.failed`` log + non-zero
             exit, not a stack trace from inside the SDK.
     """
+    if config.cartesia_api_key is None:
+        # Reachable only if this Cartesia probe is invoked under a non-Cartesia
+        # provider (a __main__ wiring bug); surface it as a clean startup error.
+        raise StartupValidationError(
+            stage="cartesia",
+            reason="CARTESIA_API_KEY is not set but the Cartesia provider is active",
+        )
     client = cartesia.AsyncCartesia(api_key=config.cartesia_api_key.get_secret_value())
     try:
-        await client.voices.get(config.tts.voice_id, timeout=10.0)
+        await client.voices.get(config.tts.effective_voice_id(), timeout=10.0)
     except cartesia.APIError as e:
         raise StartupValidationError(stage="cartesia", reason=str(e)) from e

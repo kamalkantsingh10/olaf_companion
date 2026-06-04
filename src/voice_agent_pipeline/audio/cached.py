@@ -396,8 +396,8 @@ def load_and_validate_manifest(
 
     1. **Manifest loads** (file exists, valid JSON, schema_version match).
     2. **Voice + model match** — ``manifest.voice_id`` equals
-       ``config.tts.voice_id`` and ``manifest.tts_model`` equals
-       ``config.tts.model``. Any drift means assets were rendered with
+       ``config.tts.effective_voice_id()`` and ``manifest.tts_model`` equals
+       ``config.tts.effective_model()``. Any drift means assets were rendered with
        a different voice and would sound wrong; regenerate to fix.
     3. **Every required phrase has an entry** — for each phrase in the
        four ``setup.toml`` surface lists, a manifest entry with the
@@ -424,21 +424,21 @@ def load_and_validate_manifest(
     manifest = load_manifest(manifest_path)
 
     # Invariant 2: voice + model match.
-    if manifest.voice_id != config.tts.voice_id:
+    if manifest.voice_id != config.tts.effective_voice_id():
         raise StartupValidationError(
             stage="audio_assets",
             reason=(
                 f"manifest voice_id={manifest.voice_id!r} but setup.toml has "
-                f"voice_id={config.tts.voice_id!r}"
+                f"voice_id={config.tts.effective_voice_id()!r}"
             ),
             action="run `just regenerate-audio`",
         )
-    if manifest.tts_model != config.tts.model:
+    if manifest.tts_model != config.tts.effective_model():
         raise StartupValidationError(
             stage="audio_assets",
             reason=(
                 f"manifest tts_model={manifest.tts_model!r} but setup.toml has "
-                f"model={config.tts.model!r}"
+                f"model={config.tts.effective_model()!r}"
             ),
             action="run `just regenerate-audio`",
         )
@@ -451,20 +451,26 @@ def load_and_validate_manifest(
     expected_hashes: dict[str, tuple[str, str, str | None]] = {}
     for mood, bucket in config.greeting.greetings_by_mood.items():
         for phrase in bucket:
-            h = compute_phrase_hash(phrase, config.tts.voice_id, config.tts.model, mood)
+            h = compute_phrase_hash(
+                phrase, config.tts.effective_voice_id(), config.tts.effective_model(), mood
+            )
             expected_hashes[h] = ("greeting", phrase, mood)
     for phrase in config.goodbye.phrases:
-        h = compute_phrase_hash(phrase, config.tts.voice_id, config.tts.model, None)
+        h = compute_phrase_hash(
+            phrase, config.tts.effective_voice_id(), config.tts.effective_model(), None
+        )
         expected_hashes[h] = ("goodbye", phrase, None)
     for phrase in config.stt.clarification_prompts:
-        h = compute_phrase_hash(phrase, config.tts.voice_id, config.tts.model, None)
+        h = compute_phrase_hash(
+            phrase, config.tts.effective_voice_id(), config.tts.effective_model(), None
+        )
         expected_hashes[h] = ("clarification", phrase, None)
     for opener_bucket, phrases in config.openers.phrases_by_bucket.items():
         for phrase in phrases:
             h = compute_phrase_hash(
                 phrase,
-                config.tts.voice_id,
-                config.tts.model,
+                config.tts.effective_voice_id(),
+                config.tts.effective_model(),
                 mood=None,
                 bucket=opener_bucket,
             )

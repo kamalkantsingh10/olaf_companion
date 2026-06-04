@@ -37,7 +37,7 @@ What this module deliberately does **not** do:
 import logging
 import tomllib
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -356,8 +356,60 @@ class SttConfig(BaseModel):
         return self
 
 
+class _GeminiTtsSection(BaseModel):
+    """Per-provider sub-block: Gemini TTS knobs (Story 6.5).
+
+    Consumed only when :attr:`TtsConfig.provider` == ``"gemini"``. Unlike
+    the Talker's Gemini section (which rides the openai-compatible
+    endpoint via the ``openai`` SDK), Gemini *TTS* uses the native
+    ``google-genai`` SDK and the same Google AI Studio ``GEMINI_API_KEY``.
+
+    One model identifier: the dedicated ``*-preview-tts`` models do NOT
+    stream, so both the streaming hot path AND the offline cached-asset
+    render go through the Live API ``live_model`` via
+    ``GeminiClient.synthesize()``. (Using one model for both keeps the
+    cached-asset manifest identity consistent with what actually rendered;
+    the per-turn live cost — the real cost driver — is unchanged, and a
+    one-time offline render's cost is immaterial.)
+
+    Attributes:
+        voice_name: Gemini prebuilt voice (~30 available — Kore, Puck,
+            Charon, Zephyr, Fenrir, …). The Gemini analogue of Cartesia's
+            ``voice_id`` GUID, and what :meth:`TtsConfig.effective_voice_id`
+            returns under the Gemini provider. Defaults to ``"Fenrir"`` —
+            the chosen Ooppi voice (2026-06-04): a bright, slightly raspy
+            timbre that carries the cheeky-teenager persona below.
+        live_model: Live-API model for streaming synthesis (hot path AND
+            offline render). The dedicated ``*-preview-tts`` models do not
+            stream; only the ``*-live-*`` family does.
+        style_prompt: Natural-language delivery instruction prepended to
+            the synthesized text (Gemini has no SSML; tone is steered by a
+            prompt prefix). Empty string ≡ no steering. Defaults to the
+            Ooppi persona brief. Kept as a single line — token billing
+            charges the prefix on every synthesis.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    voice_name: str = "Fenrir"
+    # Live (streaming, bidiGenerateContent) model. Verified 2026-06-04
+    # against models.list: gemini-3.1-flash-live-preview gives the lowest
+    # TTFB of the live-capable models (~740 ms cold vs ~1860 ms for the
+    # 2.5 native-audio family) and narrates the user text verbatim when
+    # driven with the verbatim system_instruction (see gemini_ttfb_spike).
+    live_model: str = "gemini-3.1-flash-live-preview"
+    # Ooppi persona (2026-06-04). A "Shinchan-like but super clear" read.
+    style_prompt: str = (
+        "A mischievous, deadpan 16 year old with total unearned confidence "
+        "— cheeky and a little bratty, comic timing, casual sing-song "
+        "delivery, sudden bursts of excitement. Underneath it, a softer "
+        "warmth that peeks through when he's being sincere. Bright, slightly "
+        "raspy timbre with a faint synthetic shimmer; super clear."
+    )
+
+
 class TtsConfig(BaseModel):
-    """Cartesia Sonic-3 streaming TTS knobs (Story 2.3 / 6.1).
+    """Streaming TTS knobs — Cartesia Sonic-3 (Story 2.3 / 6.1) or Gemini (6.5).
 
     The TTS client streams audio frames back as the model synthesizes,
     so the speaker can begin playing within ~200-400 ms of the
@@ -409,15 +461,73 @@ class TtsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    voice_id: str
+    # Story 6.5: provider selector. Defaults to "cartesia" so a setup.toml
+    # that predates this field (no `provider` key) keeps today's behavior
+    # byte-for-byte. "gemini" routes synthesis through GeminiClient and
+    # consumes the [tts.gemini] sub-block + GEMINI_API_KEY instead of the
+    # Cartesia voice_id/model/speed/transport fields. The build_tts_client
+    # factory dispatches on this value and enforces the matching key.
+    provider: Literal["cartesia", "gemini"] = "cartesia"
+    # Cartesia voice GUID. Optional at the field level (a pure-Gemini config
+    # carries no Cartesia voice); the validator below hard-requires it when
+    # provider == "cartesia". The architecture ships no default — the
+    # operator pastes a GUID from https://play.cartesia.ai/voices.
+    voice_id: str | None = None
     default_emotion: str = "neutral"
     model: str = "sonic-3"
     speed: float = 0.9
     # Story 6.1: default WebSocket so word timestamps are captured for
     # Story 6.3's emphasis join. SSE retained as an implementation-window
     # fallback; the field will be removed once WS proves stable in soak
-    # (Story 6.4 sign-off).
+    # (Story 6.4 sign-off). Cartesia-only knob (ignored under Gemini).
     transport: Literal["websocket", "sse"] = "websocket"
+    # Story 6.5: Gemini TTS sub-block. Consumed only when provider ==
+    # "gemini"; default_factory means a Cartesia config never has to
+    # declare [tts.gemini].
+    gemini: _GeminiTtsSection = Field(default_factory=_GeminiTtsSection)
+
+    @model_validator(mode="after")
+    def _validate_provider_identity(self) -> "TtsConfig":
+        """Require ``voice_id`` when provider is Cartesia (Story 6.5 Task 4).
+
+        ``voice_id`` is field-optional so a Gemini config needn't carry a
+        Cartesia GUID, but the Cartesia path hard-requires it. (Gemini always
+        has a voice — ``gemini.voice_name`` defaults to ``"Fenrir"`` — so no
+        symmetric check is needed.) Raising here surfaces the misconfig as a
+        clear startup ConfigError, not an ``AttributeError`` deep in the client.
+        """
+        if self.provider == "cartesia" and self.voice_id is None:
+            raise ValueError(
+                "tts.voice_id is required when tts.provider == 'cartesia'. "
+                "Set voice_id in the [tts] block of setup.toml.",
+            )
+        return self
+
+    def effective_voice_id(self) -> str:
+        """Voice identifier of the *active* provider (Story 6.5).
+
+        Cartesia → the ``voice_id`` GUID; Gemini → the ``voice_name``.
+        Used by the runtime clients, ``audio/regenerate.py``, and the Stage-3
+        ``audio_assets`` startup probe (``audio/cached.py``) so the cached-
+        asset identity check follows whichever provider rendered the WAVs.
+        """
+        if self.provider == "cartesia":
+            # Guaranteed non-None by _validate_provider_identity; cast keeps
+            # the str return type without a bandit-flagged bare assert.
+            return cast(str, self.voice_id)
+        return self.gemini.voice_name
+
+    def effective_model(self) -> str:
+        """Model identifier of the *active* provider (Story 6.5).
+
+        Cartesia → ``model`` (e.g. ``"sonic-3"``); Gemini → the
+        ``live_model`` (the single model that renders both live turns and
+        the cached assets). Pairs with :meth:`effective_voice_id` for the
+        manifest identity check.
+        """
+        if self.provider == "cartesia":
+            return self.model
+        return self.gemini.live_model
 
 
 class MoodConfig(BaseModel):
@@ -884,9 +994,11 @@ class SetupConfig(BaseSettings):
     openai_api_key: SecretStr | None = None
     groq_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
-    # Cartesia (Story 2.3): single TTS provider in v1; required for
-    # the Cartesia client + startup probe.
-    cartesia_api_key: SecretStr
+    # Cartesia (Story 2.3): TTS API key. Optional since Story 6.5 — a
+    # Gemini-provider config needs no Cartesia key. The build_tts_client
+    # factory enforces "the matching key is present for the active provider"
+    # at startup, same pattern as the Talker provider keys above.
+    cartesia_api_key: SecretStr | None = None
     audio: AudioConfig
     wakeword: WakewordConfig
     vad: VadConfig = Field(default_factory=VadConfig)

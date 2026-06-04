@@ -78,7 +78,8 @@ from voice_agent_pipeline.schemas.vocalization_event import (
 from voice_agent_pipeline.splitter.mapping import LastPublishedCache
 from voice_agent_pipeline.splitter.segmenter import Segment, Segmenter
 from voice_agent_pipeline.stt import build_stt_backend
-from voice_agent_pipeline.tts.cartesia import CartesiaClient
+from voice_agent_pipeline.tts import build_tts_client
+from voice_agent_pipeline.tts.client import TTSClient
 from voice_agent_pipeline.turn import build_talker, build_tool_registry
 from voice_agent_pipeline.turn.talker import Talker, TalkerTextDelta
 from voice_agent_pipeline.turn.tools import ToolCall, ToolRegistry
@@ -173,8 +174,9 @@ async def run_sequential_loop(
         stt = build_stt_backend(config)
         await stt.load()
 
-        # Cartesia TTS client. Streaming SSE happens per ``speak`` call.
-        tts = CartesiaClient(config.tts, config.cartesia_api_key)
+        # TTS client (Cartesia or Gemini per [tts] provider). Streaming
+        # happens per ``speak`` call; the factory enforces the provider key.
+        tts = build_tts_client(config)
 
         # Embodiment-event publishing on the half-duplex path. The
         # pipecat assembly published speech_emotion + vocalization via
@@ -811,7 +813,7 @@ async def _publish_segment_events(
 
 async def _publish_emphasis_events(
     publisher: EventPublisher,
-    tts: CartesiaClient,
+    tts: TTSClient,
     segment: Segment,
     turn_id: UUID,
     seg_index: int,
@@ -891,7 +893,7 @@ async def _publish_emphasis_events(
 async def _stream_and_speak(
     pa: pyaudio.PyAudio,
     indices: Any,
-    tts: CartesiaClient,
+    tts: TTSClient,
     talker: Talker,
     tool_registry: ToolRegistry,
     prompt: str,

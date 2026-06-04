@@ -8,9 +8,11 @@ exists to make that swap a one-file change.
 from collections.abc import AsyncIterator
 from typing import Protocol
 
+from voice_agent_pipeline.tts.timing import SegmentTiming
+
 
 class TTSClient(Protocol):
-    """Streaming TTS. v1 impl is CartesiaClient (Story 2.3).
+    """Streaming TTS. v1 impls: CartesiaClient (Story 2.3), GeminiClient (6.5).
 
     Note the unusual signature: ``synthesize`` is declared as a normal
     ``def`` returning ``AsyncIterator[bytes]``, NOT ``async def`` —
@@ -31,7 +33,18 @@ class TTSClient(Protocol):
 
         Yields:
             Raw audio frame bytes — sample rate / format are impl-specific
-            but the pipeline's audio output stage (Story 2.1) and Cartesia
-            client (Story 2.3) agree on 16kHz mono S16LE for v1.
+            but the pipeline's audio output stage (Story 2.1) and every v1
+            client agree on 16kHz mono S16LE.
+        """
+        ...
+
+    def last_segment_timing(self) -> SegmentTiming | None:
+        """Per-word timing for the most recently-synthesized segment.
+
+        Set after a ``synthesize()`` generator fully drains; ``None`` before
+        the first call or when no timing is available. Consumed by the
+        Story 6.3 emphasis join (``sequential_loop._publish_emphasis_events``).
+        Cartesia fills it from real word ``timestamps``; Gemini (Story 6.5)
+        fills it with an even-distribution approximation.
         """
         ...

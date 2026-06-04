@@ -21,7 +21,7 @@ Contract:
 import asyncio
 from collections import deque
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -164,3 +164,93 @@ async def test_emphasis_events_published_with_word_anchors() -> None:
     assert frame_ids == ["seg-0-w-180", "seg-0-w-990"]
     # Every emphasis event is a non-TTS gesture cue.
     assert all(e.payload.tts_supported is False for e in emphasis_events)
+
+
+# ─────────── Story 6.5: emphasis join fires with Gemini's approximate timing ───────────
+
+
+def test_gemini_emphasis_fires_with_approximate_timing() -> None:
+    """The provider-agnostic emphasis join publishes one event per marked word
+    when driven by ``GeminiClient`` (approximate, no real timestamps).
+
+    Story 6.5: Gemini returns no word timestamps, so ``last_segment_timing()``
+    is an even-distribution estimate. ``_publish_emphasis_events`` must still
+    emit exactly one ``vocalization(tag="emphasis")`` per marked index, with a
+    plausible ``seg-{i}-w-{ms}`` anchor — "around the word is good enough".
+    """
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from pydantic import SecretStr
+
+    from voice_agent_pipeline.config.setup import TtsConfig
+    from voice_agent_pipeline.publisher.log_adapter import LogEventPublisher
+    from voice_agent_pipeline.sequential_loop import _publish_emphasis_events
+    from voice_agent_pipeline.splitter.segmenter import Segment
+    from voice_agent_pipeline.tts.gemini import GeminiClient
+
+    # Fake Live session: two 24 kHz audio chunks then turn_complete.
+    chunk_24k = b"\x10\x00" * 2400  # 2400 samples = 100 ms @ 24 kHz
+
+    def _audio_resp() -> object:
+        part = SimpleNamespace(inline_data=SimpleNamespace(data=chunk_24k))
+        model_turn = SimpleNamespace(parts=[part])
+        return SimpleNamespace(
+            server_content=SimpleNamespace(model_turn=model_turn, turn_complete=False),
+        )
+
+    def _done_resp() -> object:
+        return SimpleNamespace(
+            server_content=SimpleNamespace(model_turn=None, turn_complete=True),
+        )
+
+    class _Session:
+        async def send_client_content(self, *, turns: object, turn_complete: bool) -> None:
+            pass
+
+        async def receive(self) -> object:
+            for r in (_audio_resp(), _audio_resp(), _done_resp()):
+                yield r
+
+    class _ConnectCM:
+        async def __aenter__(self) -> "_Session":
+            return _Session()
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+    def _connect(*, model: str, config: object) -> _ConnectCM:
+        return _ConnectCM()
+
+    client = GeminiClient(TtsConfig(provider="gemini", voice_id="x"), SecretStr("fake"))
+    client._client = SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=_connect)))  # type: ignore[assignment]
+
+    async def _run() -> list[VocalizationEvent]:
+        text = "alpha beta gamma delta"  # 4 words
+        async for _ in client.synthesize(text):
+            pass
+        timing = client.last_segment_timing()
+        assert timing is not None
+        assert len(timing.words) == 4
+
+        publisher = LogEventPublisher()
+        segment = Segment(
+            text=text,
+            speech_emotion_payload=None,
+            vocalization_payloads=[],
+            emphasis_word_indices=[0, 2],  # two marks
+        )
+        published = await _publish_emphasis_events(publisher, client, segment, uuid4(), 3)
+        assert published == 2
+        return [
+            cast(VocalizationEvent, e)
+            for topic, e in publisher.published
+            if topic == "vocalization"
+        ]
+
+    events = asyncio.run(_run())
+    assert len(events) == 2
+    for e in events:
+        assert e.payload.tag == "emphasis"
+        assert e.payload.audio_frame_id is not None
+        assert e.payload.audio_frame_id.startswith("seg-3-w-")
