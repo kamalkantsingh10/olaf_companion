@@ -99,7 +99,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-05
-last_updated: 2026-05-29  # Story 6-4 -> review (dev-story / Amelia)
+last_updated: 2026-06-04  # Story 6-5 -> ready-for-dev (create-story / Amelia)
 project: olaf_companion
 project_key: NOKEY
 tracking_system: file-system
@@ -223,6 +223,15 @@ development_status:
   6-2-cached-opener-system-and-cartesia-overlap: review
   6-3-emphasis-vocalization-wiring: review
   6-4-instrumentation-soak-embodiment-brief: review
+  # 2026-06-04: Story 6-5 added (Amelia / bmad-create-story). Cartesia->Gemini
+  #             TTS provider migration: Live API streaming hot path + batch
+  #             cached re-render, behind a [tts] provider knob (Cartesia stays
+  #             selectable). Drivers = cost (~35% cheaper/min) + voice range.
+  #             Spike-GATED: Task 2 measures Gemini Live TTFB vs the Story 6.1
+  #             Cartesia baseline (gate p95 <= 400ms NFR4) before cutover.
+  #             24k->16k resample in-client; word timestamps NOT required
+  #             (emphasis fires at approximate timing). schema_version stays 3.
+  6-5-gemini-tts-migration: ready-for-dev
   epic-6-retrospective: optional
 
   # ───────────────── v1.5 Backlog (Post-v1) ─────────────────
