@@ -93,9 +93,10 @@ These were decided with the user before authoring. Do **not** relitigate them mi
   - **⚠️ Footgun noted:** plain `just regenerate-audio` (no `--force`) does NOT re-render on a voice/provider change — `regenerate.py`'s path-hit fallback reuses any file already at the canonical slot (a Story-5.5 hash-migration optimization) and just relabels the manifest, leaving the *old* audio with the *new* identity (Stage-3 would wrongly pass). **A voice/provider change requires `--force`.** Candidate hardening (future): auto-force when `manifest.voice_id`/`tts_model` differ from config.
   - **Note for Kamal:** some short phrases render long in the Fenrir persona (e.g. a "tell me" ~3 s; a "hello" ~0.68 s) — the persona's expressive delivery varies. Worth a spot-listen; tune `style_prompt` if too theatrical.
 
-- [ ] **Task 7 — Integration + latency check (AC10)**
-  - [ ] Update `tests/integration/test_opener_overlap_timing.py` / `test_emphasis_event.py` if they construct Cartesia directly.
-  - [ ] Simple-turn integration green; confirm `ttfb_ms`/`end_to_first_real_audio_ms` logged for Gemini; assert no NFR4 regression vs the Task 2 spike.
+- [x] **Task 7 — Integration + live verification (AC10) — ✅ operator-validated 2026-06-04**
+  - [x] Integration tests (emphasis/opener/error-filler) green under the Gemini config; no regression.
+  - [x] **Live `just run` on the operator machine: PASS.** Kamal confirmed the pipeline comes up speaking as Fenrir and the result is "awesome — much better than Cartesia." Real-turn latency acceptable (gate had it at cold p50 836 ms). The voice-quality driver is validated.
+  - Note: the pre-existing `test_simple_turn.py` failures are unrelated (an `SttConfig(clarification_prompts=[])` test-setup bug on HEAD, not this story).
 
 - [ ] **Task 8 — Spec-as-contract updates (AC12)**
   - [ ] Update `architecture.md`, `decision-records.md`, `epics.md` (add Story 6.5), `prd.md` (provider-neutral NFR4 + cost note), `voice-agent-pipeline-brief.md`, distillate.
@@ -212,6 +213,13 @@ claude-opus-4-8[1m] (Amelia / dev-story)
 | 2026-06-04 | Task 4 — `build_tts_client` factory + `TTSClient.last_segment_timing` Protocol method; wired sequential_loop/pipeline/regenerate; `voice_id`/`cartesia_api_key`→optional + `effective_*()` routing across cartesia/cached/regenerate/ttfb_spike. 4 factory tests; green (602). |
 | 2026-06-04 | Task 5 — verified the provider-agnostic emphasis join fires for Gemini's approximate timing (integration test). green. |
 | 2026-06-04 | Task 6 — flipped `setup.toml` to Gemini/Fenrir; `--force` re-rendered 156 cached phrases (16 kHz, 0 failures); Stage-3 probe PASS; `__main__` TTS probe provider-aware (+ `gemini.validate_credentials`). Noted the path-hit `--force` footgun. |
+| 2026-06-04 | Task 7 — live-validated by operator (`just run`): comes up as Fenrir, "much better than Cartesia". Voice-quality driver confirmed. |
+
+### Remaining for a follow-up session (story stays `in-progress`)
+
+- **Task 8 — Spec reconciliation (NFR26 / CLAUDE.md rule 9):** update `architecture.md` (TTS row + seam), `decision-records.md` (Gemini provider + the re-baselined NFR4), `epics.md` (add Story 6.5), `prd.md` (NFR4 wording → provider-neutral + cost note), `voice-agent-pipeline-brief.md`, distillate. **Not yet done** — the migration code shipped ahead of the spec text.
+- **Task 9 — Sign-off:** final `just check`; set `sprint-status` `6-5 → review`.
+- **Optional polish:** trim the Fenrir `style_prompt` if delivery feels theatrical (some cached phrases render long); consider auto-`--force` in `regenerate.py` when manifest voice/model differ from config (the path-hit footgun).
 
 ### File List
 
