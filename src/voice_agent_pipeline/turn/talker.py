@@ -39,10 +39,12 @@ Future stories layer onto this without changing the call shape:
   ``<laughter/>``, etc.) at sentence/clause boundaries.
 """
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, cast
 
+import httpx
 import openai
 import structlog
 from openai.types.chat import ChatCompletionMessageFunctionToolCall
@@ -103,6 +105,18 @@ PROVIDER_MAX_TOKENS_PARAM: dict[str, str] = {
     "groq": "max_tokens",
     "gemini": "max_tokens",
 }
+
+# HTTP status codes that signal a *transient* upstream failure the openai
+# SDK will retry internally (rate-limit + the 5xx family). When one of
+# these comes back on the wire we set :attr:`Talker.transient_error_event`
+# so the turn loop can cover the otherwise-silent retry backoff with a
+# cached "thinking" filler (see ``sequential_loop._stream_and_speak``).
+# 429 is the rate-limit case from the 2026-05-31 Groq stall; 5xx are the
+# upstream-hiccup cases the SDK also retries. NOT an error-handling path
+# in the CLAUDE.md rule #4 sense — we never *catch* the error here; the
+# SDK retries on its own and, if it ultimately exhausts retries, the
+# usual ``TalkerError`` still propagates and crashes the process.
+_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
 
 class TalkerResponse(BaseModel):
@@ -242,15 +256,74 @@ class Talker:
         # committed under ``prompts/`` so prompt evolution flows through
         # git rather than env-var twiddling.
         self._system_prompt = config.system_prompt_path.read_text(encoding="utf-8")
+        # Transient-error signal (2026-05-31). Set by the httpx response
+        # hook below whenever an upstream request comes back with a
+        # retryable status (429 / 5xx) — i.e., while the SDK is silently
+        # retrying. The turn loop watches this to play a cached filler
+        # over the retry backoff (which is otherwise dead air — the Groq
+        # 429 stall that prompted this was a ~9 s silence). Constructed
+        # here so the bound hook can set it; bound to the running loop on
+        # first use (asyncio.Event tolerates construction off-loop on
+        # 3.10+). The loop clears it at each turn boundary.
+        self.transient_error_event: asyncio.Event = asyncio.Event()
         # AsyncOpenAI maintains a long-lived httpx connection pool; we
         # construct one per Talker (lifetime-bound to the pipeline) rather
         # than per-call so connection reuse cuts TLS handshake from every
         # turn's latency budget. base_url=None lets the SDK use its
         # built-in default (OpenAI's endpoint).
+        #
+        # We pass an explicit ``DefaultAsyncHttpxClient`` (the SDK's own
+        # httpx subclass, so all SDK defaults — timeouts, limits, proxies
+        # — are preserved) carrying a single ``response`` event hook. The
+        # hook fires per underlying HTTP attempt, INCLUDING the ones the
+        # SDK retries, so a 429 sets the signal before the backoff sleep.
         self._client = openai.AsyncOpenAI(
             api_key=api_key.get_secret_value(),
             base_url=base_url,
+            http_client=openai.DefaultAsyncHttpxClient(
+                event_hooks={"response": [self._note_transient_status]},
+            ),
         )
+
+    async def _note_transient_status(self, response: httpx.Response) -> None:
+        """httpx ``response`` event hook — flag retryable upstream failures.
+
+        Called after the response headers are fetched but before the body
+        is read and before the result is returned to the SDK, so
+        ``response.status_code`` is available and we must NOT touch
+        ``response.content`` (that would consume the unread stream). On a
+        retryable status we set :attr:`transient_error_event`; the turn
+        loop's filler watcher consumes (and clears) it. Successful
+        responses are left untouched — the event only ever signals "an
+        upstream hiccup is delaying this turn".
+
+        Args:
+            response: The just-fetched httpx response for one HTTP attempt
+                (the SDK may make several for a single ``create`` call when
+                it retries).
+        """
+        if response.status_code in _RETRYABLE_STATUS_CODES:
+            self.transient_error_event.set()
+            log.warning(
+                "talker.transient_error",
+                provider=self._config.provider,
+                model=self._model,
+                status_code=response.status_code,
+            )
+
+    @property
+    def _reasoning_effort(self) -> Any:
+        """Per-call ``reasoning_effort`` value for reasoning models (2026-05-31).
+
+        Returns the configured level (``"low"`` / ``"medium"`` / ``"high"``)
+        when :attr:`TalkerConfig.reasoning_effort` is set — only valid for
+        reasoning models such as gpt-oss / deepseek-r1 — else ``openai.omit``,
+        the SDK sentinel that drops the field from the request entirely so
+        plain chat models don't 400 on it. Passed explicitly (not splatted)
+        to every ``chat.completions.create`` below so pyright can still
+        resolve the SDK's overloaded signature.
+        """
+        return self._config.reasoning_effort or openai.omit
 
     async def complete(
         self,
@@ -300,12 +373,14 @@ class Talker:
                     model=self._model,
                     messages=messages,  # type: ignore[arg-type]
                     max_completion_tokens=self._config.max_tokens,
+                    reasoning_effort=self._reasoning_effort,
                 )
             else:
                 response = await self._client.chat.completions.create(
                     model=self._model,
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=self._config.max_tokens,
+                    reasoning_effort=self._reasoning_effort,
                 )
         except openai.APIError as e:
             # v1 fail-fast: wrap and propagate. CLAUDE.md rule #4 — never
@@ -434,6 +509,7 @@ class Talker:
                     max_completion_tokens=self._config.max_tokens,
                     tools=tools_param,  # type: ignore[arg-type]
                     tool_choice="auto",
+                    reasoning_effort=self._reasoning_effort,
                 )
             else:
                 response = await self._client.chat.completions.create(
@@ -442,6 +518,7 @@ class Talker:
                     max_tokens=self._config.max_tokens,
                     tools=tools_param,  # type: ignore[arg-type]
                     tool_choice="auto",
+                    reasoning_effort=self._reasoning_effort,
                 )
         except openai.APIError as e:
             # Same wrap-and-propagate posture as :meth:`complete`.
@@ -611,6 +688,7 @@ class Talker:
                         tools=tools_param,  # type: ignore[arg-type]
                         tool_choice="auto",
                         stream=True,
+                        reasoning_effort=self._reasoning_effort,
                     ),
                 )
             else:
@@ -623,6 +701,7 @@ class Talker:
                         tools=tools_param,  # type: ignore[arg-type]
                         tool_choice="auto",
                         stream=True,
+                        reasoning_effort=self._reasoning_effort,
                     ),
                 )
         except openai.APIError as e:

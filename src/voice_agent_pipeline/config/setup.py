@@ -205,6 +205,13 @@ class TalkerConfig(BaseModel):
         max_tokens: Generation length cap. 512 is enough for the "1-2
             sentence" reply style the system prompt enforces. Higher
             values risk verbose answers that blow NFR1.
+        reasoning_effort: For reasoning models only (gpt-oss, deepseek-r1).
+            ``"low"`` caps the hidden reasoning the model does before its
+            visible answer — prevents the over-reasoning that returns
+            empty content (and spirals the session into silence) and
+            roughly halves TTFT. ``None`` (default) omits the parameter;
+            set it ONLY when the active model is a reasoning model, as
+            plain chat models reject the kwarg with a 400.
         system_prompt_path: Path (project-root relative by convention)
             to the markdown file the Talker reads ONCE at construction.
             v1 ships ``prompts/talker_system.md``; the file is committed
@@ -226,6 +233,17 @@ class TalkerConfig(BaseModel):
 
     provider: Literal["openai", "groq", "gemini"] = "openai"
     max_tokens: int = Field(default=512, gt=0)
+    # Reasoning-model effort cap (2026-05-31). gpt-oss on Groq is a
+    # reasoning model: it spends hidden "reasoning" tokens before the
+    # visible answer (the ~1.2 s TTFT in the soak logs is that, not the
+    # network). At the default effort it occasionally over-reasons and
+    # returns EMPTY content — which then poisons history and the whole
+    # session goes silent. "low" cuts reasoning ~10x (verified against
+    # the live API: comp_tokens 200→24) with no quality loss on short
+    # conversational replies, and roughly halves TTFT. Only valid for
+    # reasoning models (gpt-oss, deepseek-r1, …); leave None for plain
+    # chat models (llama-3.3, gemini-flash) — passing it would 400.
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
     system_prompt_path: Path = Path("prompts/talker_system.md")
     openai: _OpenAITalkerSection = Field(default_factory=_OpenAITalkerSection)
     groq: _GroqTalkerSection = Field(default_factory=_GroqTalkerSection)
@@ -705,6 +723,10 @@ class OpenersConfig(BaseModel):
     network call is unblocked. See Story 6.2 AC #7 + DR-001.
 
     Attributes:
+        timer_fallback_enabled: When ``False``, never spawn the
+            timer-fallback path — an opener plays only on an explicit
+            ``<opener .../>`` tag. Default ``True``. See Story 6.4 soak
+            (28/30 openers were generic timer fallbacks → "forced").
         timer_fallback_ms: Time in milliseconds after VAD
             end-of-speech to wait for an LLM opener tag before the
             fallback fires. Capped at 2000 ms so a misconfig can't
@@ -715,6 +737,18 @@ class OpenersConfig(BaseModel):
             to exclude from the next pick. Default 0 → exclude only
             the immediately-previous one. Raise to 1-2 for more
             variety in short rapid-fire sessions.
+        error_filler_enabled: When ``True`` (default), play a cached
+            take from :attr:`error_filler_bucket` to cover dead air in
+            two LLM cases where the user would otherwise hear silence,
+            as long as real-answer audio hasn't started: (1) a transient
+            upstream error (a 429 / 5xx the openai SDK is retrying) —
+            re-fires per retry attempt; (2) a fully-empty reply (no text,
+            no tool call — the gpt-oss reasoning-overflow failure mode) —
+            plays once. Never fires on a tool-call-only reply. Independent
+            of the timer fallback.
+        error_filler_bucket: Which bucket the error filler draws from.
+            Default ``"thinking"`` — a neutral "still working on it"
+            register that fits a stall better than ``acknowledge``.
         phrases_by_bucket: Mapping of :data:`OpenerBucket` → list of
             opener strings. Defaults to :data:`_DEFAULT_OPENERS`; a
             missing TOML block uses the defaults rather than failing
@@ -725,9 +759,25 @@ class OpenersConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # When False, the timer-fallback path is never spawned: an opener
+    # plays ONLY when the Talker explicitly emits an `<opener .../>`
+    # tag. Set False to kill generic fillers on untagged turns (the
+    # Story 6.4 soak showed 28/30 openers were generic timer fallbacks,
+    # which read as "forced"). Trade-off: untagged slow turns get bare
+    # dead air until real audio. Default True preserves Story 6.2 behavior.
+    timer_fallback_enabled: bool = True
     timer_fallback_ms: int = Field(default=700, gt=0, le=2000)
     timer_fallback_bucket: OpenerBucket = "acknowledge"
     max_consecutive_repeat: int = Field(default=0, ge=0)
+    # Error-filler path (2026-05-31). Independent of the timer fallback:
+    # when the Talker reports a transient upstream error (429 / 5xx that
+    # the openai SDK is retrying), the runtime plays a cached take from
+    # `error_filler_bucket` to cover the retry backoff — otherwise the
+    # user hears dead air for the whole retry (a ~9 s Groq 429 stall
+    # prompted this). Re-fires per retry so a multi-attempt stall stays
+    # covered. Default on; set False to keep the v1 bare-silence behavior.
+    error_filler_enabled: bool = True
+    error_filler_bucket: OpenerBucket = "thinking"
     # `phrases_by_bucket` defaults to a sensible starter set so a
     # fresh setup.toml works out of the box. Operators expand each
     # bucket over time; the validator enforces ≥ 1 phrase per bucket.

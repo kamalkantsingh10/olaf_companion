@@ -177,6 +177,17 @@ clarification_prompts = [
 [talker]
 provider = "groq"
 max_tokens = 512
+# Reasoning-effort cap for reasoning models (2026-05-31). The Groq
+# default gpt-oss-120b is a reasoning model: it burns hidden reasoning
+# tokens before the visible answer (that's the ~1.2 s TTFT in the logs,
+# not the network). At the default effort it occasionally over-reasons
+# and returns EMPTY content, which poisons history and makes the whole
+# session go silent ("it stopped guessing"). "low" cuts reasoning ~10x
+# (verified live: completion tokens 200 -> 24), no quality loss on short
+# replies, and roughly halves TTFT. ONLY valid for reasoning models
+# (gpt-oss, deepseek-r1) — COMMENT THIS OUT if you swap provider/model to
+# a plain chat model (llama-3.3, gemini-flash, gpt-5-nano), which 400 on it.
+reasoning_effort = "low"
 system_prompt_path = "prompts/talker_system.md"
 # Story 4.1: belief-state grounding. List of keys to fetch from the
 # orchestrator daemon at the start of each Talker turn (Story 4.4
@@ -223,18 +234,21 @@ model = "gemini-2.5-flash"
 # per-segment from the streaming SSML splitter. model = "sonic-3" is
 # Cartesia's flagship low-latency voice model (~200-400 ms TTFB target).
 [tts]
-# Tessa voice (Cartesia). Browse https://play.cartesia.ai/voices to swap.
+# Cartesia voice (swapped 2026-05-31 to bb50f853). Browse
+# https://play.cartesia.ai/voices to swap again.
 # Story 5.5 note: changing voice_id requires `just regenerate-audio`
 # to re-render the cached greetings / goodbyes / clarifications /
 # fillers — the Stage 3 audio_assets probe will refuse to start
 # otherwise.
-voice_id = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+voice_id = "bb50f853-7e79-40b1-995a-d74aa56260a2"
 default_emotion = "neutral"
 model = "sonic-3"
 # Speech rate multiplier. 1.0 = the voice's natural rate; <1.0 slows
 # down, >1.0 speeds up. Adjust to taste. 2026-05-12: raised from 0.9
 # to 1.0 — keeping Tessa at her natural rate now that fillers mask the
-# perceived latency on slower turns.
+# perceived latency on slower turns. 2026-05-30: raised to 1.15 for a
+# snappier delivery (operator preference). 2026-05-31: restored to 1.0
+# (natural rate) alongside the voice swap to e28e21ba. Dial up/down to taste.
 speed = 1.0
 # Story 6.1: Cartesia wire transport. Default "websocket" opens a
 # per-call WS via the SDK's tts.websocket_connect() and captures
@@ -430,10 +444,18 @@ phrases = [
 # (which arrives shortly after the opener starts) doesn't leave the
 # opener abandoned mid-syllable.
 [openers]
+# Master switch for the timer-fallback path. When false, an opener
+# plays ONLY when the Talker emits an explicit `<opener .../>` tag —
+# untagged turns stay silent instead of firing a generic filler.
+# Disabled (2026-05-30) after the Story 6.4 soak showed 28/30 openers
+# were generic timer fallbacks, which read as "forced". The splitter-
+# driven (LLM-tagged) opener path is unaffected by this switch.
+timer_fallback_enabled = false
 # Timer-fallback floor (NFR33: opener onset ≤ 700 ms p95). Capped at
 # 2000 ms by the OpenersConfig validator. If no `<opener .../>` tag
 # arrives within this many ms of VAD end-of-speech, the runtime plays
-# from `timer_fallback_bucket` instead.
+# from `timer_fallback_bucket` instead. Ignored when
+# `timer_fallback_enabled = false`.
 timer_fallback_ms = 700
 # Generic-safe default for the fallback. "acknowledge" is the
 # shortest bucket; an over-firing fallback there is the least
@@ -442,6 +464,23 @@ timer_fallback_bucket = "acknowledge"
 # Ring-buffer suppression: 0 = exclude only the immediately-previous
 # opener. Raise to 1-2 for more variety in rapid-fire sessions.
 max_consecutive_repeat = 0
+# Error/empty-reply filler (2026-05-31). Independent of the timer
+# fallback above. Plays a cached take from `error_filler_bucket` to
+# cover dead air in two LLM cases where the user would otherwise hear
+# silence:
+#   1. Transient upstream error — a 429 / 5xx the openai SDK retries
+#      internally; the backoff is dead air (the Groq 429 that prompted
+#      this left ~9 s). Fires over the backoff, re-firing per retry.
+#   2. Empty reply — the LLM returns no speakable text and no tool call
+#      (the gpt-oss reasoning-overflow failure). Plays once so the bot
+#      acknowledges instead of going silent mid-conversation.
+# Only fires while the real answer hasn't started, and never on a
+# tool-call-only reply. Set false to restore bare silence in both cases.
+error_filler_enabled = true
+# Bucket the error filler draws from. "thinking" ("hmm", "let me think",
+# "right, so", ...) reads as "still working on it" — fits a stall better
+# than the terse "acknowledge" bucket. Point it at any bucket below.
+error_filler_bucket = "thinking"
 
 [openers.phrases_by_bucket]
 # Generic "I'm processing" — default for medium-length replies.

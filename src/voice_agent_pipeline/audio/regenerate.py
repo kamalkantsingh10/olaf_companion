@@ -388,9 +388,21 @@ async def regenerate(
 
     # Prune stale entries — manifest entries whose hash isn't in the
     # new plan AND whose phrase is gone from setup.toml.
+    #
+    # Path-occupancy guard (bug fix 2026-05-30): the WAV path is derived
+    # from (surface, mood/bucket, seq) and is HASH-INDEPENDENT, so a
+    # re-render to the same slot reuses the same canonical path. When
+    # voice_id or tts_model changes, EVERY phrase_hash changes, so the
+    # old entries all look "stale" — but their paths are exactly the
+    # paths the new entries just rendered to. Pruning by the old path
+    # would delete the freshly-rendered file. Skip any stale entry whose
+    # path is still occupied by a new entry.
     new_hashes = {e.phrase_hash for e in new_entries}
+    new_paths = {e.path for e in new_entries}
     for stale_hash, stale_entry in existing.items():
         if stale_hash in new_hashes:
+            continue
+        if stale_entry.path in new_paths:
             continue
         log.info(
             "regenerate.prune",

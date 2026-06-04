@@ -214,6 +214,8 @@ async def test_cartesia_synthesize_fires_before_opener_playback_completes() -> N
             publisher=fake_publisher,
             segmenter=segmenter,
             emotion_cache=emotion_cache,
+            error_filler_enabled=False,
+            error_filler_bucket="thinking",
         )
 
     # Sanity: both paths actually ran.

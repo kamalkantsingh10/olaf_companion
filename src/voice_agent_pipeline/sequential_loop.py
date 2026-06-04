@@ -41,6 +41,7 @@ import random
 import struct
 import time
 from collections import deque
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -291,18 +292,27 @@ async def run_sequential_loop(
                 # ordering on the speaker.
                 opener_selected = asyncio.Event()
                 opener_already_playing = asyncio.Event()
-                opener_fallback_task = asyncio.create_task(
-                    trigger_opener_fallback(
-                        pa=pa,
-                        indices=indices,
-                        manifest=manifest,
-                        timer_fallback_ms=config.openers.timer_fallback_ms,
-                        timer_fallback_bucket=config.openers.timer_fallback_bucket,
-                        opener_selected=opener_selected,
-                        opener_already_playing=opener_already_playing,
-                        recent=recent_openers,
-                    ),
-                )
+                # Story 6.4 follow-up: when the operator disables the
+                # timer fallback, openers play ONLY on an explicit LLM
+                # `<opener .../>` tag (the splitter-driven path still
+                # runs). We skip spawning the fallback task entirely so
+                # untagged turns stay silent rather than firing a generic
+                # filler. `opener_fallback_task` stays None; the await
+                # site below tolerates that.
+                opener_fallback_task: asyncio.Task[OpenerPlayback | None] | None = None
+                if config.openers.timer_fallback_enabled:
+                    opener_fallback_task = asyncio.create_task(
+                        trigger_opener_fallback(
+                            pa=pa,
+                            indices=indices,
+                            manifest=manifest,
+                            timer_fallback_ms=config.openers.timer_fallback_ms,
+                            timer_fallback_bucket=config.openers.timer_fallback_bucket,
+                            opener_selected=opener_selected,
+                            opener_already_playing=opener_already_playing,
+                            recent=recent_openers,
+                        ),
+                    )
 
                 stt_result = await stt.transcribe(audio)
                 # Story 6.4: stamp STT-done + replace the long-standing
@@ -343,7 +353,12 @@ async def run_sequential_loop(
                     # it to finish so the speaker is free before we
                     # play the clarification.
                     opener_selected.set()
-                    clar_fallback_playback = await opener_fallback_task
+                    # `opener_fallback_task` is None when the timer
+                    # fallback is disabled (no task spawned); nothing to
+                    # drain in that case.
+                    clar_fallback_playback = (
+                        await opener_fallback_task if opener_fallback_task is not None else None
+                    )
                     # Story 6.4: a fallback opener may have raced in before
                     # the cancel landed — record its timing if so.
                     if clar_fallback_playback is not None:
@@ -403,6 +418,8 @@ async def run_sequential_loop(
                     publisher=event_publisher,
                     segmenter=segmenter,
                     emotion_cache=emotion_cache,
+                    error_filler_enabled=config.openers.error_filler_enabled,
+                    error_filler_bucket=config.openers.error_filler_bucket,
                     history=conversation_history,
                     timings=timings,
                 )
@@ -412,16 +429,34 @@ async def run_sequential_loop(
                 timings.had_tool_call = bool(tool_calls)
 
                 # Append this turn to the history BEFORE dispatching
-                # tools / firing on_last_audio_frame. Order: user
-                # turn, then assistant turn — even if assistant text
-                # is empty (tool-call-only reply), append an empty
-                # assistant message so the LLM sees the alternation.
-                conversation_history.append(
-                    {"role": "user", "content": stt_result.text},
-                )
-                conversation_history.append(
-                    {"role": "assistant", "content": full_text},
-                )
+                # tools / firing on_last_audio_frame. Order: user turn,
+                # then assistant turn.
+                #
+                # History hygiene (2026-05-31): only record the turn when
+                # the assistant actually produced SOMETHING — speakable
+                # text OR a tool call. A fully-empty reply (no text, no
+                # tools — the gpt-oss reasoning-overflow failure mode) is
+                # dropped from history entirely. Appending an empty
+                # assistant message there poisons the next turn's context:
+                # the model sees a malformed conversation and keeps
+                # returning empty, so the whole session spirals into
+                # silence (observed live 2026-05-31). Dropping the turn
+                # keeps the alternation clean — the next turn appends its
+                # own user+assistant pair. A tool-call-only reply STILL
+                # records (empty text is intentional there — the tool call
+                # is the turn).
+                if full_text or tool_calls:
+                    conversation_history.append(
+                        {"role": "user", "content": stt_result.text},
+                    )
+                    conversation_history.append(
+                        {"role": "assistant", "content": full_text},
+                    )
+                else:
+                    log.warning(
+                        "talker.empty_reply_dropped",
+                        heard=stt_result.text,
+                    )
 
                 # Dispatch tool calls AFTER speech finishes. In half-
                 # duplex mode the user can't hear anything until the
@@ -864,11 +899,13 @@ async def _stream_and_speak(
     manifest: CachedAudioManifest,
     opener_selected: asyncio.Event,
     opener_already_playing: asyncio.Event,
-    opener_fallback_task: asyncio.Task[OpenerPlayback | None],
+    opener_fallback_task: asyncio.Task[OpenerPlayback | None] | None,
     recent_openers: deque[str],
     publisher: EventPublisher,
     segmenter: Segmenter,
     emotion_cache: LastPublishedCache,
+    error_filler_enabled: bool,
+    error_filler_bucket: OpenerBucket,
     history: list[dict[str, str]] | None = None,
     timings: _TurnTimings | None = None,
 ) -> tuple[str, list[ToolCall]]:
@@ -985,6 +1022,57 @@ async def _stream_and_speak(
     # implementation detail private.
     segmenter.opener_callback = _on_opener_selected
 
+    async def _error_filler_watcher() -> None:
+        """Cover transient-error retry backoff with a cached filler (2026-05-31).
+
+        The openai SDK retries 429 / 5xx internally — a single
+        ``complete_with_tools_streaming`` call can sit silent for several
+        seconds during the backoff (a ~9 s Groq 429 stall is what
+        prompted this). The Talker's httpx hook sets
+        ``talker.transient_error_event`` on each such response; this
+        watcher consumes it and plays a take from ``error_filler_bucket``
+        so the user hears "still working on it" instead of dead air.
+
+        Gating + lifecycle:
+
+        - Only fires while real-answer audio hasn't started
+          (``not fsm_speaking_fired``). Once the bot is actually
+          speaking, the gap is filled — drop the signal.
+        - Re-arms after each play (the event is cleared on consume), so a
+          multi-retry stall gets successive fillers rather than one.
+        - Once it plays, it CLAIMS the opener slot
+          (``opener_already_playing`` / ``opener_selected``) so the
+          LLM's own ``<opener .../>`` tag — which arrives once the
+          stalled stream finally resumes — doesn't stack a second opener
+          on top of the filler we already played.
+        - Runs as a background task for the life of the stream; the
+          ``finally`` below cancels it.
+        """
+        while True:
+            await talker.transient_error_event.wait()
+            talker.transient_error_event.clear()
+            # Real answer already underway → the gap is covered; ignore.
+            if fsm_speaking_fired:
+                continue
+            pick = pick_opener(manifest, error_filler_bucket, recent_openers)
+            if pick is None:
+                # Bucket empty — the OpenersConfig validator should make
+                # this unreachable in production. Defensive log + bail.
+                log.warning("error_filler.no_pick", bucket=error_filler_bucket)
+                continue
+            recent_openers.append(pick.phrase_hash)
+            # Claim the opener slot so the splitter-driven opener and the
+            # timer fallback both stand down — we've covered the beat.
+            opener_already_playing.set()
+            opener_selected.set()
+            log.info(
+                "error_filler.play",
+                bucket=error_filler_bucket,
+                phrase=pick.phrase,
+                duration_ms=pick.duration_ms,
+            )
+            await play_cached(pa, cast(int, indices.output_index), Path(pick.path))
+
     async def _speak_segment(segment: Segment) -> None:
         """Publish a segment's events, then synthesize its text via Cartesia."""
         nonlocal fsm_speaking_fired, out_stream, spoken_segment_index
@@ -1058,6 +1146,17 @@ async def _stream_and_speak(
             timings.emphasis_count += published
         spoken_segment_index += 1
 
+    # Error-filler watcher (2026-05-31). Clear any stale signal left by a
+    # prior turn, then run the watcher concurrently with the LLM stream so
+    # it can play over a retry backoff while the `async for` below is still
+    # awaiting its first event. Skipped entirely when disabled — the signal
+    # then goes unconsumed (harmless) and the turn keeps its bare-silence
+    # behavior on retries.
+    error_filler_task: asyncio.Task[None] | None = None
+    if error_filler_enabled:
+        talker.transient_error_event.clear()
+        error_filler_task = asyncio.create_task(_error_filler_watcher())
+
     try:
         async for event in talker.complete_with_tools_streaming(
             prompt,
@@ -1098,12 +1197,37 @@ async def _stream_and_speak(
         # parallel to the Story 5.5 edge-case handling.
         if not fsm_speaking_fired:
             opener_selected.set()
-            await fsm.on_first_audio_frame()
+            # Empty-reply filler (2026-05-31). A FULLY empty reply — no
+            # speakable text AND no tool call — is the gpt-oss
+            # reasoning-overflow failure: the model gave us nothing and
+            # the turn would otherwise be dead silence (the "it stopped
+            # guessing and went silent" symptom). Cover it with a cached
+            # take so the bot at least acknowledges. Skipped for
+            # tool-call-only replies (a goodbye/mood action follows — a
+            # stranded "hmm" would be wrong) and when the error-filler
+            # watcher already claimed the slot (a 429 this turn).
+            if error_filler_enabled and not tool_calls and not opener_already_playing.is_set():
+                pick = pick_opener(manifest, error_filler_bucket, recent_openers)
+                if pick is not None:
+                    recent_openers.append(pick.phrase_hash)
+                    opener_already_playing.set()
+                    log.info(
+                        "empty_reply_filler.play",
+                        bucket=error_filler_bucket,
+                        phrase=pick.phrase,
+                        duration_ms=pick.duration_ms,
+                    )
+                    await fsm.on_first_audio_frame()
+                    fsm_speaking_fired = True
+                    await play_cached(pa, cast(int, indices.output_index), Path(pick.path))
+            if not fsm_speaking_fired:
+                await fsm.on_first_audio_frame()
 
         # Always drain the opener fallback + any splitter-driven
         # opener playback tasks before returning, so cleanup is
         # deterministic and we don't leak Task warnings.
-        fallback_playback = await opener_fallback_task
+        # None when the timer fallback is disabled — nothing to drain.
+        fallback_playback = await opener_fallback_task if opener_fallback_task is not None else None
         # Story 6.4: if the timer fallback played (rather than the
         # splitter-driven path), fold its timing into the turn rollup.
         # `_record_opener_playback` no-ops when an llm_tag opener already
@@ -1119,6 +1243,15 @@ async def _stream_and_speak(
         if out_stream is not None:
             await asyncio.sleep(_AUDIO_DRAIN_TAIL_MS / 1000)
     finally:
+        # Tear down the error-filler watcher. It loops forever on the
+        # transient-error event, so it's still pending on every clean
+        # turn — cancel and await it (swallowing the CancelledError) so
+        # no orphaned task leaks. A filler mid-`play_cached` is cut here,
+        # but by this point the real answer (if any) has already drained.
+        if error_filler_task is not None:
+            error_filler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await error_filler_task
         if out_stream is not None:
             out_stream.stop_stream()
             out_stream.close()

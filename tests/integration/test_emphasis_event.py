@@ -142,6 +142,8 @@ async def test_emphasis_events_published_with_word_anchors() -> None:
         publisher=publisher,
         segmenter=segmenter,
         emotion_cache=emotion_cache,
+        error_filler_enabled=False,
+        error_filler_bucket="thinking",
     )
 
     emphasis_events = [
